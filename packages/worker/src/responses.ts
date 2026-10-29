@@ -2,9 +2,9 @@
 // cache-enabled entrypoints (cloudflare.config.ts `exports`), driven only by the Cache-Control set here.
 //
 //   eyeball ─▶ default entrypoint (cache OFF: always runs, so traces, logs, request.cf and `/` stay per request)
-//                 ├─ GET /v1/* except live ─▶ ctx.exports.Api.fetch(path + sorted query, cf.cacheKey = /<build><path+query>)
-//                 │                          (cache ON; crossVersionCache is on for the Worker, so the build in the key is
-//                 │                           what keeps one build's answers from another's)
+//                 ├─ GET /v1/* except live ─▶ loopback.ts api: Api, cf.cacheKey = /v<CACHE_VERSION><path+sorted query>
+//                 │                          (cache ON; crossVersionCache is on, so answers survive deploys until the
+//                 │                           tag is bumped; test/golden.test.ts enforces the bump)
 //                 └─ live (position / magnetic without time): computed here; caching an answer about "now" buys nothing
 //
 // The same router runs in both entrypoints; the Edge role says which side of the loopback this is.
@@ -18,12 +18,13 @@ const NO_STORE = "no-store"
 export type Role =
   | { readonly role: "local" }
   | { readonly role: "api" }
-  | { readonly role: "front"; readonly api: (req: Request, init?: { cf?: { cacheKey: string } }) => Promise<Response>; readonly keyPrefix?: string }
+  | { readonly role: "front"; readonly api: (pathAndQuery: string, init: { method: string; headers: Record<string, string> }) => Promise<Response> }   // loopback.ts api
 export class Edge extends Context.Service<Edge, Role>()("@ephem/worker/Edge") {}
 
-/** A pure function of (query, code build): the build is in the Api's cache key, so a year is safe. */
+/** A pure function of the query (and CACHE_VERSION, which is in the Api's cache key), so a year is safe. */
 export const deterministic = (url: URL): boolean =>
   url.pathname === "/v1/day" || url.pathname === "/v1/alignment" ||
+  (url.pathname === "/v1/crossing" && (url.searchParams.has("start") || url.searchParams.has("date"))) ||
   ((url.pathname === "/v1/position" || url.pathname === "/v1/magnetic") && url.searchParams.has("time"))
 
 /** What the Api entrypoint tells Workers Caching. Weather: stored but stale at once (max-age=0), then served stale for up
@@ -73,9 +74,7 @@ export const Gateway = HttpRouter.middleware(Effect.gen(function* () {
       // x-ephem-ray joins the Api invocation's log row to this one; request headers outside the documented set are not in the key.
       const ray = req.headers["cf-ray"], headers: Record<string, string> = ray ? { "x-ephem-ray": ray } : {}
       const key = canonical(url)
-      // cf.cacheKey goes in fetch's second argument, as documented for ctx.exports (a Request copy may drop `cf`).
-      const forwarded = yield* Effect.tryPromise(() => edge.api(new Request(`https://api.internal${key}`, { method: req.method, headers }),
-        edge.keyPrefix ? { cf: { cacheKey: edge.keyPrefix + key } } : undefined)).pipe(
+      const forwarded = yield* Effect.tryPromise(() => edge.api(key, { method: req.method, headers })).pipe(
         Effect.tap(r => Effect.annotateCurrentSpan({ "ephem.api_cache": r.headers.get("cf-cache-status") ?? "NONE", "http.status_code": r.status })),
         Effect.withSpan("api.fetch", { attributes: { "ephem.api_key": key } }),
         Effect.option)

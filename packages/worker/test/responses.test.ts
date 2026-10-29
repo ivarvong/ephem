@@ -17,7 +17,7 @@ const u = (p: string) => new URL("http://x" + p)
 
 describe("Cache-Control policy", () => {
   it("deterministic: day, alignment, and position / magnetic with an explicit time", () => {
-    for (const p of [DAY, ALIGN, POS_T, "/v1/magnetic?lat=1&lon=1&time=2026-10-28T00:00:00Z"]) expect(deterministic(u(p))).toBe(true)
+    for (const p of [DAY, ALIGN, POS_T, "/v1/magnetic?lat=1&lon=1&time=2026-10-28T00:00:00Z", "/v1/crossing?body=sun&altitude=0&lat=1&lon=1&date=2026-10-28&tz=UTC"]) expect(deterministic(u(p))).toBe(true)
     for (const p of [POS_NOW, "/v1/magnetic?lat=1&lon=1", "/v1/weather?lat=1&lon=1", "/v1/health"]) expect(deterministic(u(p))).toBe(false)
   })
   it("internal (Api entrypoint, what Workers Caching stores)", () => {
@@ -55,7 +55,8 @@ describe("roles", () => {
   it("front role: /v1 GETs go to the Api (sorted query), relay its cache status, outward header; / /docs /mcp stay local", async () => {
     const seen: Array<string> = []
     const apiH = makeHandler(blocks(), { role: "api" })
-    const api = async (req: Request) => {
+    const api = async (pq: string, init: RequestInit) => {
+      const req = new Request("https://api.internal" + pq, init)
       seen.push(new URL(req.url).pathname + new URL(req.url).search)
       const r = await apiH(req); const h = new Headers(r.headers); h.set("cf-cache-status", seen.length === 1 ? "MISS" : "HIT")
       return new Response(r.body, { status: r.status, headers: h })
@@ -86,21 +87,17 @@ describe("Api entrypoint guards", () => {
     expect(defaultNoStore(new Response("nf", { status: 404 })).headers.get("cache-control")).toBe("no-store")
     expect(defaultNoStore(new Response("ok", { headers: { "cache-control": IMMUTABLE } })).headers.get("cache-control")).toBe(IMMUTABLE)
     const apiH = makeHandler(blocks(), { role: "api" }), rays: Array<string | null> = []
-    const front = makeHandler(blocks(), { role: "front", api: async req => { rays.push(req.headers.get("x-ephem-ray")); return apiH(req) } })
+    const front = makeHandler(blocks(), { role: "front", api: async (pq, init) => { rays.push(init.headers["x-ephem-ray"] ?? null); return apiH(new Request("https://api.internal" + pq, init)) } })
     await front(new Request("http://x" + POS_T, { headers: { "cf-ray": "8d0000-EWR" } }))
     expect(rays).toEqual(["8d0000-EWR"])
     expect((await apiH(new Request("http://api.internal/v1/nope"))).status).toBe(404)
   })
 })
 
-describe("front door key", () => {
-  it("keyPrefix sets cf.cacheKey to <prefix><path+sorted query>, so one build's Api answers never serve another's", async () => {
+describe("live routes", () => {
+  it("live (no time) position / magnetic are not forwarded; weather is", async () => {
     const { live, forwards } = await import("../src/responses.ts")
     expect(live(u(POS_NOW))).toBe(true); expect(live(u(POS_T))).toBe(false); expect(forwards("GET", u(POS_NOW))).toBe(false)
     expect(forwards("GET", u("/v1/weather?lat=1&lon=1"))).toBe(true); expect(forwards("POST", u(DAY))).toBe(false)
-    const keys: Array<unknown> = [], apiH = makeHandler(blocks(), { role: "api" })
-    const front = makeHandler(blocks(), { role: "front", keyPrefix: "/build-1", api: async (req, init) => { keys.push(init?.cf?.cacheKey); return apiH(req) } })
-    await front(new Request("http://x/v1/position?time=2026-10-28T11:51:00Z&lon=-74&lat=40.7"))
-    expect(keys).toEqual(["/build-1/v1/position?lat=40.7&lon=-74&time=2026-10-28T11%3A51%3A00Z"])
   })
 })

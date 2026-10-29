@@ -83,9 +83,9 @@ the entrypoints whose `exports` entry enables it (`cloudflare.config.ts`), drive
 ```
 eyeball ─▶ default (cache OFF: always runs → every request has its trace, Basin row, request.cf; `/` and `/mcp` live here)
              ├─ GET /v1/day, /v1/alignment, /v1/position|magnetic with time, /v1/weather
-             │     ─▶ ctx.exports.Api.fetch(path + sorted query, { cf: { cacheKey: "/<build>" + path + query } })
-             │        Api (cache ON) ─▶ blocks: ctx.exports.BlockStore  GET /de440/<sha16>/<i>  (cache ON) ─▶ R2 range read
-             │                      └▶ weather: ctx.exports.MetarFeed GET /feed/metars.cache.csv.gz (cache ON) ─▶ aviationweather.gov
+             │     ─▶ loopback.ts api: Api.fetch(path + sorted query, { cf: { cacheKey: "/v<CACHE_VERSION>" + path + query } })
+             │        Api (cache ON) ─▶ blocks: loopback.ts block  GET /block/v<N>/<sha16>/<i>  (BlockStore, cache ON) ─▶ R2 range read
+             │                      └▶ weather: loopback.ts feed  GET /feed/v<N>/metars.cache.csv.gz (MetarFeed, cache ON) ─▶ aviationweather.gov
              └─ live (position / magnetic without time): computed in the front door (blocks via BlockStore as above)
 ```
 
@@ -97,22 +97,34 @@ records the Api's `cf-cache-status` as `ephem.api_cache` (span) / `api_cache` (B
 
 | Route | Api (what Workers Caching stores) | Outward (browsers) | Why |
 | --- | --- | --- | --- |
-| `/v1/day`, `/v1/alignment`, `/v1/position` + `time`, `/v1/magnetic` + `time` | `public, max-age=31536000, immutable` | same | pure function of (query, build); the build is in the key |
+| `/v1/day`, `/v1/alignment`, `/v1/crossing` (window or date), `/v1/position` + `time`, `/v1/magnetic` + `time` | `public, max-age=31536000, immutable` | same | pure function of the query; CACHE_VERSION is in the key and is bumped when answers change |
 | `/v1/weather` | `public, max-age=0, stale-while-revalidate=300, stale-if-error=3600` | `private, max-age=30` | a hot key answers from cache at most one request (≤ 5 min) behind, plus the feed's 60 s |
 | `/v1/position`, `/v1/magnetic` without `time` | not forwarded (`API_LIVE` = `public, max-age=0` if called directly) | `no-store` / `public, max-age=3600` | max-age=0 forwarding measured +35 ms server p50 with no sequential hits (below) |
 | any non-200 from the Api, or no Cache-Control | `no-store` | `no-store` | errors are never cached (a router 404 was heuristically cached for 3 min on fd72f501) |
 | `/` | — (never forwarded) | `private, no-store` | the sky at request.cf's location; the cache key ignores request.cf |
 | `/docs`, `/openapi.json` | — | `public, max-age=300` | cheap; served by the front door |
 | `/mcp` | — (POST; tool calls go through the same forward) | — | |
-| BlockStore `/de440/<sha16>/<i>` | `public, max-age=31536000, immutable` | — | blocks never change for a file hash (in the path) |
-| MetarFeed `/feed/metars.cache.csv.gz` | `public, max-age=60, stale-while-revalidate=600, stale-if-error=86400` | — | upstream regenerates ~1/min; ≤ 10 min stale while one revalidation runs; a day of upstream outage still answers (STALE) |
+| BlockStore `/block/v<N>/<sha16>/<i>` | `public, max-age=31536000, immutable` | — | blocks never change for a file hash (in the path) |
+| MetarFeed `/feed/v<N>/metars.cache.csv.gz` | `public, max-age=60, stale-while-revalidate=600, stale-if-error=86400` | — | upstream regenerates ~1/min; ≤ 10 min stale while one revalidation runs; a day of upstream outage still answers (STALE) |
 
 **Keys and versions.** Workers Caching keys by entrypoint + path + query (+ ctx.props, + version unless
 `crossVersionCache`); the host is not in the key, nor are other request headers (the forwarded `x-ephem-ray` is not: two
 rays, same query → MISS then HIT, c72a360c). `crossVersionCache` is Worker-wide (it "applies to every entrypoint whose
-cache is on"), so with it on, the front door scopes the Api by build itself with `cf.cacheKey` = `/<__EPHEM_BUILD__>` +
-path + sorted query. `__EPHEM_BUILD__` is ISO time + random per evaluation of `wrangler.config.ts` (test/build.test.ts
-asserts it differs every time). Blocks (keyed by file hash) and the feed (data, not code) are shared across deploys.
+cache is on"). It is on (ivar, 2026-10-29: "Turn on cross version, but we keep our own version tag in code if we need to
+bump"), so cached answers, blocks and the feed survive deploys, and the only partition is **`CACHE_VERSION`** in
+`src/cache-version.ts`, carried by every loopback key: Api `cf.cacheKey` = `/v<N>` + path + sorted query, BlockStore
+`/block/v<N>/<sha16>/<i>`, MetarFeed `/feed/v<N>/…`. Two guardrails:
+
+- `src/loopback.ts` is the only code that fetches our entrypoints; `test/loopback.test.ts` scans `src/` and fails on any
+  other read of a binding off `ctx.exports`.
+- `test/golden.test.ts` hashes the bodies (minus provenance / diagnostics) of a fixed set of deterministic requests (day,
+  position + time, alignment, crossing, magnetic + time) into `test/golden/answers.json` with the CACHE_VERSION they were
+  recorded at. Answers changed and CACHE_VERSION did not → "answers changed: bump CACHE_VERSION and re-record". After a
+  bump: `npm run golden:record` (one command) and commit both. Two agents changing answers at once: whoever commits second
+  rebases, bumps and re-records.
+
+A bump makes every Api / block / feed entry a MISS once (blocks and feed refill from R2 / upstream). A format-only change
+to blocks or the feed needs a bump too (the golden test does not see it).
 
 **MetarFeed.** Every weather request in the Api fetches the feed through the loopback; `cf-cache-status` is the tier.
 Revalidations arrive as conditional requests and are passed upstream (If-None-Match / If-Modified-Since), so an

@@ -110,7 +110,7 @@ const fakeCache = (origin: (req: Request) => Promise<Response>, now: () => numbe
   const revalidate = async (): Promise<"EXPIRED" | "REVALIDATED" | "ERR"> => {
     const h: Record<string, string> = {}; const e = entry!
     if (e.headers.get("etag")) h["if-none-match"] = e.headers.get("etag")!
-    runs++; const r = await origin(new Request("https://feed.internal/feed/metars.cache.csv.gz", { headers: h }))
+    runs++; const r = await origin(new Request(`https://feed.internal${FEED_PATH}`, { headers: h }))
     if (r.status === 304) { const nh = new Headers(e.headers); r.headers.forEach((v, k) => nh.set(k, v)); entry = { body: e.body, headers: nh, at: now() }; return "REVALIDATED" }
     if (r.status === 200) { entry = { body: await r.arrayBuffer(), headers: r.headers, at: now() }; return "EXPIRED" }
     return "ERR"

@@ -4,13 +4,15 @@
 //   server read the bytes directly. The pure core never sees any of this.
 import { Context, Effect, Layer } from "effect"
 import { DE440, type BlockSource } from "@ephem/core"
+import { CACHE_TAG } from "./cache-version.ts"
 
 export const REC = DE440.recBytes
 /** Byte offset of block i in linux_p1550p2650.440 (two header records precede the data). */
 export const blockOffset = (i: number) => (2 + i) * REC
 export const R2_KEY = `de440/${DE440.file}`
-/** BlockStore path; it carries the file hash, so a different file can never be served from an old cache entry. */
-export const blockPath = (i: number) => `/de440/${DE440.sha256.slice(0, 16)}/${i}`
+/** BlockStore path: the cache tag (the cache is shared across deploys; src/cache-version.ts) and the file hash, so a
+ *  different file can never be served from an old cache entry. */
+export const blockPath = (i: number) => `/block/${CACHE_TAG}/${DE440.sha256.slice(0, 16)}/${i}`
 export const BLOCK_CACHE_CONTROL = "public, max-age=31536000, immutable"
 
 export class BlockLoadError extends Error {
@@ -93,9 +95,9 @@ export const makeBlocks = (fetchBlock: BlockFetch, l1Capacity = 512 /* 4.2 MB */
   return Layer.succeed(Blocks, { load })
 }
 
-/** Loopback to the BlockStore entrypoint (ctx.exports.BlockStore): Workers Caching answers or runs BlockStore. */
-export const loopbackBlocks = (store: () => { fetch(req: Request): Promise<Response> }): BlockFetch => async i => {
-  const r = await store().fetch(new Request(`https://blocks.internal${blockPath(i)}`))
+/** Blocks through the BlockStore loopback (src/loopback.ts block): Workers Caching answers or runs BlockStore. */
+export const loopbackBlocks = (fetchBlock: (i: number) => Promise<Response>): BlockFetch => async i => {
+  const r = await fetchBlock(i)
   if (r.status !== 200) throw new Error(`BlockStore ${r.status} for block ${i}: ${(await r.text()).slice(0, 200)}`)
   return { buf: await r.arrayBuffer(), status: r.headers.get("cf-cache-status") ?? "NONE" }
 }
@@ -105,7 +107,7 @@ export const loopbackBlocks = (store: () => { fetch(req: Request): Promise<Respo
 export const serveBlock = async (req: Request, origin: RangeOrigin): Promise<Response> => {
   const fail = (status: number, msg: string) => new Response(msg, { status, headers: { "cache-control": "no-store", "content-type": "text/plain" } })
   if (req.method !== "GET" && req.method !== "HEAD") return fail(405, "GET only")
-  const m = new RegExp(`^/de440/${DE440.sha256.slice(0, 16)}/(\\d+)$`).exec(new URL(req.url).pathname)
+  const m = new RegExp(`^/block/${CACHE_TAG}/${DE440.sha256.slice(0, 16)}/(\\d+)$`).exec(new URL(req.url).pathname)
   const i = m ? Number(m[1]) : NaN
   if (!Number.isInteger(i) || i < 0 || i >= DE440.nBlocks) return fail(404, "no such block")
   try {

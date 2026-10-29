@@ -8,9 +8,11 @@
 //                         tier) and keeps the parsed table in isolate memory (L1), keyed by the upstream ETag /
 //                         Last-Modified, so a version is parsed once per isolate.
 import { parseMetars, type Table } from "./metar.ts"
+import { CACHE_TAG } from "./cache-version.ts"
 
 export const FEED_URL = "https://aviationweather.gov/data/cache/metars.cache.csv.gz"
-export const FEED_PATH = "/feed/metars.cache.csv.gz"
+/** Carries the cache tag: the cache is shared across deploys (src/cache-version.ts). */
+export const FEED_PATH = `/feed/${CACHE_TAG}/metars.cache.csv.gz`
 export const USER_AGENT = "ephem.ivar.workers.dev (METAR nearest-station lookup)"
 
 /** Fresh window. Upstream says max-age=30 and regenerates the file about once a minute (Last-Modified moved 11:23 →
@@ -97,7 +99,7 @@ export interface FeedResult {
   readonly error: string | null
 }
 export interface FeedDeps {
-  /** GET FEED_PATH: ctx.exports.MetarFeed.fetch in prod; serveFeed directly in tests and the dev server */
+  /** GET FEED_PATH: src/loopback.ts feed in prod; serveFeed directly in tests and the dev server */
   readonly fetch: (req: Request) => Promise<Response>
   readonly now?: () => number
   /** refuse a parse with fewer stations (a truncated or wrong file); the real feed has ~5 250 */

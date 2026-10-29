@@ -97,8 +97,8 @@ describe("request rows (through the app)", () => {
   it("the front door's row for a forwarded /v1 call: route from the path set, api_cache from the loopback; Api rows carry role api", async () => {
     const api = makeHandler(makeBlocks(direct(r2Origin(bucket))), { role: "api" }, weather)
     const apiRows: RequestRow[] = []
-    const front = makeHandler(makeBlocks(direct(r2Origin(bucket))), { role: "front", api: async req => {
-      const r = await api(req, { role: "api", emit: row => { apiRows.push(row) } }); const h = new Headers(r.headers); h.set("cf-cache-status", "HIT")
+    const front = makeHandler(makeBlocks(direct(r2Origin(bucket))), { role: "front", api: async (pq, init) => {
+      const r = await api(new Request("https://api.internal" + pq, init), { role: "api", emit: row => { apiRows.push(row) } }); const h = new Headers(r.headers); h.set("cf-cache-status", "HIT")
       return new Response(r.body, { status: r.status, headers: h }) } }, weather)
     const rows: RequestRow[] = []
     const res = await front(new Request("http://x/v1/day?lat=40.7127&lon=-74.0059&date=2026-10-28&tz=America/New_York", { headers: { "user-agent": "curl/8", "cf-ray": "8d1-EWR" } }), { role: "front", emit: row => { rows.push(row) } })

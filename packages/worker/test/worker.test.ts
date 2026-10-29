@@ -42,7 +42,7 @@ const fakeCachedStore = (bucket: R2BucketLike) => {
 describe("block loading", () => {
   it("cold: one exact R2 range per block through BlockStore (MISS); L1 next; after eviction a cache HIT, never re-read from R2", async () => {
     const { bucket, log } = fakeR2(), cached = fakeCachedStore(bucket)
-    const handler = makeHandler(makeBlocks(loopbackBlocks(() => cached), 1))
+    const handler = makeHandler(makeBlocks(loopbackBlocks(i => cached.fetch(new Request(`https://blocks.internal${blockPath(i)}`))), 1))
     const get = async (p: string) => (await (await handler(new Request("http://x" + p))).json()) as any
     const q = "/v1/position?lat=40.7127&lon=-74.0059&height=-22.6&time=2026-10-28T11:51:00Z"
     const a = await get(q)
@@ -66,7 +66,7 @@ describe("block loading", () => {
     const { bucket } = fakeR2()
     const ok = await serveBlock(new Request("https://b" + blockPath(5442)), r2Origin(bucket))
     expect(ok.status).toBe(200); expect(ok.headers.get("cache-control")).toBe(BLOCK_CACHE_CONTROL); expect((await ok.arrayBuffer()).byteLength).toBe(REC)
-    for (const [req, st] of [[new Request("https://b/de440/0000000000000000/5442"), 404], [new Request("https://b" + blockPath(99_999_999)), 404],
+    for (const [req, st] of [[new Request("https://b/block/v1/0000000000000000/5442"), 404], [new Request("https://b" + blockPath(99_999_999)), 404],
       [new Request("https://b" + blockPath(5442), { method: "POST", body: "x" }), 405]] as const) {
       const r = await serveBlock(req, r2Origin(bucket)); expect(r.status).toBe(st); expect(r.headers.get("cache-control")).toBe("no-store")
     }
