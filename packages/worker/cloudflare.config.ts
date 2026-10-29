@@ -11,9 +11,9 @@ export default defineConfig({
 		},
 		// Workers Caching (never the Cache API). The front door (default) is uncached so it always runs; it forwards GET /v1/*
 		// to Api through ctx.exports. Api, BlockStore and MetarFeed are cached by their Cache-Control (src/responses.ts,
-		// src/blocks.ts, src/metar-feed.ts). crossVersionCache (Worker-wide) keeps DE440 blocks and the METAR feed warm across
-		// deploys (a cold block was 62 of a 92 ms miss, c72a360c); Api answers depend on the code, so the front door keys them
-		// by build itself (cf.cacheKey = /<__EPHEM_BUILD__>/v1/…). Admin is RPC only (RPC bypasses the cache anyway).
+		// src/blocks.ts, src/metar-feed.ts). crossVersionCache (Worker-wide) keeps answers, DE440 blocks and the METAR feed warm
+		// across deploys; every loopback key carries CACHE_VERSION (src/cache-version.ts, bumped by hand, enforced by
+		// test/golden.test.ts) (ivar, 2026-10-29). Admin is RPC only (RPC bypasses the cache anyway).
 		cache: { enabled: false, crossVersionCache: true },
 		exports: {
 			default: exports.worker({ cache: { enabled: false } }),
@@ -30,7 +30,7 @@ export default defineConfig({
 			// Basin stream ephem_requests (schema ops/basin/requests.schema.json); request rows, src/requestlog.ts.
 			LOGS: bindings.pipeline({ name: "d43e9589a2784812afda39033b6792eb" }),
 			VERSION: bindings.versionMetadata(),
-			REQUEST_LOGS: bindings.text("off"), // "off": no rows (logging-overhead A/B)
+			REQUEST_LOGS: bindings.text("on"), // "off": no rows (logging-overhead A/B)
 		},
 	},
 });
