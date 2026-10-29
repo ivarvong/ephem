@@ -150,8 +150,29 @@ revalidated, stale-on-error → stale (cache) or stale-on-error (isolate); `upst
 | METAR feed tier mix | l1 99.4%, l1-stale 0.5% | hit 99.1%, updating 0.9%; 282 parses (Api isolates in many colos), cpu p50/p99 3/41 ms |
 | upstream calls | 15 in 21 min (12 × 200 + parse, 3 × 304) | 7 in 7 min, max 1/min, all conditional (5 × 200, 2 × 304), upstream ms p50 41 |
 
-Workers Caching v2 (live in front door, weather SWR, crossVersionCache + build-scoped Api keys): see the lab notebook
-entry of 2026-10-29 for its numbers.
+**V2** (b49a8a02: live position/magnetic in the front door, weather Api `max-age=0, swr=300`, crossVersionCache), same
+client and probes [bc0mlb/rferp2 + load 12:51:22–12:56:51Z]:
+
+| | V2 (b49a8a02) |
+| --- | --- |
+| warm repeat day / position+time client p50/p99 · server | 93/194, 98/222 · 4 ms |
+| miss (first) server p50 | day 143, position 42 ms |
+| position now / magnetic now (front door) client p50/p99 · server | 97/207, 91/172 · 0 ms (back to the Cache API baseline) |
+| weather repeated key | UPDATING from the 2nd request: server p50 4 ms; 50 concurrent: 50 × UPDATING, server 6 ms |
+| 50 concurrent cold, day / position+time | 1 MISS + 49 HIT |
+| weather load client p50/p99 | 134/325 (c72a360c 148/396, Cache API 91/318); 487 Api / 489 front invocations: random keys never repeat |
+| feed tiers / upstream | hit 99.3%, updating 0.7%; 6 calls in 6 min, max 1/min, all conditional (4 × 200, 2 × 304) |
+
+**Why forwarded weather is slower than the Cache API design** (proven from invocation colos, both versions): every front
+door ran in EWR; the Api invocations behind them ran in IAD 60%, EWR 28%, ATL / ORD / MIA 12% (a MISS runs at the tier
+colo). The front door's `api.fetch` p50 by Api colo: EWR 18–20 ms, IAD 31–32, ATL 42–43, ORD 51–60, MIA 57–63 (b49a8a02 and
+c72a360c agree). Before, weather ran in-process (~1–2 ms). With unique lat/lon keys nothing hits, so every request pays
+the loopback plus the tier round trip; SWR only helps a key that repeats.
+
+**Live checks of the CACHE_VERSION design (2026-10-29):** a key cached on 1721a525 (git 31b437c) was HIT on 04a4ea0c (same
+commit, redeployed): entries survive a deploy. A fresh key on 04a4ea0c fetched its DE440 block as `blocks_hit` with an empty
+isolate L1: blocks stay warm across deploys. After CACHE_VERSION 2 → 3 (dc5bcd23, git e2cdc1a) the same key was MISS, then
+HIT (blocks MISS once too). The golden test caught the refraction change (31b437c bumped 1 → 2 and re-recorded).
 
 Where things run: a MISS runs the cached entrypoint at the tier colo (Api invocations for EWR traffic: IAD 94, EWR 53, ORD
 6, ATL 4, MIA 4 in one 5-min window, c72a360c), which is why a miss costs more wall than a front-door compute.
