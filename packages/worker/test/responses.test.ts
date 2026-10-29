@@ -95,9 +95,9 @@ describe("Api entrypoint guards", () => {
 })
 
 describe("live routes", () => {
-  it("live (no time) position / magnetic are not forwarded; weather is", async () => {
+  it("live (no time) position / magnetic and weather are not forwarded", async () => {
     const { live, forwards } = await import("../src/responses.ts")
     expect(live(u(POS_NOW))).toBe(true); expect(live(u(POS_T))).toBe(false); expect(forwards("GET", u(POS_NOW))).toBe(false)
-    expect(forwards("GET", u("/v1/weather?lat=1&lon=1"))).toBe(true); expect(forwards("POST", u(DAY))).toBe(false)
+    expect(live(u("/v1/weather?lat=1&lon=1"))).toBe(true); expect(forwards("GET", u("/v1/weather?lat=1&lon=1"))).toBe(false); expect(forwards("POST", u(DAY))).toBe(false)
   })
 })

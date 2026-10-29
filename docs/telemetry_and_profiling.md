@@ -82,11 +82,11 @@ the entrypoints whose `exports` entry enables it (`cloudflare.config.ts`), drive
 
 ```
 eyeball ─▶ default (cache OFF: always runs → every request has its trace, Basin row, request.cf; `/` and `/mcp` live here)
-             ├─ GET /v1/day, /v1/alignment, /v1/position|magnetic with time, /v1/weather
+             ├─ GET /v1/day, /v1/alignment, /v1/crossing, /v1/position|magnetic with time
              │     ─▶ loopback.ts api: Api.fetch(path + sorted query, { cf: { cacheKey: "/v<CACHE_VERSION>" + path + query } })
              │        Api (cache ON) ─▶ blocks: loopback.ts block  GET /block/v<N>/<sha16>/<i>  (BlockStore, cache ON) ─▶ R2 range read
              │                      └▶ weather: loopback.ts feed  GET /feed/v<N>/metars.cache.csv.gz (MetarFeed, cache ON) ─▶ aviationweather.gov
-             └─ live (position / magnetic without time): computed in the front door (blocks via BlockStore as above)
+             └─ live (position / magnetic without time) and /v1/weather: computed in the front door (blocks via BlockStore, feed via MetarFeed)
 ```
 
 A HIT never runs the cached entrypoint, so it leaves no Api invocation, trace or log; the front door always runs and
@@ -98,7 +98,7 @@ records the Api's `cf-cache-status` as `ephem.api_cache` (span) / `api_cache` (B
 | Route | Api (what Workers Caching stores) | Outward (browsers) | Why |
 | --- | --- | --- | --- |
 | `/v1/day`, `/v1/alignment`, `/v1/crossing` (window or date), `/v1/position` + `time`, `/v1/magnetic` + `time` | `public, max-age=31536000, immutable` | same | pure function of the query; CACHE_VERSION is in the key and is bumped when answers change |
-| `/v1/weather` | `public, max-age=0, stale-while-revalidate=300, stale-if-error=3600` | `private, max-age=30` | a hot key answers from cache at most one request (≤ 5 min) behind, plus the feed's 60 s |
+| `/v1/weather` | computed in the front door (feed via MetarFeed loopback); `API_WEATHER` = `public, max-age=0, stale-while-revalidate=300, stale-if-error=3600` only if called directly | `private, max-age=30` | keys almost never repeat, and forwarding paid the tier-colo round trip (see "Why forwarded weather is slower") |
 | `/v1/position`, `/v1/magnetic` without `time` | not forwarded (`API_LIVE` = `public, max-age=0` if called directly) | `no-store` / `public, max-age=3600` | max-age=0 forwarding measured +35 ms server p50 with no sequential hits (below) |
 | any non-200 from the Api, or no Cache-Control | `no-store` | `no-store` | errors are never cached (a router 404 was heuristically cached for 3 min on fd72f501) |
 | `/` | — (never forwarded) | `private, no-store` | the sky at request.cf's location; the cache key ignores request.cf |

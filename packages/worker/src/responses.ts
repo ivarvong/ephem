@@ -58,8 +58,11 @@ export const canonical = (url: URL): string => {
   return url.pathname + (q ? `?${q}` : "")
 }
 /** Live = a question about "now" (position / magnetic without time). max-age=0 forwarding measured +35 ms server p50
- *  and no sequential hits on c72a360c, so these run in the front door. Weather is forwarded (SWR for hot keys). */
-export const live = (url: URL) => (url.pathname === "/v1/position" || url.pathname === "/v1/magnetic") && !url.searchParams.has("time")
+ *  and no sequential hits on c72a360c, so these run in the front door. Weather too: its keys (lat/lon) almost never repeat
+ *  (487 Api runs for 489 requests, b49a8a02) and the forward paid the tier-colo round trip (api.fetch p50 18–63 ms by Api
+ *  colo); in the front door it is the MetarFeed loopback (cached, cross-version) plus a nearest-station lookup. */
+export const live = (url: URL) => url.pathname === "/v1/weather" ||
+  ((url.pathname === "/v1/position" || url.pathname === "/v1/magnetic") && !url.searchParams.has("time"))
 export const forwards = (method: string, url: URL) => (method === "GET" || method === "HEAD") && url.pathname.startsWith("/v1/") && !live(url)
 
 const withCacheControl = (res: HttpServerResponse.HttpServerResponse, cc: string | undefined) =>
