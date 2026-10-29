@@ -1,0 +1,152 @@
+[
+ {
+  "name": "ts",
+  "type": "timestamp",
+  "required": true
+ },
+ {
+  "name": "ray",
+  "type": "string",
+  "required": false
+ },
+ {
+  "name": "version",
+  "type": "string",
+  "required": false
+ },
+ {
+  "name": "build",
+  "type": "string",
+  "required": false
+ },
+ {
+  "name": "role",
+  "type": "string",
+  "required": true
+ },
+ {
+  "name": "colo",
+  "type": "string",
+  "required": false
+ },
+ {
+  "name": "country",
+  "type": "string",
+  "required": false
+ },
+ {
+  "name": "city",
+  "type": "string",
+  "required": false
+ },
+ {
+  "name": "method",
+  "type": "string",
+  "required": true
+ },
+ {
+  "name": "route",
+  "type": "string",
+  "required": false
+ },
+ {
+  "name": "status",
+  "type": "int32",
+  "required": true
+ },
+ {
+  "name": "ok",
+  "type": "bool",
+  "required": true
+ },
+ {
+  "name": "error_tag",
+  "type": "string",
+  "required": false
+ },
+ {
+  "name": "wall_ms",
+  "type": "float64",
+  "required": true
+ },
+ {
+  "name": "api_cache",
+  "type": "string",
+  "required": false
+ },
+ {
+  "name": "blocks_cache",
+  "type": "string",
+  "required": false
+ },
+ {
+  "name": "feed_cache",
+  "type": "string",
+  "required": false
+ },
+ {
+  "name": "blocks",
+  "type": "int32",
+  "required": false
+ },
+ {
+  "name": "blocks_mem",
+  "type": "int32",
+  "required": false
+ },
+ {
+  "name": "origin_reads",
+  "type": "int32",
+  "required": false
+ },
+ {
+  "name": "origin_bytes",
+  "type": "int64",
+  "required": false
+ },
+ {
+  "name": "block_reads",
+  "type": "int32",
+  "required": false
+ },
+ {
+  "name": "iterations",
+  "type": "int32",
+  "required": false
+ },
+ {
+  "name": "weather_tier",
+  "type": "string",
+  "required": false
+ },
+ {
+  "name": "data_age_s",
+  "type": "int32",
+  "required": false
+ },
+ {
+  "name": "mcp_method",
+  "type": "string",
+  "required": false
+ },
+ {
+  "name": "mcp_tool",
+  "type": "string",
+  "required": false
+ },
+ {
+  "name": "ua_family",
+  "type": "string",
+  "required": true
+ },
+ {
+  "name": "lat_r",
+  "type": "float64",
+  "required": false
+ },
+ {
+  "name": "lon_r",
+  "type": "float64",
+  "required": false
+ }
+]

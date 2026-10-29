@@ -1,0 +1,12 @@
+{
+  // Operator console for the Admin RPC. Never deployed: run it locally and it calls the *deployed* ephem Worker's
+  // Admin entrypoint through a remote service binding.
+  //   npx wrangler dev -c packages/worker/ops/wrangler.jsonc     (from the repo root; npx inside a workspace resolves
+  //   config from the workspace dir)   then   curl localhost:8788/status | /ingest | /ingest?force=1
+  "name": "ephem-ops",
+  "main": "index.ts",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": false,
+  "dev": { "port": 8788 },
+  "services": [{ "binding": "ADMIN", "service": "ephem", "entrypoint": "Admin", "remote": true }]
+}

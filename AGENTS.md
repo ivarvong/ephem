@@ -1,0 +1,14 @@
+# ephem: agent notes
+
+- Gate: `npm run typecheck && npm run lint && npm test` (the geodesic test needs `pyproj` on PATH). Accuracy bars are fixed.
+- Deploy: `cd packages/worker && cf deploy --message "…"` whenever the gate is green, then smoke prod
+  (https://ephem.ivar.workers.dev: `/`, `/docs`, `/v1/position`, `/v1/day`, `/v1/alignment`, `/v1/magnetic`, `/v1/weather`). wrangler must be
+  symlinked into `packages/worker/node_modules` (npm hoists it).
+- **Telemetry, traces and profiling: [docs/telemetry_and_profiling.md](docs/telemetry_and_profiling.md).** Measure by exact
+  version id; every reported number carries its version and trace or profile. Update that guide in the same change
+  whenever a command, span, attribute or gotcha changes.
+- MCP server at `/mcp` (src/mcp.ts, no deps; tools run the REST routes in-process). After every deploy run
+  `node --experimental-strip-types scripts/obs/mcp-probe.ts https://ephem.ivar.workers.dev`; spans and attributes in the guide's MCP section.
+- **Caching: Workers Cache only, never the Cache API (`caches.default`).** The default (eyeball) entrypoint has caching disabled and always runs (traces, logs, geolocation). It calls cache-enabled internal entrypoints (`Api`, `BlockStore`, `MetarFeed`) via `ctx.exports.<Entrypoint>.fetch()` and records their `cf-cache-status`. Measured (c72a360c): max-age=0 collapses concurrent misses (50 → 5 invocations) but runs the Api on every sequential request (+35 ms), so live "now" answers are computed in the front door, deterministic ones are `immutable`, weather is `max-age=0` + SWR. `crossVersionCache` is on (Worker-wide); the front door scopes Api keys by build via `cf.cacheKey`. Policy and numbers: docs/telemetry_and_profiling.md "Caching" (ivar, 2026-10-29).
+- **Request logs: Basin** (stream `ephem_requests` → Iceberg `ephem.requests`; tail Worker `ephem-tail` (packages/tail) → `ephem.invocations`). One row per request from waitUntil, built from span attributes in src/requestlog.ts: never await it, never log raw query/path/UA/IP, round lat/lon to 0.01°. Stream schemas are immutable (packages/worker/ops/basin/*.schema.json). Deploy ephem-tail before ephem whenever tailConsumers changes. `python3 scripts/obs/basin.py failures|sql|crosscheck`; guide section "Request logs (Basin)".
+- Design: [docs/DESIGN.md](docs/DESIGN.md).

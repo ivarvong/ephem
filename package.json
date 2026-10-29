@@ -1,0 +1,21 @@
+{
+  "name": "ephem",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "lint": "oxlint packages",
+    "typecheck": "tsc -p packages/core && tsc -p packages/api && tsc -p packages/worker && tsc -p packages/tail"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "fast-check": "^3.23.2",
+    "oxlint": "^1.88.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5",
+    "wrangler": "^4.154.0"
+  }
+}

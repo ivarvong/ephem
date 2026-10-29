@@ -1,0 +1,2766 @@
+{
+ "openapi": "3.1.0",
+ "info": {
+  "title": "Api",
+  "version": "0.0.1",
+  "description": "Sun and Moon positions, day events, crossings and alignments from JPL DE440. Every response carries provenance (implementation, ephemeris, DE440 blocks read, compute time, cache tiers) and, for /v1/position, /v1/day and /v1/crossing, a conventions block with every threshold, horizon, refraction input and geoid value used.\n\nChanges on 2026-10-29 (API correctness pass):\n1. /v1/day rise and set now depend on height. An explicit `height` is metres above the WGS-84 ellipsoid (unchanged meaning), and the sea-horizon dip is taken from the height above mean sea level (EGM96). Example: in New York `height=0` is ≈ 33 m above sea level, so sunrise is ≈ 1 min earlier and sunset ≈ 1 min later than before. Pass `heightRef=msl` for a height above sea level (iOS `altitude`, maps); omit `height` to stand at sea level, which gives the previous times (Sun within 1 ms).\n2. `apparentAltitude` in /v1/position is now `number | null`: refraction is applied down to the observer's horizon (default the sea horizon, −dip) and the value is null below it or below −1.6963°. It used to repeat the true altitude below −1°.\n3. Unknown query parameters are rejected with 400 InvalidRequest (kind UnknownParameter, with the allowed list). They used to be ignored.\n4. New: /v1/crossing; on /v1/day `temperature`, `pressure`, `horizon` (sea | geometric | degrees), `horizonProfile`, `limb`; `heightRef` everywhere; `altitudeRate` and `azimuthRate` (°/min) in positions; observer heightMsl and geoidUndulation."
+ },
+ "paths": {
+  "/v1/position": {
+   "get": {
+    "tags": [
+     "sky"
+    ],
+    "operationId": "sky.position",
+    "parameters": [
+     {
+      "name": "lat",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "lon",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "height",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "heightRef",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "ellipsoid",
+        "msl"
+       ]
+      },
+      "required": false
+     },
+     {
+      "name": "time",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "temperature",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "pressure",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "horizon",
+      "in": "query",
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string",
+         "enum": [
+          "sea",
+          "geometric"
+         ]
+        },
+        {
+         "type": "string"
+        }
+       ]
+      },
+      "required": false
+     },
+     {
+      "name": "dut1",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     }
+    ],
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "Success",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "time": {
+           "type": "object",
+           "properties": {
+            "utc": {
+             "type": "string"
+            },
+            "jdTT": {
+             "type": "number"
+            },
+            "jdUT1": {
+             "type": "number"
+            },
+            "dut1": {
+             "type": "number"
+            },
+            "deltaT": {
+             "type": "number"
+            }
+           },
+           "required": [
+            "utc",
+            "jdTT",
+            "jdUT1",
+            "dut1",
+            "deltaT"
+           ],
+           "additionalProperties": false
+          },
+          "observer": {
+           "type": "object",
+           "properties": {
+            "lat": {
+             "type": "number",
+             "minimum": -90,
+             "maximum": 90
+            },
+            "lon": {
+             "type": "number",
+             "minimum": -180,
+             "maximum": 180
+            },
+            "height": {
+             "type": "number",
+             "description": "Metres above the WGS-84 ellipsoid (same as heightEllipsoid; kept for compatibility)."
+            },
+            "heightEllipsoid": {
+             "type": "number"
+            },
+            "heightMsl": {
+             "type": "number",
+             "description": "Metres above the EGM96 geoid (≈ mean sea level)."
+            },
+            "geoidUndulation": {
+             "type": "number",
+             "description": "EGM96 N, metres: heightEllipsoid = heightMsl + geoidUndulation."
+            },
+            "heightRef": {
+             "type": "string",
+             "enum": [
+              "ellipsoid",
+              "msl",
+              "default"
+             ],
+             "description": "What the request's height was measured from; default = no height given, the observer is on the geoid."
+            }
+           },
+           "required": [
+            "lat",
+            "lon",
+            "height",
+            "heightEllipsoid",
+            "heightMsl",
+            "geoidUndulation",
+            "heightRef"
+           ],
+           "additionalProperties": false
+          },
+          "sun": {
+           "type": "object",
+           "properties": {
+            "azimuth": {
+             "type": "number"
+            },
+            "altitude": {
+             "type": "number"
+            },
+            "apparentAltitude": {
+             "anyOf": [
+              {
+               "type": "number"
+              },
+              {
+               "type": "null"
+              }
+             ],
+             "description": "Refracted altitude, degrees; null when it would lie below the observer's horizon or the refraction model's floor (conventions.refraction.validFrom). CHANGED 2026-10-29: was always a number, and repeated the true altitude below −1°."
+            },
+            "altitudeRate": {
+             "type": "number",
+             "description": "d(altitude)/dt, degrees per minute (true altitude; symmetric difference over ±10 s)."
+            },
+            "azimuthRate": {
+             "type": "number",
+             "description": "d(azimuth)/dt, degrees per minute (symmetric difference over ±10 s)."
+            },
+            "rightAscension": {
+             "type": "number"
+            },
+            "declination": {
+             "type": "number"
+            },
+            "distanceKm": {
+             "type": "number"
+            },
+            "angularRadius": {
+             "type": "number"
+            },
+            "eclipticLongitude": {
+             "type": "number"
+            },
+            "eclipticLatitude": {
+             "type": "number"
+            }
+           },
+           "required": [
+            "azimuth",
+            "altitude",
+            "apparentAltitude",
+            "altitudeRate",
+            "azimuthRate",
+            "rightAscension",
+            "declination",
+            "distanceKm",
+            "angularRadius",
+            "eclipticLongitude",
+            "eclipticLatitude"
+           ],
+           "additionalProperties": false
+          },
+          "moon": {
+           "type": "object",
+           "properties": {
+            "azimuth": {
+             "type": "number"
+            },
+            "altitude": {
+             "type": "number"
+            },
+            "apparentAltitude": {
+             "anyOf": [
+              {
+               "type": "number"
+              },
+              {
+               "type": "null"
+              }
+             ],
+             "description": "Refracted altitude, degrees; null when it would lie below the observer's horizon or the refraction model's floor (conventions.refraction.validFrom). CHANGED 2026-10-29: was always a number, and repeated the true altitude below −1°."
+            },
+            "altitudeRate": {
+             "type": "number",
+             "description": "d(altitude)/dt, degrees per minute (true altitude; symmetric difference over ±10 s)."
+            },
+            "azimuthRate": {
+             "type": "number",
+             "description": "d(azimuth)/dt, degrees per minute (symmetric difference over ±10 s)."
+            },
+            "rightAscension": {
+             "type": "number"
+            },
+            "declination": {
+             "type": "number"
+            },
+            "distanceKm": {
+             "type": "number"
+            },
+            "angularRadius": {
+             "type": "number"
+            },
+            "eclipticLongitude": {
+             "type": "number"
+            },
+            "eclipticLatitude": {
+             "type": "number"
+            },
+            "phase": {
+             "type": "object",
+             "properties": {
+              "phaseAngle": {
+               "type": "number"
+              },
+              "illuminatedFraction": {
+               "type": "number"
+              },
+              "elongation": {
+               "type": "number"
+              },
+              "brightLimbAngle": {
+               "type": "number"
+              },
+              "name": {
+               "type": "string",
+               "enum": [
+                "new",
+                "waxing crescent",
+                "first quarter",
+                "waxing gibbous",
+                "full",
+                "waning gibbous",
+                "last quarter",
+                "waning crescent"
+               ]
+              }
+             },
+             "required": [
+              "phaseAngle",
+              "illuminatedFraction",
+              "elongation",
+              "brightLimbAngle",
+              "name"
+             ],
+             "additionalProperties": false
+            }
+           },
+           "required": [
+            "azimuth",
+            "altitude",
+            "apparentAltitude",
+            "altitudeRate",
+            "azimuthRate",
+            "rightAscension",
+            "declination",
+            "distanceKm",
+            "angularRadius",
+            "eclipticLongitude",
+            "eclipticLatitude",
+            "phase"
+           ],
+           "additionalProperties": false
+          },
+          "conventions": {
+           "type": "object",
+           "properties": {
+            "refraction": {
+             "type": "object",
+             "properties": {
+              "model": {
+               "type": "string"
+              },
+              "temperatureC": {
+               "type": "number"
+              },
+              "pressureHpa": {
+               "type": "number"
+              },
+              "validFrom": {
+               "type": "number",
+               "description": "Lowest apparent altitude that gets a value: max(horizon, the model floor −1.6963°). Below it apparentAltitude is null."
+              },
+              "validTo": {
+               "type": "number"
+              },
+              "uncertainty": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "model",
+              "temperatureC",
+              "pressureHpa",
+              "validFrom",
+              "validTo",
+              "uncertainty"
+             ],
+             "additionalProperties": false
+            },
+            "horizon": {
+             "type": "object",
+             "properties": {
+              "kind": {
+               "type": "string",
+               "enum": [
+                "sea",
+                "geometric",
+                "custom",
+                "profile"
+               ]
+              },
+              "altitude": {
+               "anyOf": [
+                {
+                 "type": "number"
+                },
+                {
+                 "type": "null"
+                }
+               ],
+               "description": "Apparent altitude of the horizon, degrees (null for a profile)."
+              },
+              "dip": {
+               "anyOf": [
+                {
+                 "type": "number"
+                },
+                {
+                 "type": "null"
+                }
+               ],
+               "description": "Sea-horizon dip, degrees: √(1 − k)·acos(R/(R + heightMsl)), k = terrestrialRefractionK, R = 6 371 008.8 m."
+              },
+              "terrestrialRefractionK": {
+               "type": "number"
+              },
+              "profile": {
+               "anyOf": [
+                {
+                 "type": "array",
+                 "items": {
+                  "type": "object",
+                  "properties": {
+                   "azimuth": {
+                    "type": "number"
+                   },
+                   "elevation": {
+                    "type": "number"
+                   }
+                  },
+                  "required": [
+                   "azimuth",
+                   "elevation"
+                  ],
+                  "additionalProperties": false
+                 }
+                },
+                {
+                 "type": "null"
+                }
+               ]
+              }
+             },
+             "required": [
+              "kind",
+              "altitude",
+              "dip",
+              "terrestrialRefractionK",
+              "profile"
+             ],
+             "additionalProperties": false
+            },
+            "geoid": {
+             "type": "object",
+             "properties": {
+              "model": {
+               "type": "string",
+               "enum": [
+                "EGM96"
+               ]
+              },
+              "source": {
+               "type": "string"
+              },
+              "interpolationErrorM": {
+               "type": "object",
+               "properties": {
+                "rms": {
+                 "type": "number"
+                },
+                "p99": {
+                 "type": "number"
+                },
+                "max": {
+                 "type": "number"
+                }
+               },
+               "required": [
+                "rms",
+                "p99",
+                "max"
+               ],
+               "additionalProperties": false
+              }
+             },
+             "required": [
+              "model",
+              "source",
+              "interpolationErrorM"
+             ],
+             "additionalProperties": false
+            },
+            "rates": {
+             "type": "object",
+             "properties": {
+              "unit": {
+               "type": "string",
+               "enum": [
+                "deg/min"
+               ]
+              },
+              "method": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "unit",
+              "method"
+             ],
+             "additionalProperties": false
+            }
+           },
+           "required": [
+            "refraction",
+            "horizon",
+            "geoid",
+            "rates"
+           ],
+           "additionalProperties": false
+          },
+          "provenance": {
+           "type": "object",
+           "properties": {
+            "implementation": {
+             "type": "string"
+            },
+            "version": {
+             "type": "string"
+            },
+            "ephemeris": {
+             "type": "string"
+            },
+            "diagnostics": {
+             "type": "object",
+             "properties": {
+              "blocks": {
+               "type": "array",
+               "items": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+               }
+              },
+              "computeMs": {
+               "type": "number"
+              },
+              "cache": {
+               "type": "object",
+               "additionalProperties": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+               }
+              }
+             },
+             "required": [
+              "blocks",
+              "computeMs"
+             ],
+             "additionalProperties": false
+            }
+           },
+           "required": [
+            "implementation",
+            "version",
+            "ephemeris"
+           ],
+           "additionalProperties": false
+          }
+         },
+         "required": [
+          "time",
+          "observer",
+          "sun",
+          "moon",
+          "conventions",
+          "provenance"
+         ],
+         "additionalProperties": false
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "OutOfRange | InvalidInput",
+      "content": {
+       "application/json": {
+        "schema": {
+         "anyOf": [
+          {
+           "$ref": "#/components/schemas/OutOfRangeEncoded"
+          },
+          {
+           "$ref": "#/components/schemas/InvalidInputEncoded"
+          }
+         ]
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/day": {
+   "get": {
+    "tags": [
+     "sky"
+    ],
+    "operationId": "sky.day",
+    "parameters": [
+     {
+      "name": "lat",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "lon",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "height",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "heightRef",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "ellipsoid",
+        "msl"
+       ]
+      },
+      "required": false
+     },
+     {
+      "name": "date",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "tz",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "temperature",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "pressure",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "horizon",
+      "in": "query",
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string",
+         "enum": [
+          "sea",
+          "geometric"
+         ]
+        },
+        {
+         "type": "string"
+        }
+       ]
+      },
+      "required": false
+     },
+     {
+      "name": "horizonProfile",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "limb",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "upper",
+        "center",
+        "lower"
+       ]
+      },
+      "required": false
+     },
+     {
+      "name": "dut1",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     }
+    ],
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "Success",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "date": {
+           "type": "string"
+          },
+          "tz": {
+           "type": "string"
+          },
+          "start": {
+           "type": "string"
+          },
+          "end": {
+           "type": "string"
+          },
+          "observer": {
+           "type": "object",
+           "properties": {
+            "lat": {
+             "type": "number",
+             "minimum": -90,
+             "maximum": 90
+            },
+            "lon": {
+             "type": "number",
+             "minimum": -180,
+             "maximum": 180
+            },
+            "height": {
+             "type": "number",
+             "description": "Metres above the WGS-84 ellipsoid (same as heightEllipsoid; kept for compatibility)."
+            },
+            "heightEllipsoid": {
+             "type": "number"
+            },
+            "heightMsl": {
+             "type": "number",
+             "description": "Metres above the EGM96 geoid (≈ mean sea level)."
+            },
+            "geoidUndulation": {
+             "type": "number",
+             "description": "EGM96 N, metres: heightEllipsoid = heightMsl + geoidUndulation."
+            },
+            "heightRef": {
+             "type": "string",
+             "enum": [
+              "ellipsoid",
+              "msl",
+              "default"
+             ],
+             "description": "What the request's height was measured from; default = no height given, the observer is on the geoid."
+            }
+           },
+           "required": [
+            "lat",
+            "lon",
+            "height",
+            "heightEllipsoid",
+            "heightMsl",
+            "geoidUndulation",
+            "heightRef"
+           ],
+           "additionalProperties": false
+          },
+          "events": {
+           "type": "array",
+           "items": {
+            "type": "object",
+            "properties": {
+             "time": {
+              "type": "string"
+             },
+             "body": {
+              "type": "string",
+              "enum": [
+               "sun",
+               "moon"
+              ]
+             },
+             "kind": {
+              "type": "string",
+              "enum": [
+               "rise",
+               "set",
+               "transit",
+               "civilDawn",
+               "civilDusk",
+               "nauticalDawn",
+               "nauticalDusk",
+               "astronomicalDawn",
+               "astronomicalDusk",
+               "goldenHourStart",
+               "goldenHourEnd",
+               "blueHourStart",
+               "blueHourEnd"
+              ]
+             }
+            },
+            "required": [
+             "time",
+             "body",
+             "kind"
+            ],
+            "additionalProperties": false
+           }
+          },
+          "conventions": {
+           "type": "object",
+           "properties": {
+            "riseSet": {
+             "type": "object",
+             "properties": {
+              "limb": {
+               "type": "string",
+               "enum": [
+                "upper",
+                "center",
+                "lower"
+               ]
+              },
+              "definition": {
+               "type": "string"
+              },
+              "horizon": {
+               "type": "object",
+               "properties": {
+                "kind": {
+                 "type": "string",
+                 "enum": [
+                  "sea",
+                  "geometric",
+                  "custom",
+                  "profile"
+                 ]
+                },
+                "altitude": {
+                 "anyOf": [
+                  {
+                   "type": "number"
+                  },
+                  {
+                   "type": "null"
+                  }
+                 ],
+                 "description": "Apparent altitude of the horizon, degrees (null for a profile)."
+                },
+                "dip": {
+                 "anyOf": [
+                  {
+                   "type": "number"
+                  },
+                  {
+                   "type": "null"
+                  }
+                 ],
+                 "description": "Sea-horizon dip, degrees: √(1 − k)·acos(R/(R + heightMsl)), k = terrestrialRefractionK, R = 6 371 008.8 m."
+                },
+                "terrestrialRefractionK": {
+                 "type": "number"
+                },
+                "profile": {
+                 "anyOf": [
+                  {
+                   "type": "array",
+                   "items": {
+                    "type": "object",
+                    "properties": {
+                     "azimuth": {
+                      "type": "number"
+                     },
+                     "elevation": {
+                      "type": "number"
+                     }
+                    },
+                    "required": [
+                     "azimuth",
+                     "elevation"
+                    ],
+                    "additionalProperties": false
+                   }
+                  },
+                  {
+                   "type": "null"
+                  }
+                 ]
+                }
+               },
+               "required": [
+                "kind",
+                "altitude",
+                "dip",
+                "terrestrialRefractionK",
+                "profile"
+               ],
+               "additionalProperties": false
+              },
+              "refraction": {
+               "type": "object",
+               "properties": {
+                "model": {
+                 "type": "string"
+                },
+                "temperatureC": {
+                 "type": "number"
+                },
+                "pressureHpa": {
+                 "type": "number"
+                },
+                "atHorizon": {
+                 "anyOf": [
+                  {
+                   "type": "number"
+                  },
+                  {
+                   "type": "null"
+                  }
+                 ],
+                 "description": "Refraction at the horizon altitude, degrees (null for a profile: it varies with azimuth)."
+                }
+               },
+               "required": [
+                "model",
+                "temperatureC",
+                "pressureHpa",
+                "atHorizon"
+               ],
+               "additionalProperties": false
+              },
+              "trueLimbAltitude": {
+               "anyOf": [
+                {
+                 "type": "number"
+                },
+                {
+                 "type": "null"
+                }
+               ],
+               "description": "True (vacuum) altitude of the chosen limb at rise/set = horizon altitude − refraction (null for a profile)."
+              }
+             },
+             "required": [
+              "limb",
+              "definition",
+              "horizon",
+              "refraction",
+              "trueLimbAltitude"
+             ],
+             "additionalProperties": false
+            },
+            "transit": {
+             "type": "string"
+            },
+            "twilight": {
+             "type": "object",
+             "properties": {
+              "quantity": {
+               "type": "string"
+              },
+              "civil": {
+               "type": "number"
+              },
+              "nautical": {
+               "type": "number"
+              },
+              "astronomical": {
+               "type": "number"
+              }
+             },
+             "required": [
+              "quantity",
+              "civil",
+              "nautical",
+              "astronomical"
+             ],
+             "additionalProperties": false
+            },
+            "goldenHour": {
+             "type": "object",
+             "properties": {
+              "from": {
+               "type": "number"
+              },
+              "to": {
+               "type": "number"
+              }
+             },
+             "required": [
+              "from",
+              "to"
+             ],
+             "additionalProperties": false
+            },
+            "blueHour": {
+             "type": "object",
+             "properties": {
+              "from": {
+               "type": "number"
+              },
+              "to": {
+               "type": "number"
+              }
+             },
+             "required": [
+              "from",
+              "to"
+             ],
+             "additionalProperties": false
+            },
+            "geoid": {
+             "type": "object",
+             "properties": {
+              "model": {
+               "type": "string",
+               "enum": [
+                "EGM96"
+               ]
+              },
+              "source": {
+               "type": "string"
+              },
+              "interpolationErrorM": {
+               "type": "object",
+               "properties": {
+                "rms": {
+                 "type": "number"
+                },
+                "p99": {
+                 "type": "number"
+                },
+                "max": {
+                 "type": "number"
+                }
+               },
+               "required": [
+                "rms",
+                "p99",
+                "max"
+               ],
+               "additionalProperties": false
+              }
+             },
+             "required": [
+              "model",
+              "source",
+              "interpolationErrorM"
+             ],
+             "additionalProperties": false
+            }
+           },
+           "required": [
+            "riseSet",
+            "transit",
+            "twilight",
+            "goldenHour",
+            "blueHour",
+            "geoid"
+           ],
+           "additionalProperties": false
+          },
+          "provenance": {
+           "type": "object",
+           "properties": {
+            "implementation": {
+             "type": "string"
+            },
+            "version": {
+             "type": "string"
+            },
+            "ephemeris": {
+             "type": "string"
+            },
+            "diagnostics": {
+             "type": "object",
+             "properties": {
+              "blocks": {
+               "type": "array",
+               "items": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+               }
+              },
+              "computeMs": {
+               "type": "number"
+              },
+              "cache": {
+               "type": "object",
+               "additionalProperties": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+               }
+              }
+             },
+             "required": [
+              "blocks",
+              "computeMs"
+             ],
+             "additionalProperties": false
+            }
+           },
+           "required": [
+            "implementation",
+            "version",
+            "ephemeris"
+           ],
+           "additionalProperties": false
+          }
+         },
+         "required": [
+          "date",
+          "tz",
+          "start",
+          "end",
+          "observer",
+          "events",
+          "conventions",
+          "provenance"
+         ],
+         "additionalProperties": false
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "OutOfRange | InvalidInput",
+      "content": {
+       "application/json": {
+        "schema": {
+         "anyOf": [
+          {
+           "$ref": "#/components/schemas/OutOfRangeEncoded"
+          },
+          {
+           "$ref": "#/components/schemas/InvalidInputEncoded"
+          }
+         ]
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/crossing": {
+   "get": {
+    "tags": [
+     "sky"
+    ],
+    "operationId": "sky.crossing",
+    "parameters": [
+     {
+      "name": "lat",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "lon",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "height",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "heightRef",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "ellipsoid",
+        "msl"
+       ]
+      },
+      "required": false
+     },
+     {
+      "name": "body",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "sun",
+        "moon"
+       ]
+      },
+      "required": true
+     },
+     {
+      "name": "altitude",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "altitudeType",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "true",
+        "apparent"
+       ]
+      },
+      "required": false
+     },
+     {
+      "name": "horizonProfile",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "limb",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "upper",
+        "center",
+        "lower"
+       ]
+      },
+      "required": false
+     },
+     {
+      "name": "direction",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "rise",
+        "set",
+        "either"
+       ]
+      },
+      "required": false
+     },
+     {
+      "name": "start",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "end",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "date",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "tz",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "temperature",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "pressure",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "dut1",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     }
+    ],
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "Success",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "body": {
+           "type": "string",
+           "enum": [
+            "sun",
+            "moon"
+           ]
+          },
+          "start": {
+           "type": "string"
+          },
+          "end": {
+           "type": "string"
+          },
+          "observer": {
+           "type": "object",
+           "properties": {
+            "lat": {
+             "type": "number",
+             "minimum": -90,
+             "maximum": 90
+            },
+            "lon": {
+             "type": "number",
+             "minimum": -180,
+             "maximum": 180
+            },
+            "height": {
+             "type": "number",
+             "description": "Metres above the WGS-84 ellipsoid (same as heightEllipsoid; kept for compatibility)."
+            },
+            "heightEllipsoid": {
+             "type": "number"
+            },
+            "heightMsl": {
+             "type": "number",
+             "description": "Metres above the EGM96 geoid (≈ mean sea level)."
+            },
+            "geoidUndulation": {
+             "type": "number",
+             "description": "EGM96 N, metres: heightEllipsoid = heightMsl + geoidUndulation."
+            },
+            "heightRef": {
+             "type": "string",
+             "enum": [
+              "ellipsoid",
+              "msl",
+              "default"
+             ],
+             "description": "What the request's height was measured from; default = no height given, the observer is on the geoid."
+            }
+           },
+           "required": [
+            "lat",
+            "lon",
+            "height",
+            "heightEllipsoid",
+            "heightMsl",
+            "geoidUndulation",
+            "heightRef"
+           ],
+           "additionalProperties": false
+          },
+          "crossings": {
+           "type": "array",
+           "items": {
+            "type": "object",
+            "properties": {
+             "time": {
+              "type": "string"
+             },
+             "direction": {
+              "type": "string",
+              "enum": [
+               "rise",
+               "set"
+              ]
+             },
+             "azimuth": {
+              "type": "number"
+             },
+             "altitude": {
+              "type": "number",
+              "description": "True altitude of the body centre at the crossing."
+             },
+             "altitudeRate": {
+              "type": "number",
+              "description": "d(true altitude)/dt at the crossing, degrees per minute (±10 s symmetric difference)."
+             }
+            },
+            "required": [
+             "time",
+             "direction",
+             "azimuth",
+             "altitude",
+             "altitudeRate"
+            ],
+            "additionalProperties": false
+           }
+          },
+          "conventions": {
+           "type": "object",
+           "properties": {
+            "definition": {
+             "type": "string"
+            },
+            "limb": {
+             "type": "string",
+             "enum": [
+              "upper",
+              "center",
+              "lower"
+             ]
+            },
+            "altitudeType": {
+             "type": "string",
+             "enum": [
+              "true",
+              "apparent",
+              "profile"
+             ]
+            },
+            "trueLimbAltitude": {
+             "anyOf": [
+              {
+               "type": "number"
+              },
+              {
+               "type": "null"
+              }
+             ],
+             "description": "True altitude of the chosen limb at the crossing (null for a profile)."
+            },
+            "refraction": {
+             "anyOf": [
+              {
+               "type": "object",
+               "properties": {
+                "model": {
+                 "type": "string"
+                },
+                "temperatureC": {
+                 "type": "number"
+                },
+                "pressureHpa": {
+                 "type": "number"
+                }
+               },
+               "required": [
+                "model",
+                "temperatureC",
+                "pressureHpa"
+               ],
+               "additionalProperties": false
+              },
+              {
+               "type": "null"
+              }
+             ]
+            },
+            "horizon": {
+             "anyOf": [
+              {
+               "type": "object",
+               "properties": {
+                "kind": {
+                 "type": "string",
+                 "enum": [
+                  "sea",
+                  "geometric",
+                  "custom",
+                  "profile"
+                 ]
+                },
+                "altitude": {
+                 "anyOf": [
+                  {
+                   "type": "number"
+                  },
+                  {
+                   "type": "null"
+                  }
+                 ],
+                 "description": "Apparent altitude of the horizon, degrees (null for a profile)."
+                },
+                "dip": {
+                 "anyOf": [
+                  {
+                   "type": "number"
+                  },
+                  {
+                   "type": "null"
+                  }
+                 ],
+                 "description": "Sea-horizon dip, degrees: √(1 − k)·acos(R/(R + heightMsl)), k = terrestrialRefractionK, R = 6 371 008.8 m."
+                },
+                "terrestrialRefractionK": {
+                 "type": "number"
+                },
+                "profile": {
+                 "anyOf": [
+                  {
+                   "type": "array",
+                   "items": {
+                    "type": "object",
+                    "properties": {
+                     "azimuth": {
+                      "type": "number"
+                     },
+                     "elevation": {
+                      "type": "number"
+                     }
+                    },
+                    "required": [
+                     "azimuth",
+                     "elevation"
+                    ],
+                    "additionalProperties": false
+                   }
+                  },
+                  {
+                   "type": "null"
+                  }
+                 ]
+                }
+               },
+               "required": [
+                "kind",
+                "altitude",
+                "dip",
+                "terrestrialRefractionK",
+                "profile"
+               ],
+               "additionalProperties": false
+              },
+              {
+               "type": "null"
+              }
+             ]
+            },
+            "geoid": {
+             "type": "object",
+             "properties": {
+              "model": {
+               "type": "string",
+               "enum": [
+                "EGM96"
+               ]
+              },
+              "source": {
+               "type": "string"
+              },
+              "interpolationErrorM": {
+               "type": "object",
+               "properties": {
+                "rms": {
+                 "type": "number"
+                },
+                "p99": {
+                 "type": "number"
+                },
+                "max": {
+                 "type": "number"
+                }
+               },
+               "required": [
+                "rms",
+                "p99",
+                "max"
+               ],
+               "additionalProperties": false
+              }
+             },
+             "required": [
+              "model",
+              "source",
+              "interpolationErrorM"
+             ],
+             "additionalProperties": false
+            }
+           },
+           "required": [
+            "definition",
+            "limb",
+            "altitudeType",
+            "trueLimbAltitude",
+            "refraction",
+            "horizon",
+            "geoid"
+           ],
+           "additionalProperties": false
+          },
+          "provenance": {
+           "type": "object",
+           "properties": {
+            "implementation": {
+             "type": "string"
+            },
+            "version": {
+             "type": "string"
+            },
+            "ephemeris": {
+             "type": "string"
+            },
+            "diagnostics": {
+             "type": "object",
+             "properties": {
+              "blocks": {
+               "type": "array",
+               "items": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+               }
+              },
+              "computeMs": {
+               "type": "number"
+              },
+              "cache": {
+               "type": "object",
+               "additionalProperties": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+               }
+              }
+             },
+             "required": [
+              "blocks",
+              "computeMs"
+             ],
+             "additionalProperties": false
+            }
+           },
+           "required": [
+            "implementation",
+            "version",
+            "ephemeris"
+           ],
+           "additionalProperties": false
+          }
+         },
+         "required": [
+          "body",
+          "start",
+          "end",
+          "observer",
+          "crossings",
+          "conventions",
+          "provenance"
+         ],
+         "additionalProperties": false
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "OutOfRange | InvalidInput",
+      "content": {
+       "application/json": {
+        "schema": {
+         "anyOf": [
+          {
+           "$ref": "#/components/schemas/OutOfRangeEncoded"
+          },
+          {
+           "$ref": "#/components/schemas/InvalidInputEncoded"
+          }
+         ]
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/alignment": {
+   "get": {
+    "tags": [
+     "sky"
+    ],
+    "operationId": "sky.alignment",
+    "parameters": [
+     {
+      "name": "body",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "sun",
+        "moon"
+       ]
+      },
+      "required": true
+     },
+     {
+      "name": "targetLat",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "targetLon",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "targetHeight",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "observerHeight",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "start",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "end",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "stepSeconds",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "maxDistanceKm",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "temperature",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "pressure",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "dut1",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "observerLat",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "observerLon",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     }
+    ],
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "Success",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "body": {
+           "type": "string",
+           "enum": [
+            "sun",
+            "moon"
+           ]
+          },
+          "track": {
+           "type": "array",
+           "items": {
+            "type": "object",
+            "properties": {
+             "time": {
+              "type": "string"
+             },
+             "lat": {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90
+             },
+             "lon": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180
+             },
+             "distanceKm": {
+              "type": "number"
+             },
+             "azimuth": {
+              "type": "number"
+             },
+             "apparentAltitude": {
+              "type": "number"
+             },
+             "angularRadius": {
+              "type": "number"
+             }
+            },
+            "required": [
+             "time",
+             "lat",
+             "lon",
+             "distanceKm",
+             "azimuth",
+             "apparentAltitude",
+             "angularRadius"
+            ],
+            "additionalProperties": false
+           }
+          },
+          "fromObserver": {
+           "type": "object",
+           "properties": {
+            "azimuthToTarget": {
+             "type": "number"
+            },
+            "distanceKm": {
+             "type": "number"
+            },
+            "targetElevation": {
+             "type": "number"
+            },
+            "passes": {
+             "type": "array",
+             "items": {
+              "type": "object",
+              "properties": {
+               "time": {
+                "type": "string"
+               },
+               "altitudeOffset": {
+                "type": "number"
+               },
+               "angularRadius": {
+                "type": "number"
+               },
+               "apparentAltitude": {
+                "type": "number"
+               }
+              },
+              "required": [
+               "time",
+               "altitudeOffset",
+               "angularRadius",
+               "apparentAltitude"
+              ],
+              "additionalProperties": false
+             }
+            }
+           },
+           "required": [
+            "azimuthToTarget",
+            "distanceKm",
+            "targetElevation",
+            "passes"
+           ],
+           "additionalProperties": false
+          },
+          "provenance": {
+           "type": "object",
+           "properties": {
+            "implementation": {
+             "type": "string"
+            },
+            "version": {
+             "type": "string"
+            },
+            "ephemeris": {
+             "type": "string"
+            },
+            "diagnostics": {
+             "type": "object",
+             "properties": {
+              "blocks": {
+               "type": "array",
+               "items": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+               }
+              },
+              "computeMs": {
+               "type": "number"
+              },
+              "cache": {
+               "type": "object",
+               "additionalProperties": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+               }
+              }
+             },
+             "required": [
+              "blocks",
+              "computeMs"
+             ],
+             "additionalProperties": false
+            }
+           },
+           "required": [
+            "implementation",
+            "version",
+            "ephemeris"
+           ],
+           "additionalProperties": false
+          }
+         },
+         "required": [
+          "body",
+          "track",
+          "provenance"
+         ],
+         "additionalProperties": false
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "OutOfRange | InvalidInput",
+      "content": {
+       "application/json": {
+        "schema": {
+         "anyOf": [
+          {
+           "$ref": "#/components/schemas/OutOfRangeEncoded"
+          },
+          {
+           "$ref": "#/components/schemas/InvalidInputEncoded"
+          }
+         ]
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/magnetic": {
+   "get": {
+    "tags": [
+     "earth"
+    ],
+    "operationId": "earth.magnetic",
+    "parameters": [
+     {
+      "name": "lat",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "lon",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "height",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "time",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     }
+    ],
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "Success",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "time": {
+           "type": "string"
+          },
+          "observer": {
+           "type": "object",
+           "properties": {
+            "lat": {
+             "type": "number",
+             "minimum": -90,
+             "maximum": 90
+            },
+            "lon": {
+             "type": "number",
+             "minimum": -180,
+             "maximum": 180
+            },
+            "height": {
+             "type": "number"
+            }
+           },
+           "required": [
+            "lat",
+            "lon",
+            "height"
+           ],
+           "additionalProperties": false
+          },
+          "magnetic": {
+           "type": "object",
+           "properties": {
+            "model": {
+             "type": "string",
+             "enum": [
+              "WMM2025"
+             ]
+            },
+            "declination": {
+             "type": "number",
+             "description": "Magnetic declination, degrees, east positive. Magnetic bearing = true bearing − declination."
+            },
+            "inclination": {
+             "type": "number",
+             "description": "Dip, degrees, down positive."
+            },
+            "horizontalIntensityNt": {
+             "type": "number"
+            },
+            "totalIntensityNt": {
+             "type": "number"
+            },
+            "decimalYear": {
+             "type": "number"
+            },
+            "inValidityWindow": {
+             "type": "boolean",
+             "description": "WMM2025 is valid 2025.0–2030.0; outside it the secular variation is extrapolated."
+            }
+           },
+           "required": [
+            "model",
+            "declination",
+            "inclination",
+            "horizontalIntensityNt",
+            "totalIntensityNt",
+            "decimalYear",
+            "inValidityWindow"
+           ],
+           "additionalProperties": false
+          }
+         },
+         "required": [
+          "time",
+          "observer",
+          "magnetic"
+         ],
+         "additionalProperties": false
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "OutOfRange | InvalidInput",
+      "content": {
+       "application/json": {
+        "schema": {
+         "anyOf": [
+          {
+           "$ref": "#/components/schemas/OutOfRangeEncoded"
+          },
+          {
+           "$ref": "#/components/schemas/InvalidInputEncoded"
+          }
+         ]
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/weather": {
+   "get": {
+    "tags": [
+     "earth"
+    ],
+    "operationId": "earth.weather",
+    "parameters": [
+     {
+      "name": "lat",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "lon",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "n",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     }
+    ],
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "Success",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "time": {
+           "type": "string"
+          },
+          "observer": {
+           "type": "object",
+           "properties": {
+            "lat": {
+             "type": "number",
+             "minimum": -90,
+             "maximum": 90
+            },
+            "lon": {
+             "type": "number",
+             "minimum": -180,
+             "maximum": 180
+            },
+            "magneticDeclination": {
+             "type": "number",
+             "description": "WMM2025 at the observer, sea level, now; east positive."
+            }
+           },
+           "required": [
+            "lat",
+            "lon",
+            "magneticDeclination"
+           ],
+           "additionalProperties": false
+          },
+          "stations": {
+           "type": "array",
+           "items": {
+            "type": "object",
+            "properties": {
+             "stationId": {
+              "type": "string"
+             },
+             "raw": {
+              "type": "string",
+              "description": "The METAR exactly as reported (raw_text)."
+             },
+             "metarType": {
+              "anyOf": [
+               {
+                "type": "string"
+               },
+               {
+                "type": "null"
+               }
+              ]
+             },
+             "flightCategory": {
+              "anyOf": [
+               {
+                "type": "string"
+               },
+               {
+                "type": "null"
+               }
+              ]
+             },
+             "observationTime": {
+              "type": "string"
+             },
+             "observationAgeSeconds": {
+              "type": "number",
+              "description": "now − observation_time."
+             },
+             "observationStale": {
+              "type": "boolean",
+              "description": "Observation older than 75 minutes (METARs are hourly)."
+             },
+             "lat": {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90
+             },
+             "lon": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180
+             },
+             "elevationM": {
+              "anyOf": [
+               {
+                "type": "number"
+               },
+               {
+                "type": "null"
+               }
+              ]
+             },
+             "distanceKm": {
+              "type": "number",
+              "description": "Great-circle distance from the observer (sphere of radius 6 371.0088 km)."
+             },
+             "bearing": {
+              "type": "object",
+              "properties": {
+               "true": {
+                "type": "number",
+                "description": "Initial great-circle bearing from the observer to the station, degrees true, [0, 360)."
+               },
+               "magnetic": {
+                "type": "number",
+                "description": "The same bearing, degrees magnetic (true − WMM2025 declination at the observer)."
+               }
+              },
+              "required": [
+               "true",
+               "magnetic"
+              ],
+              "additionalProperties": false
+             },
+             "temperatureC": {
+              "anyOf": [
+               {
+                "type": "number"
+               },
+               {
+                "type": "null"
+               }
+              ]
+             },
+             "dewpointC": {
+              "anyOf": [
+               {
+                "type": "number"
+               },
+               {
+                "type": "null"
+               }
+              ]
+             },
+             "wind": {
+              "type": "object",
+              "properties": {
+               "directionDegTrue": {
+                "anyOf": [
+                 {
+                  "type": "number"
+                 },
+                 {
+                  "type": "null"
+                 }
+                ],
+                "description": "Direction the wind blows from, degrees true; null when calm or variable."
+               },
+               "variable": {
+                "type": "boolean"
+               },
+               "calm": {
+                "type": "boolean"
+               },
+               "speedKt": {
+                "anyOf": [
+                 {
+                  "type": "number"
+                 },
+                 {
+                  "type": "null"
+                 }
+                ]
+               },
+               "gustKt": {
+                "anyOf": [
+                 {
+                  "type": "number"
+                 },
+                 {
+                  "type": "null"
+                 }
+                ]
+               }
+              },
+              "required": [
+               "directionDegTrue",
+               "variable",
+               "calm",
+               "speedKt",
+               "gustKt"
+              ],
+              "additionalProperties": false
+             },
+             "visibility": {
+              "type": "object",
+              "properties": {
+               "statuteMiles": {
+                "anyOf": [
+                 {
+                  "type": "number"
+                 },
+                 {
+                  "type": "null"
+                 }
+                ]
+               },
+               "orMore": {
+                "type": "boolean",
+                "description": "Reported as N+ (e.g. 10+): at least N."
+               }
+              },
+              "required": [
+               "statuteMiles",
+               "orMore"
+              ],
+              "additionalProperties": false
+             },
+             "altimeterInHg": {
+              "anyOf": [
+               {
+                "type": "number"
+               },
+               {
+                "type": "null"
+               }
+              ]
+             },
+             "altimeterHpa": {
+              "anyOf": [
+               {
+                "type": "number"
+               },
+               {
+                "type": "null"
+               }
+              ]
+             },
+             "seaLevelPressureHpa": {
+              "anyOf": [
+               {
+                "type": "number"
+               },
+               {
+                "type": "null"
+               }
+              ]
+             },
+             "wx": {
+              "anyOf": [
+               {
+                "type": "string"
+               },
+               {
+                "type": "null"
+               }
+              ],
+              "description": "Present weather (wx_string), e.g. -RA BR."
+             },
+             "sky": {
+              "type": "array",
+              "items": {
+               "type": "object",
+               "properties": {
+                "cover": {
+                 "type": "string"
+                },
+                "baseFtAgl": {
+                 "anyOf": [
+                  {
+                   "type": "number"
+                  },
+                  {
+                   "type": "null"
+                  }
+                 ]
+                }
+               },
+               "required": [
+                "cover",
+                "baseFtAgl"
+               ],
+               "additionalProperties": false
+              }
+             },
+             "verticalVisibilityFt": {
+              "anyOf": [
+               {
+                "type": "number"
+               },
+               {
+                "type": "null"
+               }
+              ]
+             }
+            },
+            "required": [
+             "stationId",
+             "raw",
+             "metarType",
+             "flightCategory",
+             "observationTime",
+             "observationAgeSeconds",
+             "observationStale",
+             "lat",
+             "lon",
+             "elevationM",
+             "distanceKm",
+             "bearing",
+             "temperatureC",
+             "dewpointC",
+             "wind",
+             "visibility",
+             "altimeterInHg",
+             "altimeterHpa",
+             "seaLevelPressureHpa",
+             "wx",
+             "sky",
+             "verticalVisibilityFt"
+            ],
+            "additionalProperties": false
+           }
+          },
+          "feed": {
+           "type": "object",
+           "properties": {
+            "source": {
+             "type": "string"
+            },
+            "fetchedAt": {
+             "type": "string",
+             "description": "When this Worker last confirmed the feed with aviationweather.gov (200 or 304)."
+            },
+            "ageSeconds": {
+             "type": "number",
+             "description": "now − fetchedAt."
+            },
+            "lastModified": {
+             "anyOf": [
+              {
+               "type": "string"
+              },
+              {
+               "type": "null"
+              }
+             ],
+             "description": "Upstream Last-Modified of the file."
+            },
+            "upstreamAgeSeconds": {
+             "anyOf": [
+              {
+               "type": "number"
+              },
+              {
+               "type": "null"
+              }
+             ],
+             "description": "now − lastModified."
+            },
+            "stale": {
+             "type": "boolean",
+             "description": "Older than the 60 s fresh window (served while a refresh runs, or because upstream failed)."
+            },
+            "tier": {
+             "type": "string",
+             "enum": [
+              "hit",
+              "miss",
+              "expired",
+              "stale",
+              "updating",
+              "revalidated",
+              "bypass",
+              "dynamic",
+              "none",
+              "stale-on-error"
+             ],
+             "description": "Workers Caching status of the feed fetch, lower-cased cf-cache-status (hit, updating = served stale while it refreshes, miss/expired = fetched from aviationweather.gov, revalidated = 304 from upstream); stale-on-error = the feed fetch failed and this isolate's last copy answered; none = no cache (dev)."
+            },
+            "stations": {
+             "type": "integer",
+             "minimum": -9007199254740991,
+             "maximum": 9007199254740991
+            }
+           },
+           "required": [
+            "source",
+            "fetchedAt",
+            "ageSeconds",
+            "lastModified",
+            "upstreamAgeSeconds",
+            "stale",
+            "tier",
+            "stations"
+           ],
+           "additionalProperties": false
+          }
+         },
+         "required": [
+          "time",
+          "observer",
+          "stations",
+          "feed"
+         ],
+         "additionalProperties": false
+        }
+       }
+      }
+     },
+     "503": {
+      "description": "WeatherUnavailable",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/WeatherUnavailableEncoded"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/healthz": {
+   "get": {
+    "tags": [
+     "meta"
+    ],
+    "operationId": "meta.health",
+    "parameters": [],
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "Success",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "ok": {
+           "type": "boolean",
+           "enum": [
+            true
+           ]
+          },
+          "implementation": {
+           "type": "string"
+          },
+          "version": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "ok",
+          "implementation",
+          "version"
+         ],
+         "additionalProperties": false
+        }
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "components": {
+  "schemas": {
+   "WeatherUnavailableEncoded": {
+    "type": "object",
+    "properties": {
+     "_tag": {
+      "type": "string",
+      "enum": [
+       "WeatherUnavailable"
+      ]
+     },
+     "message": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "_tag",
+     "message"
+    ],
+    "additionalProperties": false
+   },
+   "InvalidInputEncoded": {
+    "type": "object",
+    "properties": {
+     "_tag": {
+      "type": "string",
+      "enum": [
+       "InvalidInput"
+      ]
+     },
+     "message": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "_tag",
+     "message"
+    ],
+    "additionalProperties": false
+   },
+   "OutOfRangeEncoded": {
+    "type": "object",
+    "properties": {
+     "_tag": {
+      "type": "string",
+      "enum": [
+       "OutOfRange"
+      ]
+     },
+     "message": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "_tag",
+     "message"
+    ],
+    "additionalProperties": false
+   }
+  },
+  "securitySchemes": {}
+ },
+ "security": [],
+ "tags": [
+  {
+   "name": "sky"
+  },
+  {
+   "name": "earth"
+  },
+  {
+   "name": "meta"
+  }
+ ]
+}

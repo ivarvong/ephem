@@ -1,0 +1,10 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "ephem",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "minify": true,   // 516 KiB / 167 KiB gzip (dry-run, 2026-10-28)
+  // One object: de440/linux_p1550p2650.440 (102 MB), filled by the Admin RPC entrypoint (src/admin.ts).
+  "r2_buckets": [{ "binding": "EPH", "bucket_name": "ephem-de440" }],
+  "observability": { "enabled": true }
+}

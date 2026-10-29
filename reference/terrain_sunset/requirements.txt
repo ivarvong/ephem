@@ -1,0 +1,4 @@
+skyfield==1.55
+rasterio==1.5.2
+numpy==2.5.3
+pyproj==3.8.0

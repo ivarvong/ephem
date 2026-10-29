@@ -1,0 +1,15 @@
+{
+  "name": "@ephem/worker",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@ephem/api": "*",
+    "@ephem/core": "*",
+    "effect": "4.0.5"
+  },
+  "devDependencies": {
+    "cf": "^1.0.0-beta.25",
+    "wrangler": "^4.154.0"
+  }
+}

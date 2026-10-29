@@ -1,0 +1,126 @@
+{
+ "spec": "terrain-sunset/1",
+ "inputs_sha256": {
+  "Copernicus_DSM_COG_10_N40_00_W074_00_DEM.tif": "6a0f4273de0bbc0709cc9db4793a89ac40c811388f59f23f644c0304b66ab94d",
+  "Copernicus_DSM_COG_10_N40_00_W075_00_DEM.tif": "1db5d9d32c1aac7a7362e0375b4640a2f80e54963e4cde2f602f1be981ab353f",
+  "Copernicus_DSM_COG_10_N40_00_W076_00_DEM.tif": "355c23a9ff0e562b1ee86af74250c40101c338c1c51d1451fa175cc1d0701750",
+  "Copernicus_DSM_COG_10_N40_00_W077_00_DEM.tif": "f77ed1e458fd16bc5bf949bbe5f18dc0cabe2171e996e0b6c5c3882f89a16da7",
+  "de440s.bsp": "c1c7feeab882263fc493a9d5a5b2ddd71b54826cdf65d8d17a76126b260a49f2"
+ },
+ "constants": {
+  "lambda_um": 0.55,
+  "edlen_ns_minus_1": 0.000277837619880773,
+  "C_refr": 7.901200115336267e-05,
+  "sun_sd_1au_arcsec": 959.63,
+  "ds_low_m": 10.0,
+  "ds_high_m": 100.0,
+  "h_switch_m": 5000.0,
+  "h_top_m": 85000.0,
+  "d_min_m": 300.0,
+  "d_max_m": 180000.0,
+  "d_step_m": 10.0,
+  "angle_tol_deg": 1e-07,
+  "time_tol_s": 0.001
+ },
+ "checks": {
+  "n_minus_1_sea_level": 0.00027865778949903003,
+  "k_at_300m": 0.1658136581726648
+ },
+ "validation": [
+  {
+   "apparent_deg": 0.0,
+   "trace_arcmin": 33.886567199945226,
+   "bennett_arcmin": 34.47753374326257,
+   "diff_arcsec": -35.45799259904064
+  },
+  {
+   "apparent_deg": 1.0,
+   "trace_arcmin": 24.078380092473243,
+   "bennett_arcmin": 24.32912258316853,
+   "diff_arcsec": -15.044549441717358
+  },
+  {
+   "apparent_deg": 2.0,
+   "trace_arcmin": 18.144898707175425,
+   "bennett_arcmin": 18.216076289380126,
+   "diff_arcsec": -4.270654932282003
+  },
+  {
+   "apparent_deg": 5.0,
+   "trace_arcmin": 9.825522771948041,
+   "bennett_arcmin": 9.883144234182,
+   "diff_arcsec": -3.457287734037562
+  },
+  {
+   "apparent_deg": 10.0,
+   "trace_arcmin": 5.301655517568236,
+   "bennett_arcmin": 5.391505467574462,
+   "diff_arcsec": -5.3909970003735985
+  },
+  {
+   "apparent_deg": 20.0,
+   "trace_arcmin": 2.6359395882737147,
+   "bennett_arcmin": 2.7034106998839875,
+   "diff_arcsec": -4.048266696616381
+  },
+  {
+   "apparent_deg": 45.0,
+   "trace_arcmin": 0.9664535675767638,
+   "bennett_arcmin": 0.9948479678568614,
+   "diff_arcsec": -1.7036640168058559
+  }
+ ],
+ "cases": [
+  {
+   "case": "central_park",
+   "contact_utc": "2026-10-20T22:07:15.514Z",
+   "iterations": 6,
+   "sun_az_deg": 256.5656175736644,
+   "sun_true_alt_centre_deg": -0.7012927873172867,
+   "semidiameter_deg": 0.26772458979339947,
+   "sun_dist_au": 0.9956645711721651,
+   "apparent_deg": -0.3558655381202698,
+   "refraction_deg": 0.6131524703906392,
+   "true_alt_deg": -0.969018008510909,
+   "Re_m": 6385933.4031419,
+   "limit_d_m": 73480.0,
+   "limit_ground_m": 217.31057872418177,
+   "limit_lat": 40.62607175304243,
+   "limit_lon": -74.81011463288382
+  },
+  {
+   "case": "midtown",
+   "contact_utc": "2026-10-20T22:07:05.976Z",
+   "iterations": 6,
+   "sun_az_deg": 256.52733886282334,
+   "sun_true_alt_centre_deg": -0.6515688080032872,
+   "semidiameter_deg": 0.26772459133256177,
+   "sun_dist_au": 0.9956645654480389,
+   "apparent_deg": -0.315812885761261,
+   "refraction_deg": 0.6034806507501684,
+   "true_alt_deg": -0.9192935365114294,
+   "Re_m": 6385914.084144298,
+   "limit_d_m": 73130.0,
+   "limit_ground_m": 267.6088224317763,
+   "limit_lat": 40.597508812405295,
+   "limit_lon": -74.82419874575494
+  },
+  {
+   "case": "lower_manhattan",
+   "contact_utc": "2026-10-20T22:07:22.640Z",
+   "iterations": 4,
+   "sun_az_deg": 256.5528726175899,
+   "sun_true_alt_centre_deg": -0.6715093416838523,
+   "semidiameter_deg": 0.26772460204075527,
+   "sun_dist_au": 0.9956645256243963,
+   "apparent_deg": -0.33190053701400757,
+   "refraction_deg": 0.6073334024781083,
+   "true_alt_deg": -0.9392339394921159,
+   "Re_m": 6385902.126822069,
+   "limit_d_m": 48360.0,
+   "limit_ground_m": 194.3130624733576,
+   "limit_lat": 40.61008873857676,
+   "limit_lon": -74.56917253184321
+  }
+ ]
+}

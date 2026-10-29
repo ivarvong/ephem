@@ -1,0 +1,26 @@
+#!/bin/bash
+# Uncached prod load: N rounds of one 24 h Moon alignment + one /v1/day, each with a fresh window/place so the response
+# cache misses. Prints "<a|d> <status> <seconds>" per request.   scripts/obs/load.sh [rounds=40] [base=https://ephem.ivar.workers.dev]
+# LOAD=weather: instead, per round 4 /v1/weather requests at random lat/lons (land-weighted boxes), ~16 req/s; prints "w <status> <s>".
+N=${1:-40}; B=${2:-https://ephem.ivar.workers.dev}
+if [ "${LOAD:-}" = weather ]; then
+  BOXES=("25 49 -124 -67" "36 60 -10 30" "-38 -12 114 153" "20 45 100 145" "-35 5 -75 -35" "40 70 -170 -60" "-60 80 -180 180")
+  for i in $(seq 1 "$N"); do
+    for _ in 1 2 3 4; do
+      read -r la0 la1 lo0 lo1 <<< "${BOXES[$((RANDOM % ${#BOXES[@]}))]}"
+      LAT=$(awk -v a="$la0" -v b="$la1" -v r=$RANDOM 'BEGIN{printf "%.3f", a+(b-a)*r/32767}'); LON=$(awk -v a="$lo0" -v b="$lo1" -v r=$RANDOM 'BEGIN{printf "%.3f", a+(b-a)*r/32767}')
+      curl -s -o /dev/null -w "w %{http_code} %{time_total}\n" "$B/v1/weather?lat=$LAT&lon=$LON&n=$((1 + RANDOM % 3))" &
+    done
+    sleep 0.25
+  done
+  wait; exit 0
+fi
+iso() { python3 -c "import datetime,sys;print((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(minutes=int(sys.argv[1]))).strftime('%Y-%m-%dT%H:%M:00Z'))" "$1"; }
+day() { python3 -c "import datetime,sys;print((datetime.date.today()+datetime.timedelta(days=int(sys.argv[1]))).isoformat())" "$1"; }
+for i in $(seq 1 "$N"); do
+  off=$((RANDOM * 3 + i * 7)); S=$(iso $off); E=$(iso $((off + 1440)))
+  curl -s -o /dev/null -w "a %{http_code} %{time_total}\n" "$B/v1/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&start=$S&end=$E" &
+  curl -s -o /dev/null -w "d %{http_code} %{time_total}\n" "$B/v1/day?lat=40.7&lon=-74.0$((RANDOM % 100))&date=$(day $((RANDOM % 3000)))&tz=America/New_York" &
+  sleep 0.2
+done
+wait
