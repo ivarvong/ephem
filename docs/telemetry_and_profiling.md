@@ -169,6 +169,11 @@ colo). The front door's `api.fetch` p50 by Api colo: EWR 18–20 ms, IAD 31–32
 c72a360c agree). Before, weather ran in-process (~1–2 ms). With unique lat/lon keys nothing hits, so every request pays
 the loopback plus the tier round trip; SWR only helps a key that repeats.
 
+**Weather in the front door** (1532ebd5, git cb48b35; same `LOAD=weather load.sh 1100`, 13:16:54–13:22:25Z): client p50/p90/p99
+100/174/242 ms (Cache API 91/318, V2 134/325, c72a360c 148/396); server-timing p50 6–8 ms; front-door CPU p50/p99 2/14 ms;
+the MetarFeed loopback (`metar.feed` span) p50/p90/p99 7/9/13 ms; feed hit 99.6%, updating 0.4%, 79 parses (EWR isolates
+only; 243 when forwarded); upstream 6 calls in 6 min, max 1/min, all conditional (5 × 200, 1 × 304).
+
 **Live checks of the CACHE_VERSION design (2026-10-29):** a key cached on 1721a525 (git 31b437c) was HIT on 04a4ea0c (same
 commit, redeployed): entries survive a deploy. A fresh key on 04a4ea0c fetched its DE440 block as `blocks_hit` with an empty
 isolate L1: blocks stay warm across deploys. After CACHE_VERSION 2 → 3 (dc5bcd23, git e2cdc1a) the same key was MISS, then
