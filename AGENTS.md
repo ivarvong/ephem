@@ -1,9 +1,7 @@
 # ephem: agent notes
 
 - Gate: `npm run typecheck && npm run lint && npm test` (the geodesic test needs `pyproj` on PATH). Accuracy bars are fixed.
-- Deploy: `cd packages/worker && cf deploy --message "…"` whenever the gate is green, then smoke prod
-  (https://ephem.ivar.workers.dev: `/`, `/docs`, `/v1/position`, `/v1/day`, `/v1/alignment`, `/v1/magnetic`, `/v1/weather`). wrangler must be
-  symlinked into `packages/worker/node_modules` (npm hoists it).
+- **Git (since 2026-10-29): trunk on `main`. Commit your finished change (only your files: `git add <paths>`, never `git add -A` in the shared tree), then deploy it with `scripts/deploy.sh main "<message>"`.** Never run `cf deploy` directly. deploy.sh checks out the commit into a clean worktree, runs the full gate there, deploys, smokes every route + the MCP probe, and tags `deployed/<ts>`, so uncommitted work in the shared tree can never ship. `DRY=1` runs the gate only. Rebase onto `main` before committing if another agent landed first. Continuous deploy is approved: ship whenever your commit is green.
 - **Telemetry, traces and profiling: [docs/telemetry_and_profiling.md](docs/telemetry_and_profiling.md).** Measure by exact
   version id; every reported number carries its version and trace or profile. Update that guide in the same change
   whenever a command, span, attribute or gotcha changes.
