@@ -1,7 +1,7 @@
 // /v1/day: rise, set, transit, twilight, golden and blue hour for one local calendar day.
 import type { BlockSource, BodyName } from "./ephemeris.ts"
 import { type Epoch, type Geodetic, type Topocentric, angularRadius, apparent, epochAt, frameAt, topocentric } from "./observe.ts"
-import { type Limb, P_DEFAULT, REFRACTION_FLOOR, T_DEFAULT, bennettToFloor, limbSign, riseSetRefraction } from "./horizon.ts"
+import { type Limb, P_DEFAULT, REFRACTION_FLOOR, T_DEFAULT, limbSign, refraction } from "./horizon.ts"
 import { instant, isoMs } from "./time.ts"
 import { DEG } from "./linalg.ts"
 
@@ -120,16 +120,16 @@ export const looker = (src: BlockSource, geo: Geodetic, dut1: number) => {
 type Look = ReturnType<typeof looker>
 
 /** Rise/set function of time: positive when the chosen limb is above the horizon (apparent upper limb vs horizon H, refraction
- *  from riseSetRefraction). With H = 0, upper limb and defaults this is exactly the old altitude + 34′ + radius. */
+ *  from `refraction`). With H = 0, upper limb and defaults this is exactly the old altitude + 34′ + radius. */
 export const riseSetFn = (look: Look, body: BodyName, horizon: number | HorizonProfile, limb: Limb, T: number, P: number) => {
   const s = limbSign(limb)
   if (typeof horizon === "number") {
-    const off = riseSetRefraction(horizon, T, P) - horizon
+    const off = refraction(horizon, T, P) - horizon
     return (ms: number) => { const l = look(body, ms); return l.tp.altitude + off + s * angularRadius(body, l.dist) }
   }
   return (ms: number) => {
     const l = look(body, ms), H = profileAt(horizon, l.tp.azimuth)
-    return l.tp.altitude + (riseSetRefraction(H, T, P) - H) + s * angularRadius(body, l.dist)
+    return l.tp.altitude + (refraction(H, T, P) - H) + s * angularRadius(body, l.dist)
   }
 }
 
@@ -181,9 +181,9 @@ export const RATE_STEP_MS = 10_000
 export const crossing = (src: BlockSource, input: CrossingInput) => {
   const look = looker(src, input.geo, input.dut1 ?? 0), s = limbSign(input.limb), tg = input.target, body = input.body
   const f = tg.kind === "true" ? (ms: number) => { const l = look(body, ms); return l.tp.altitude + s * angularRadius(body, l.dist) - tg.altitude }
-    : tg.kind === "apparent" ? (() => { const thr = tg.altitude - bennettToFloor(tg.altitude, tg.temperature, tg.pressure)
+    : tg.kind === "apparent" ? (() => { const thr = tg.altitude - refraction(tg.altitude, tg.temperature, tg.pressure)
       return (ms: number) => { const l = look(body, ms); return l.tp.altitude + s * angularRadius(body, l.dist) - thr } })()
-    : (ms: number) => { const l = look(body, ms), A = profileAt(tg.profile, l.tp.azimuth); return l.tp.altitude + s * angularRadius(body, l.dist) - (A - bennettToFloor(A, tg.temperature, tg.pressure)) }
+    : (ms: number) => { const l = look(body, ms), A = profileAt(tg.profile, l.tp.azimuth); return l.tp.altitude + s * angularRadius(body, l.dist) - (A - refraction(A, tg.temperature, tg.pressure)) }
   const out = crossings(f, input.startMs, input.endMs, SAMPLE_MS)
     .filter(c => input.direction === "either" || (input.direction === "rise") === c.rising)
     .map(c => {

@@ -68,25 +68,29 @@ def horizon_of(q, h_msl):
     except ValueError: raise BadInput("horizon must be sea, geometric or degrees")
     if not (FLOOR - 1e-6 <= x <= 89): raise BadInput("horizon out of range")
     return dict(kind="custom", altitude=x, dip=None)
-def bennett(a, T, P):
+def _cot(a): return 1 / math.tan(math.radians(a + 7.31 / (a + 4.4)))
+def refraction(a, T, P):
+    """The contract's single model: Bennett's shape normalised to 34′ at 0° (10 °C, 1010 hPa), Bennett's P/T scaling;
+    0 above 89.9° and below the floor. Written here from the contract text, not from core."""
     if a > 89.9 or a < FLOOR: return 0.0
-    return 1 / math.tan(math.radians(a + 7.31 / (a + 4.4))) / 60 * (0.28 * P / (T + 273))
-def apparent_alt(h, T, P, lowest, skyfield_value):
-    """Skyfield's refract where it applies (it refracts down to −1° apparent); below that, bisection on a − R(a) = h."""
+    return (34 / 60) * (P / 1010) * (283 / (273 + T)) * _cot(a) / _cot(0.0)
+def _solve(h, T, P):
+    """a − R(a) = h on [FLOOR, 90] by bisection (core iterates a fixed point instead)."""
+    a0, a1 = FLOOR, 90.0
+    for _ in range(200):
+        m = (a0 + a1) / 2
+        if m - refraction(m, T, P) - h > 0: a1 = m
+        else: a0 = m
+    return (a0 + a1) / 2
+def apparent_alt(h, T, P, lowest):
     lo = max(lowest, FLOOR)
-    if lo - bennett(lo, T, P) > h: return None              # a − R(a) increases with a: the solution lies below lo
-    if skyfield_value - h > 1e-6: a = skyfield_value          # Skyfield refracted it (its domain stops at −1° apparent; below, it hands back ≈ h)
-    else:
-        a0, a1 = lo, 90.0
-        for _ in range(200):
-            m = (a0 + a1) / 2
-            if m - bennett(m, T, P) - h > 0: a1 = m
-            else: a0 = m
-        a = (a0 + a1) / 2
+    if lo - refraction(lo, T, P) > h: return None            # a − R(a) increases with a: the solution lies below lo
+    a = _solve(h, T, P)
     return None if a < lo else a
-def rise_set_refraction(H, T, P):
-    cot = lambda a: 1 / math.tan(math.radians(a + 7.31 / (a + 4.4)))
-    return (34 / 60) * (P / 1010) * (283 / (273 + T)) * cot(H) / cot(0.0)
+def refract_true(h, T, P):
+    """For /v1/alignment's geometry: the same model, no refraction where the solution would lie below the floor."""
+    return h if h < FLOOR - refraction(FLOOR, T, P) else _solve(h, T, P)
+rise_set_refraction = refraction
 PROFILE_RE = re.compile(r"^-?\d+(\.\d+)?:-?\d+(\.\d+)?$")
 def parse_profile(s):
     pts = [x.strip() for x in s.split(",") if x.strip()]
@@ -133,14 +137,13 @@ def iso_ms(t):
     return d.strftime("%Y-%m-%dT%H:%M:%S") + ".%03dZ" % ms
 
 def body_position(o, body, t, T, P, lowest=None, topo=None):
-    """lowest=None: the pre-2026-10-29 rule (Skyfield's refract alone; /v1/alignment still uses it)."""
+    """lowest=None: a number always (/v1/alignment's geometry); otherwise null below max(lowest, floor)."""
     app = o.at(t).observe(body).apparent()
     alt, az, dist = app.altaz()
-    alt_app, _, _ = app.altaz(temperature_C=T, pressure_mbar=P)
     ra, dec, _ = app.radec(epoch="date")
     elat, elon, _ = EARTH.at(t).observe(body).apparent().frame_latlon(ecliptic_frame)
     rad = SUN_SD_1AU / (dist.km / AU_KM) if body is SUN else math.degrees(math.asin(MOON_RADIUS_KM / dist.km))
-    aa = alt_app.degrees if lowest is None else apparent_alt(alt.degrees, T, P, lowest, alt_app.degrees)
+    aa = refract_true(alt.degrees, T, P) if lowest is None else apparent_alt(alt.degrees, T, P, lowest)
     out = dict(azimuth=az.degrees, altitude=alt.degrees, apparentAltitude=aa,
                rightAscension=ra.hours, declination=dec.degrees, distanceKm=dist.km, angularRadius=rad,
                eclipticLongitude=elon.degrees, eclipticLatitude=elat.degrees)
@@ -298,11 +301,11 @@ def crossing(q):
         if "altitudeType" in q: raise BadInput("altitudeType goes with altitude")
         prof = parse_profile(q["horizonProfile"]); target = None
         def f(tt):
-            a, z, dkm = look(tt); A = profile_at(prof, z); return a + s_l * radius(dkm) - (A - bennett(A, T, P))
+            a, z, dkm = look(tt); A = profile_at(prof, z); return a + s_l * radius(dkm) - (A - refraction(A, T, P))
     else:
         A = fnum(q, "altitude", lo=-90, hi=90)
         if kind == "apparent" and not (FLOOR <= A <= 89.9): raise BadInput("apparent altitude outside the refraction model")
-        target = A if kind == "true" else A - bennett(A, T, P)
+        target = A if kind == "true" else A - refraction(A, T, P)
         def f(tt):
             a, _, dkm = look(tt); return a + s_l * radius(dkm) - target
     out = []

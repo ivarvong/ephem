@@ -6,12 +6,12 @@
 // Apparent elevation = geometric elevation (exact WGS-84 ECEF) + terrestrial refraction k·θ/2, θ = s / R_mean.
 import type { BlockSource, BodyName } from "./ephemeris.ts"
 import { directLine, inverse } from "./geodesic.ts"
-import { type Geodetic, angularRadius, apparent, enuOf, epochAt, frameAt, itrsOf, refract, topocentric } from "./observe.ts"
+import { type Geodetic, angularRadius, apparent, enuOf, epochAt, frameAt, itrsOf, topocentric } from "./observe.ts"
 import { type Vec3, DEG, dot, mxv, norm, sub, wrap360 } from "./linalg.ts"
 import { crossings, solve } from "./day.ts"
 import { instant, isoMs } from "./time.ts"
 
-import { K_TERRESTRIAL, R_MEAN_M } from "./horizon.ts"
+import { K_TERRESTRIAL, R_MEAN_M, refractTrue as refract } from "./horizon.ts"
 export { K_TERRESTRIAL, R_MEAN_M }
 
 /** Apparent elevation (deg) of the point at ITRS `Tx` from P, `s` metres away along the ground. */

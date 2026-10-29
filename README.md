@@ -21,8 +21,9 @@ Pure TypeScript on JPL DE440, served from a Cloudflare Worker with Effect v4 `Ht
    altitudes below the horizon, altitude/azimuth rates against Skyfield's analytic rates), 81 observer-days (incl. Tromsø and
    Reykjavík; 0 / 320 m, limbs, T/P, horizon profiles), 11 crossing windows, 2 alignment tracks. Angles ≤ 1e-5°, events ≤ 46 ms,
    rates ≤ 1.2e-5 °/min, geoid ≤ 3 mm.
-3. `packages/core/test/properties.test.ts` — invariants (fast-check): refraction is Skyfield's above −1° and continuous and
-   monotone down to the horizon, null exactly below it; rise/set refraction is exactly 34′ at sea level with defaults; rates
+3. `packages/core/test/properties.test.ts` — invariants (fast-check): refraction is 0.98685 × Skyfield's Bennett everywhere,
+   continuous and monotone down to the horizon, null exactly below it, exactly 34′ at 0° with defaults; /v1/crossing at
+   apparent 0° (upper limb) equals /v1/day's rise/set to ≤ 1 ms; rates
    match finite differences of the API's own positions; higher eyes rise earlier; limb order; profile interpolation; alignment
    self-consistency to 1e-7°.
 4. `packages/core/test/geoid.test.ts` — EGM96 against NGA: 403 grid nodes equal `WW15MGH.GRD` to the cm, NGA's published test
@@ -31,8 +32,8 @@ Pure TypeScript on JPL DE440, served from a Cloudflare Worker with Effect v4 `Ht
 6. `reference/oracle/crosscheck.py --a <oracle> --b <deployment>` — the live diff with stated tolerances over positions, days,
    crossings, alignments and rejected requests (unknown or invalid parameters must be 4xx in both). Last run: 0 failures.
 
-The oracle is independent where it matters: Skyfield (SPK, IAU 2000A) for astronomy, its own refraction solver below Skyfield's
-−1° cutoff (bisection, not fixed-point), its own profile interpolation (`numpy.interp`, periodic), Skyfield's analytic rates,
+The oracle is independent where it matters: Skyfield (SPK, IAU 2000A) for astronomy, its own solver for the contract's one refraction model
+(bisection, not fixed-point), its own profile interpolation (`numpy.interp`, periodic), Skyfield's analytic rates,
 and EGM96 read from PROJ's GeoTIFF through pyproj (`reference/geoid/fetch.sh` fetches and pins both NGA and PROJ files).
 
 ## Run

@@ -136,26 +136,28 @@ Gravitational light deflection is **not** applied (Skyfield does, via `apparent(
 
 ## 7. Refraction, horizon and heights (`horizon.ts`, `geoid.ts`; 2026-10-29)
 
-**Apparent altitude.** `apparentAltitude` is the fixed point a = h + R(a) with Bennett (1982),
-R(a) = (1/60)·cot(a + 7.31/(a + 4.4))·0.28·P/(T+273), iterated to 1e-9°. Defaults T = 10 °C, P = 1010 hPa. Above −1° true
-altitude this is bit-for-bit Skyfield's `refract` (property test). It is applied **down to the observer's horizon**
-(`horizon`: the sea horizon −dip by default, 0° for `geometric`, or a given angle) and never below a* = √7.31 − 4.4 =
-−1.6963°, where Bennett's R peaks and starts to fall (unphysical). Below max(horizon, a*) the value is **null**. Before
-2026-10-29 Bennett was cut at −1° apparent, so below that the "apparent" value silently repeated the true altitude.
+**One refraction model, every endpoint** (`refraction` in `horizon.ts`; ivar 2026-10-29: "34′ is fine for now"):
+R(a) = 34′·(P/1010)·(283/(273 + T))·cot(a + 7.31/(a + 4.4))/cot(7.31/4.4) for apparent altitude a ∈ [a*, 89.9°], 0 above.
+That is Bennett's (1982) shape normalised to the almanac's 34′ at the horizon for 10 °C / 1010 hPa: a constant 0.98685 ×
+Skyfield's Bennett (`0.28·P/(T + 273)` form) at every altitude, 0.45′ less at 0°, 0.07′ less at 10°. Before 2026-10-29
+/v1/position used Skyfield's Bennett and /v1/day a fixed 34′, so `crossing?altitude=0&altitudeType=apparent&limb=upper` and
+/v1/day's sunrise differed by 2.3–6.7 s (prod b49a8a02: NYC 2.5 s, Sydney 2.3 s, Tromsø 6.7 s); now they agree to ≤ 1 ms
+(property test). `apparentAltitude` is the fixed point a = h + R(a) (1e-9°); rise/set is the chosen limb's true altitude =
+H − R(H); /v1/alignment's solver uses the same model (`refractTrue`: no refraction only below the floor, which alignment
+never reports).
+
+**Domain.** Applied **down to the observer's horizon** (`horizon`: the sea horizon −dip by default, 0° for `geometric`, or a
+given angle) and never below a* = √7.31 − 4.4 = −1.6963°, where Bennett's shape peaks and starts to fall (unphysical).
+Below max(horizon, a*) the value is **null**. Before 2026-10-29 refraction was cut at −1° apparent, so below that the
+"apparent" value silently repeated the true altitude.
 
 **Dip.** dip = √(1 − k)·acos(R/(R + h_msl)), k = 0.13 (the terrestrial refraction coefficient /v1/alignment uses),
 R = 6 371 008.8 m: ≈ 1.797′·√h. 0 at or below sea level.
 
-**Rise/set refraction.** R_rs(H) = 34′·(P/1010)·(283/(273 + T))·cot(H + 7.31/(H + 4.4))/cot(7.31/4.4): the almanac's 34′ at
-0° (so sea level with defaults is exactly the old −34′ − radius rule), Bennett's shape away from 0°, and Bennett's T/P scaling.
-Rise/set: the chosen limb's true altitude = H − R_rs(H). /v1/crossing with `altitudeType=apparent` uses plain Bennett (as
-/v1/position), so `crossing?altitude=0&altitudeType=apparent&limb=upper` differs from /v1/day's sunrise by the 34′ vs 34.45′
-convention (≈ 2–4 s at mid-latitudes); the conventions block of each response says which it used.
-
 **Evidence: how good is Bennett below 0°?** A 2-D ray trace through the US Standard Atmosphere 1976 (sea level 10 °C,
 1010 hPa; Edlén refractivity; `reference/terrain_sunset/terrain_sunset.py`'s tracer with the sea surface at 0 m):
 
-| eye above sea | ray-traced horizon | dip, k = 0.13 | refraction at the horizon: ray trace | Bennett | R_rs |
+| eye above sea | ray-traced horizon | dip, k = 0.13 | refraction at the horizon: ray trace | Skyfield's Bennett | this model |
 | --- | --- | --- | --- | --- | --- |
 | 0 m | 0.00′ | 0.00′ | 33.89′ | 34.45′ | 34.00′ |
 | 10 m | −5.53′ | 5.68′ | 35.06′ | 35.67′ | 35.20′ |

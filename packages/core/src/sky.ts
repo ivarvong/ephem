@@ -2,7 +2,7 @@
 // inputs, run the pure computation, and state every convention used. Output = the @ephem/api response minus provenance.
 import type { BlockSource, BodyName } from "./ephemeris.ts"
 import { type Limb, type HeightRef, type HorizonSpec, type ObserverHeights, P_DEFAULT, REFRACTION_CEIL, REFRACTION_FLOOR, T_DEFAULT,
-  K_TERRESTRIAL, bennettToFloor, horizonOf, observerHeights, riseSetRefraction } from "./horizon.ts"
+  K_TERRESTRIAL, horizonOf, observerHeights, refraction } from "./horizon.ts"
 import { GEOID } from "./geoid.ts"
 import { position, RATE_STEP_S } from "./position.ts"
 import { type HorizonProfile, DAY_THRESHOLDS, MAX_CROSSING_WINDOW_MS, crossing, day, localMidnight, nextDate, parseProfile } from "./day.ts"
@@ -18,9 +18,9 @@ const observerOut = (o: SkyObserverInput, h: ObserverHeights) => ({
 })
 const geoidOut = { model: GEOID.model, source: GEOID.source, interpolationErrorM: GEOID.interpolationErrorM }
 const RATES = { unit: "deg/min" as const, method: `symmetric difference of the true altitude / azimuth over ±${RATE_STEP_S} s` }
-export const BENNETT = "Bennett (1982): R = (1/60)·cot(a + 7.31/(a + 4.4))·0.28·P/(T + 273), a = apparent altitude (degrees); 0 above 89.9°"
-export const RISE_SET_REFRACTION = "34′ at 0° (almanac), Bennett's shape away from 0°, scaled by T/P: R(H) = 34′·(P/1010)·(283/(273 + T))·cot(H + 7.31/(H + 4.4))/cot(7.31/4.4)"
-export const REFRACTION_UNCERTAINTY = "Bennett is fitted to standard-atmosphere tables above 0°. Below 0° it is an extrapolation: against a ray trace through the US Standard Atmosphere 1976 (reference/terrain_sunset) it reads 0.6′ high at the sea horizon seen from 10 m, 1.5′ from 320 m and 3.2′ from 1 000 m. Real refraction near the horizon depends on the temperature profile of the lowest air and varies with the weather by much more than that; treat sub-arcminute differences there as model, not sky."
+/** The one refraction model (every endpoint): stated verbatim in every conventions block. */
+export const REFRACTION_MODEL = "R(a) = 34′·(P/1010)·(283/(273 + T))·cot(a + 7.31/(a + 4.4))/cot(7.31/4.4) for apparent altitude a (degrees) in [−1.6963°, 89.9°], 0 above: Bennett's (1982) shape normalised to the almanac's 34′ at the horizon (10 °C, 1010 hPa). The same function for /v1/position, /v1/day, /v1/crossing and /v1/alignment."
+export const REFRACTION_UNCERTAINTY = "Bennett's shape is fitted to standard-atmosphere tables above 0°; at 0° a US Standard Atmosphere 1976 ray trace (reference/terrain_sunset) gives 33.9′ against this model's 34′. Below 0° it is an extrapolation: at the sea horizon it reads 0.1′ high from 10 m, 1.0′ from 320 m and 2.6′ from 1 000 m against that ray trace. Real refraction near the horizon depends on the temperature profile of the lowest air and varies with the weather by much more than that; treat sub-arcminute differences there as model, not sky."
 const horizonOut = (hz: { kind: "sea" | "geometric" | "custom"; altitude: number; dip: number | null } | { kind: "profile"; profile: HorizonProfile }) =>
   hz.kind === "profile"
     ? { kind: "profile" as const, altitude: null, dip: null, terrestrialRefractionK: K_TERRESTRIAL, profile: hz.profile.az.map((a, i) => ({ azimuth: a, elevation: hz.profile.el[i]! })) }
@@ -42,7 +42,7 @@ export const positionRequest = (src: BlockSource, q: PositionRequest) => {
   return {
     time: r.time, observer: observerOut(q, h), sun: r.sun, moon: r.moon,
     conventions: {
-      refraction: { model: BENNETT, temperatureC: T, pressureHpa: P, validFrom: Math.max(hz.altitude, REFRACTION_FLOOR), validTo: 90, uncertainty: REFRACTION_UNCERTAINTY },
+      refraction: { model: REFRACTION_MODEL, temperatureC: T, pressureHpa: P, validFrom: Math.max(hz.altitude, REFRACTION_FLOOR), validTo: 90, uncertainty: REFRACTION_UNCERTAINTY },
       horizon: horizonOut(hz), geoid: geoidOut, rates: RATES,
     },
   }
@@ -73,14 +73,14 @@ export const dayRequest = (src: BlockSource, q: DayRequest): SkyResult<ReturnTyp
   return { ok: dayOut(q, h, r, hz.ok, T, P, limb) }
 }
 const dayOut = (q: DayRequest, h: ObserverHeights, r: ReturnType<typeof day>, hz: HorizonChoice, T: number, P: number, limb: Limb) => {
-  const R = hz.kind === "profile" ? null : riseSetRefraction(hz.altitude, T, P)
+  const R = hz.kind === "profile" ? null : refraction(hz.altitude, T, P)
   return {
     date: r.date, tz: r.tz, start: r.start, end: r.end, observer: observerOut(q, h), events: r.events,
     conventions: {
       riseSet: {
         limb, definition: `rise/set: the ${limb === "center" ? "centre" : `${limb} limb`} of the Sun or Moon at apparent altitude = the horizon (true limb altitude = horizon − refraction at the horizon)`,
         horizon: horizonOut(hz),
-        refraction: { model: RISE_SET_REFRACTION, temperatureC: T, pressureHpa: P, atHorizon: R },
+        refraction: { model: REFRACTION_MODEL, temperatureC: T, pressureHpa: P, atHorizon: R },
         trueLimbAltitude: hz.kind === "profile" || R === null ? null : hz.altitude - R,
       },
       transit: "upper culmination: local apparent hour angle = 0",
@@ -130,15 +130,15 @@ export const crossingRequest = (src: BlockSource, q: CrossingRequest): SkyResult
 }
 const crossingOut = (q: CrossingRequest, h: ObserverHeights, r: ReturnType<typeof crossing>, target: Parameters<typeof crossing>[1]["target"], limb: Limb, profile: HorizonProfile | undefined, T: number, P: number) => {
   const what = limb === "center" ? "centre" : `${limb} limb`
-  const trueLimb = target.kind === "true" ? target.altitude : target.kind === "apparent" ? target.altitude - bennettToFloor(target.altitude, T, P) : null
+  const trueLimb = target.kind === "true" ? target.altitude : target.kind === "apparent" ? target.altitude - refraction(target.altitude, T, P) : null
   return {
     body: q.body, start: isoMs(q.startMs), end: isoMs(q.endMs), observer: observerOut(q, h), crossings: r.crossings,
     conventions: {
       definition: target.kind === "true" ? `the ${what}'s true (vacuum) altitude = ${target.altitude}°`
-        : target.kind === "apparent" ? `the ${what}'s apparent altitude = ${target.altitude}° (Bennett refraction, as /v1/position)`
-        : `the ${what}'s apparent altitude = the horizon profile's elevation at the body's azimuth (Bennett refraction, as /v1/position)`,
+        : target.kind === "apparent" ? `the ${what}'s apparent altitude = ${target.altitude}° (the one refraction model, as /v1/position and /v1/day)`
+        : `the ${what}'s apparent altitude = the horizon profile's elevation at the body's azimuth (the one refraction model, as /v1/position and /v1/day)`,
       limb, altitudeType: target.kind, trueLimbAltitude: trueLimb,
-      refraction: target.kind === "true" ? null : { model: BENNETT, temperatureC: T, pressureHpa: P },
+      refraction: target.kind === "true" ? null : { model: REFRACTION_MODEL, temperatureC: T, pressureHpa: P },
       horizon: profile ? horizonOut({ kind: "profile", profile }) : null,
       geoid: geoidOut,
     },

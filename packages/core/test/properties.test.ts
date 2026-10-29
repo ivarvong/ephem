@@ -4,9 +4,9 @@ import fc from "fast-check"
 import { position } from "../src/position.ts"
 import { day, crossings } from "../src/day.ts"
 import { alignment, targetElevation } from "../src/alignment.ts"
-import { apparent, frameAt, refract, topocentric } from "../src/observe.ts"
-import { REFRACTION_FLOOR, apparentAltitudeOf, bennettToFloor, riseSetRefraction, seaDip } from "../src/horizon.ts"
-import { dayRequest, positionRequest } from "../src/sky.ts"
+import { apparent, frameAt, topocentric } from "../src/observe.ts"
+import { REFRACTION_FLOOR, apparentAltitudeOf, refraction, refractTrue as refract, seaDip } from "../src/horizon.ts"
+import { crossingRequest, dayRequest, positionRequest } from "../src/sky.ts"
 import { profileAt, parseProfile } from "../src/day.ts"
 import { instant, taiMinusUtc } from "../src/time.ts"
 import { diskBlocks } from "./helpers/blocks.ts"
@@ -28,7 +28,7 @@ describe("position invariants", () => {
         else {
           expect(b.apparentAltitude).toBeGreaterThanOrEqual(0 - 1e-12)                          // never below the horizon it was given
           expect(b.apparentAltitude).toBeGreaterThanOrEqual(b.altitude - 1e-12)                 // refraction only lifts
-          expect(b.apparentAltitude - b.altitude).toBeLessThanOrEqual(0.7)                      // Bennett at 0° is 34.5′
+          expect(b.apparentAltitude - b.altitude).toBeLessThanOrEqual(0.7)                      // 34′ at 0°
         }
         expect(b.rightAscension).toBeGreaterThanOrEqual(0); expect(b.rightAscension).toBeLessThan(24)
       }
@@ -50,26 +50,45 @@ describe("position invariants", () => {
 })
 
 describe("refraction down to the horizon (2026-10-29)", () => {
-  it("above −1° true altitude it is exactly the old Skyfield-equivalent refract; below, it keeps refracting down to the horizon", () => {
-    fc.assert(fc.property(fc.double({ min: -1, max: 90, noNaN: true }), fc.double({ min: -30, max: 40, noNaN: true }), fc.double({ min: 500, max: 1080, noNaN: true }), (h, T, P) => {
-      expect(apparentAltitudeOf(h, T, P, -90)).toBe(refract(h, T, P))
+  it("is Bennett's (1982) shape scaled to 34′ at 0°: a constant 0.987 × Skyfield's Bennett at every altitude, T and P", () => {
+    const bennett = (a: number, T: number, P: number) => (1 / Math.tan((a + 7.31 / (a + 4.4)) * Math.PI / 180)) / 60 * (0.28 * P / (T + 273))   // Skyfield's refraction()
+    const k = (34 / 60) / bennett(0, 10, 1010)
+    expect(k).toBeCloseTo(0.98685, 5)
+    fc.assert(fc.property(fc.double({ min: REFRACTION_FLOOR, max: 89.9, noNaN: true }), fc.double({ min: -30, max: 40, noNaN: true }), fc.double({ min: 500, max: 1080, noNaN: true }), (a, T, P) => {
+      expect(refraction(a, T, P)).toBeCloseTo(k * bennett(a, T, P), 12)
     }), { numRuns: 500 })
+    expect(refraction(89.95, 10, 1010)).toBe(0); expect(refraction(REFRACTION_FLOOR - 0.01, 10, 1010)).toBe(0)
     // the customer's case: −1.02° true from 320 m above the sea: about 40′ of refraction, not 0
     const a = apparentAltitudeOf(-1.02, 10, 1010, -seaDip(320))!
     expect((a + 1.02) * 60).toBeGreaterThan(38); expect((a + 1.02) * 60).toBeLessThan(42)
+    // alignment's solver uses the same model, falling back to no refraction only below the floor
+    expect(refract(5, 10, 1010)).toBe(apparentAltitudeOf(5, 10, 1010, -90)); expect(refract(-5, 10, 1010)).toBe(-5)
+  })
+  it("asking two endpoints the same question gives the same answer: /v1/crossing at apparent 0°, upper limb = /v1/day's rise and set (≤ 1 ms)", () => {
+    for (const [lat, lon, tz, date, extra] of [[40.7484, -73.9857, "America/New_York", "2026-10-29", {}], [69.6492, 18.9553, "Europe/Oslo", "2026-10-29", {}],
+      [-33.8568, 151.2153, "Australia/Sydney", "2026-10-29", { temperature: -20, pressure: 1040 }], [40.7484, -73.9857, "America/New_York", "2026-10-28", { height: 320, heightRef: "msl" as const }]] as const) {
+      const d = dayRequest(diskBlocks, { date, tz, lat, lon, ...extra }); if (!("ok" in d)) throw new Error(d.error)
+      const H = d.ok.conventions.riseSet.horizon.altitude!
+      const w = { startMs: Date.parse(d.ok.start), endMs: Date.parse(d.ok.end) }
+      const c = crossingRequest(diskBlocks, { ...w, lat, lon, ...extra, body: "sun", altitude: H, altitudeType: "apparent", limb: "upper" }); if (!("ok" in c)) throw new Error(c.error)
+      const sun = d.ok.events.filter(e => e.body === "sun" && (e.kind === "rise" || e.kind === "set"))
+      expect(c.ok.crossings.map(x => x.direction)).toEqual(sun.map(e => e.kind))
+      c.ok.crossings.forEach((x, i) => expect(Math.abs(Date.parse(x.time) - Date.parse(sun[i]!.time)), `${lat} ${date} ${x.direction}`).toBeLessThanOrEqual(1))
+      expect(c.ok.conventions.refraction!.model).toBe(d.ok.conventions.riseSet.refraction.model)
+    }
   })
   it("is monotone and continuous in true altitude, null exactly below max(horizon, floor), and a − R(a) = h holds", () => {
     fc.assert(fc.property(fc.double({ min: -3, max: 5, noNaN: true }), fc.double({ min: -1.6, max: 0, noNaN: true }), (h, H) => {
       const a = apparentAltitudeOf(h, 10, 1010, H), floor = Math.max(H, REFRACTION_FLOOR)
-      if (a === null) expect(h).toBeLessThan(floor - bennettToFloor(floor, 10, 1010) + 1e-9)
-      else { expect(a).toBeGreaterThanOrEqual(floor - 1e-12); expect(Math.abs(a - bennettToFloor(a, 10, 1010) - h)).toBeLessThan(1e-8)
+      if (a === null) expect(h).toBeLessThan(floor - refraction(floor, 10, 1010) + 1e-9)
+      else { expect(a).toBeGreaterThanOrEqual(floor - 1e-12); expect(Math.abs(a - refraction(a, 10, 1010) - h)).toBeLessThan(1e-8)
         const b = apparentAltitudeOf(h + 1e-4, 10, 1010, H)!; expect(b).toBeGreaterThan(a); expect(b - a).toBeLessThan(2e-4) }
     }), { numRuns: 500 })
   })
-  it("rise/set refraction is exactly the almanac 34′ at sea level with the defaults, grows below 0°, and scales with P/T", () => {
-    expect(riseSetRefraction(0, 10, 1010)).toBe(34 / 60)
-    expect(riseSetRefraction(-0.5, 10, 1010)).toBeGreaterThan(34 / 60)
-    expect(riseSetRefraction(0, -20, 1040) / riseSetRefraction(0, 10, 1010)).toBeCloseTo((1040 / 1010) * (283 / 253), 12)
+  it("refraction is exactly the almanac 34′ at 0° with the defaults, grows below 0°, and scales with P/T", () => {
+    expect(refraction(0, 10, 1010)).toBe(34 / 60)
+    expect(refraction(-0.5, 10, 1010)).toBeGreaterThan(34 / 60)
+    expect(refraction(0, -20, 1040) / refraction(0, 10, 1010)).toBeCloseTo((1040 / 1010) * (283 / 253), 12)
   })
 })
 

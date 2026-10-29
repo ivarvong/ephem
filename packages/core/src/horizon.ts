@@ -45,29 +45,35 @@ export const T_DEFAULT = 10, P_DEFAULT = 1010
 export const REFRACTION_FLOOR = Math.sqrt(7.31) - 4.4
 export const REFRACTION_CEIL = 89.9
 const cotB = (a: number) => 1 / Math.tan((a + 7.31 / (a + 4.4)) * DEG)
-/** Bennett (1982) refraction (degrees) for apparent altitude a ∈ [floor, 89.9°], × 0.28·P/(T + 273); 0 above 89.9°. */
-export const bennettToFloor = (a: number, T: number, P: number): number =>
-  a > REFRACTION_CEIL || a < REFRACTION_FLOOR ? 0 : cotB(a) / 60 * (0.28 * P / (T + 273))
-/** Apparent altitude for true altitude h: the fixed point a = h + R(a), or null if it lies below `lowest` (the horizon) or
- *  below the model floor. Above −1° this is exactly Skyfield's `refract` (same iteration, same start). */
-export const apparentAltitudeOf = (h: number, T: number, P: number, lowest: number): number | null => {
-  const floor = Math.max(lowest, REFRACTION_FLOOR)
-  // a − R(a) is increasing in a on [floor, 90], so the fixed point is below `floor` iff h < floor − R(floor).
-  if (h < floor - bennettToFloor(floor, T, P)) return null
+const COT0 = cotB(0)
+/** THE refraction model, used by every endpoint (2026-10-29, ivar: "34′ is fine for now"): degrees of refraction for apparent
+ *  altitude a ∈ [floor, 89.9°], 0 above 89.9°:
+ *    R(a) = 34′ · (P/1010) · (283/(273 + T)) · cot(a + 7.31/(a + 4.4)) / cot(7.31/4.4)
+ *  i.e. Bennett's (1982) shape, normalised to the almanac's 34′ at the horizon for 10 °C / 1010 hPa, with Bennett's P/T scaling.
+ *  It is 0.98685 × Bennett-with-Skyfield's-0.28·P/(T + 273) factor at every altitude (0.45′ less at 0°, 0.07′ less at 10°). */
+export const refraction = (a: number, T: number, P: number): number =>
+  a > REFRACTION_CEIL || a < REFRACTION_FLOOR ? 0 : (34 / 60) * (P / 1010) * (283 / (273 + T)) * (cotB(a) / COT0)
+const fixedPoint = (h: number, T: number, P: number): number => {
   let a = Math.max(h, REFRACTION_FLOOR)
   for (let i = 0; i < 100; i++) {
-    const next = h + bennettToFloor(a, T, P)
-    if (Math.abs(next - a) < 1e-9) { a = next; break }
+    const next = h + refraction(a, T, P)
+    if (Math.abs(next - a) < 1e-9) return next
     a = next
   }
+  return a
+}
+/** Apparent altitude for true altitude h: the fixed point a = h + R(a), or null if it lies below `lowest` (the horizon) or
+ *  below the model floor. a − R(a) increases with a on [floor, 90], so the fixed point is below `floor` iff h < floor − R(floor). */
+export const apparentAltitudeOf = (h: number, T: number, P: number, lowest: number): number | null => {
+  const floor = Math.max(lowest, REFRACTION_FLOOR)
+  if (h < floor - refraction(floor, T, P)) return null
+  const a = fixedPoint(h, T, P)
   return a < floor ? null : a
 }
-
-/** Rise/set refraction (degrees) at apparent horizon altitude H: the almanac's 34′ at 0°, given Bennett's shape away from 0°,
- *  scaled by pressure and temperature: R = 34′ · (P/1010)·(283/(273 + T)) · cotB(H)/cotB(0). Defaults (10 °C, 1010 hPa,
- *  H = 0) give exactly the old −34′. */
-export const riseSetRefraction = (H: number, T: number, P: number): number =>
-  (34 / 60) * (P / 1010) * (283 / (273 + T)) * cotB(H) / cotB(0)
+/** Same model for geometry that needs a number (/v1/alignment's solver): no refraction where the fixed point would lie below
+ *  the floor, which alignment never reports (it drops bodies below −1° true). */
+export const refractTrue = (h: number, T: number, P: number): number =>
+  h < REFRACTION_FLOOR - refraction(REFRACTION_FLOOR, T, P) ? h : fixedPoint(h, T, P)
 
 export type Limb = "upper" | "center" | "lower"
 export const limbSign = (l: Limb): number => (l === "upper" ? 1 : l === "lower" ? -1 : 0)

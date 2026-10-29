@@ -107,22 +107,7 @@ export const ecliptic = (f: Frame, v: Vec3): { lon: number; lat: number } => {
   return { lon: wrap360(Math.atan2(e[1], e[0]) / DEG), lat: Math.asin(e[2] / norm(e)) / DEG }
 }
 
-/** Bennett (1982) refraction in degrees for an *apparent* altitude; zero outside [−1°, 89.9°]. */
-export const bennett = (apparentAltDeg: number, temperatureC: number, pressureHpa: number): number => {
-  if (apparentAltDeg < -1 || apparentAltDeg > 89.9) return 0
-  const r = 1 / Math.tan((apparentAltDeg + 7.31 / (apparentAltDeg + 4.4)) * DEG) / 60
-  return r * (0.28 * pressureHpa / (temperatureC + 273))
-}
-/** Apparent altitude from true altitude: the fixed point a = h + bennett(a). Same iteration as Skyfield's `refract`, converged to 1e-9°. */
-export const refract = (trueAltDeg: number, temperatureC: number, pressureHpa: number): number => {
-  let a = trueAltDeg
-  for (let i = 0; i < 50; i++) {
-    const next = trueAltDeg + bennett(a, temperatureC, pressureHpa)
-    if (Math.abs(next - a) < 1e-9) return next
-    a = next
-  }
-  return a
-}
+// Refraction lives in horizon.ts (`refraction`): one model for every endpoint.
 
 export const SUN_SD_1AU_DEG = 959.63 / 3600
 export const MOON_RADIUS_KM = 1737.4
