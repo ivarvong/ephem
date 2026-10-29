@@ -265,7 +265,13 @@ headers,method,url}, response{status}}`, `eventTimestamp`, `exceptions[]`, `logs
 method=send` took ~1 000–1 030 ms after every response (trace 3c1a9ec564a63837baee5e55e3cdb9be: Effect GET 92 ms,
 send 1 017 ms, invocation wall 1 114 ms, cpu 3 ms). The response is not delayed, but **invocation `wallTimeMs` includes it**,
 so while rows are on, `cpu-by-version.py`'s wall column is not latency. Use client time, the Effect `GET` span, or
-`server-timing`. A failed send logs one line,
+`server-timing`. **A/B (2026-10-29, same tree, only `REQUEST_LOGS` flipped; `load.sh 150` + `LOAD=weather load.sh 60` each):**
+off = 9d06f585-ceca-43c6-a533-3878f511fb63 (git c769b1d, 13:05:33–13:06:29Z), on = 67b61f4f-7d1b-426c-96dc-5073ad2e885a
+(git a0529dc, 13:07:32–13:08:26Z). Client `time_total` p50/p99, off → on: alignment 314/936 → 294/831 ms, day 215/1028 →
+178/540 ms, weather 145/316 → 154/425 ms (n 150/150/240). Api CPU p50/p99: alignment 37/178 → 34/140 ms, day 9/115 →
+12/132, weather 3/59 → 4/59. Front-door CPU p99 ≤ 24 ms in both. **So logging moves neither client nor CPU p99** (the
+differences are within run-to-run noise at n = 150). It moves invocation wall p50 from 33–86 to 543–632 ms (front and Api),
+which is the send. 0 `basin_send_failed`. A failed send logs one line,
 `{"basin_send_failed":{"stream","role","route","status","ray","error"}}`; count them with `python3 scripts/obs/basin.py
 failures`. ephem-tail also counts them per invocation. Stream-side ingest metrics (`events.pipelinesSource`) stay empty
 until a pipeline consumes the stream (checked 2026-10-29).
@@ -322,6 +328,7 @@ column.
 
 | Date | Version | Finding | Effect |
 | --- | --- | --- | --- |
+| 2026-10-29 | 9d06f585 → 67b61f4f | Basin request rows on: Pipelines `send()` runs ~0.5–1 s in waitUntil after every response. | client and CPU p99 unchanged; invocation wall p50 +~550 ms |
 | 2026-10-29 | dbd3f184 → 98ba1ce8 | 21% of CPU in esbuild's `__name` helper (`index.js:1:36`): wrangler's default `keepNames` wrapped every closure the solvers create. Set `keepNames: false` in `wrangler.config.ts`. | alignment CPU p50 36 → 24 ms, p90 46 → 35 |
 | 2026-10-29 | 4e7c34ee | Top frames after that: evalBlock 10%, enuOf 8%, GC 7%, itrsOf 6%, norm 6%, geodesic direct 6% / inverse 5%, bennett 5%. | next targets |
 | 2026-10-29 | 80f5b087 | METAR baseline (Cache API L2): 7 344 /v1/weather in 21 min, l1 99.4% (wall p50/p99 1/9 ms), l1-stale 0.5% (9/324: the waitUntil refresh is billed to the triggering invocation), l2-fresh 3 (75/82, parse 45–48 ms cpu); 100% served without waiting on upstream. | baseline for the Workers Caching rewrite |
