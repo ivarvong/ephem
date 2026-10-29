@@ -30,7 +30,7 @@ export default defineConfig({
 			// Basin stream ephem_requests (schema ops/basin/requests.schema.json); request rows, src/requestlog.ts.
 			LOGS: bindings.pipeline({ name: "d43e9589a2784812afda39033b6792eb" }),
 			VERSION: bindings.versionMetadata(),
-			REQUEST_LOGS: bindings.text("on"), // "off": no rows (logging-overhead A/B)
+			REQUEST_LOGS: bindings.text("off"), // "off": no rows (logging-overhead A/B)
 		},
 	},
 });
