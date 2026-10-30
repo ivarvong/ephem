@@ -359,6 +359,7 @@ column.
 | 2026-10-29 | 4e7c34ee | Top frames after that: evalBlock 10%, enuOf 8%, GC 7%, itrsOf 6%, norm 6%, geodesic direct 6% / inverse 5%, bennett 5%. | next targets |
 | 2026-10-29 | 80f5b087 | METAR baseline (Cache API L2): 7 344 /v1/weather in 21 min, l1 99.4% (wall p50/p99 1/9 ms), l1-stale 0.5% (9/324: the waitUntil refresh is billed to the triggering invocation), l2-fresh 3 (75/82, parse 45–48 ms cpu); 100% served without waiting on upstream. | baseline for the Workers Caching rewrite |
 | 2026-10-29 | 80f5b087 → c72a360c | Cache API → Workers Caching (uncached front door, cached Api / BlockStore / MetarFeed). 50 identical cold requests: 14–21 computes → 1 Api invocation. Warm deterministic repeats: server 4–5 ms. Misses cost more (cold blocks, tier colo): day miss server p50 13 → 190 ms; max-age=0 live routes +35 ms. | V2: live in front door, weather SWR, crossVersionCache |
+| 2026-10-30 | 84bb5548 → e4d16979 | Homepage fired 111 /v1 calls per load (106 timed /v1/position, one per 20-min grid point; they queued: p50 85–204 ms each for 27–34 ms of server work). Now one `/v1/track` (217 samples, 11.3 KB on the wire) + live position + today's day + weather (+ tomorrow's day only after today's last event). Track MISS Api CPU p50 12 / p90 60 / p99 109 ms (n=131), less than one /v1/day MISS (46/157); front-door live probe p50 33 ms during 120 cold track MISSes vs 42 alone. | paths drawn, 390×844 mobile, median: cold 761 → 438 ms, warm 96 → 73; Fast 3G + 4× CPU cold 3877 → 1620, warm 800 → 748 (scratchpad xhr/measure.mjs) |
 | 2026-10-29 | 4e7c34ee | `/v1/day` miss: the Effect `GET` span starts about 10 ms after the runtime `GET` (trace ef493004…). Not yet explained. | open |
 
 ## Gotchas
@@ -376,6 +377,8 @@ column.
 - A Workers Caching MISS runs the cached entrypoint where the tier is, not where the eyeball is: Api invocations for EWR
   traffic ran in IAD, EWR, ORD, ATL, MIA (c72a360c).
 - `/v1/day` needs `tz`; `/v1/position` takes `time` optionally (default now).
+- `/v1/track` rejects a start/end off the stepSeconds grid (422 naming the snapped values): snap on the client so keys are
+  shared. The homepage's live poll has no `time`: with one it would be forwarded and leave a single-use immutable entry.
 - Invocation `wallTimeMs` includes waitUntil: with Basin request rows on, every invocation carries a ~1 s `send` (see
   "Request logs (Basin)"), so compare wall only between versions with the same `REQUEST_LOGS` setting.
 - MCP: the probe and Inspector speak legacy 2025-11-25; Claude Code 2.1.312 speaks 2026-07-28 directly (no initialize).
