@@ -4,7 +4,7 @@ How to see what prod ephem is doing: traces, per-version CPU numbers, and CPU/he
 run against prod. **Keep this file current:** when a command, flag, span, attribute or gotcha changes, update it in the
 same change, and add the date to "Last verified".
 
-Last verified: 2026-10-30 (remote load: ephem-load 8d0730a7 against ephem 8413211a, run L20261030T224759Z-kcfr; compute split A/B: S 02dd1270 + ephem-compute fca6e275 vs E cc6ddd8e, git 5edf1b7, → one Worker ephem d3caf38f, git 7a125fd; compute split: ephem 121b7984 + ephem-compute bb0a1127, git 01e0323; version 4e7c34ee; crossing span + MCP probe b49a8a02; MCP section 68c58ae5; Caching section c72a360c; cold-split, LOAD=track and isolate warmth fbdb337e; geoid bands + bundle A/B 5c337183 / 164e1cd7 / 61305294).
+Last verified: 2026-10-30 (cold search windows: 21250fb5 → 7708ca81 → 8413211a, git a7eb737 / cdf06b0; remote load: ephem-load 8d0730a7 against ephem 8413211a, run L20261030T224759Z-kcfr; compute split A/B: S 02dd1270 + ephem-compute fca6e275 vs E cc6ddd8e, git 5edf1b7, → one Worker ephem d3caf38f, git 7a125fd; compute split: ephem 121b7984 + ephem-compute bb0a1127, git 01e0323; version 4e7c34ee; crossing span + MCP probe b49a8a02; MCP section 68c58ae5; Caching section c72a360c; cold-split, LOAD=track and isolate warmth fbdb337e; geoid bands + bundle A/B 5c337183 / 164e1cd7 / 61305294).
 
 ## The loop
 
@@ -21,7 +21,7 @@ Every number you report carries its version id (and trace id or profile file). L
 | `python3 scripts/obs/basin.py status\|failures\|provision\|sql <name>\|crosscheck\|types` | Basin request logs: resources, `basin_send_failed` counts, sink/pipeline provisioning, canned Basin SQL, Basin-vs-o11y counts. See "Request logs (Basin)". |
 | `python3 scripts/obs/trace.py <traceId>` or `--latest /v1/day` | One request: invocation CPU/wall, the Effect span tree with work counts, and the runtime's own spans (fetch, jsRpc, R2). The front door and the Api invocation it called are two traces sharing one cf-ray (the Api's ends in its colo, e.g. `-IAD`). |
 | `scripts/obs/profile.sh <full-version-uuid> [cpu\|heap] [ms]` | Drives uncached load, captures a prod profile of that exact version, symbolizes it, prints the top. Files land in `profiles/` (gitignored). |
-| `scripts/obs/load.sh [rounds] [base]` | Laptop load (prefer `load-remote.ts` for anything you will compare): uncached: per round, one 24 h Moon alignment and one `/v1/day`, each with a fresh window or place so the Api cache misses. `LOAD=weather` instead sends 4 `/v1/weather` requests per round (random land-weighted lat/lons, n = 1–3), ~16 req/s. `LOAD=track`: 2 homepage-shaped `/v1/track` per round (72 h from a UTC midnight, 20-min grid, 217 samples) at fresh lat/lons, ~8 req/s; also works under `profile.sh`. |
+| `scripts/obs/load.sh [rounds] [base]` | Laptop load (prefer `load-remote.ts` for anything you will compare): uncached: per round, one 24 h Moon alignment and one `/v1/day`, each with a fresh window or place so the Api cache misses. `LOAD=weather` instead sends 4 `/v1/weather` requests per round (random land-weighted lat/lons, n = 1–3), ~16 req/s. `LOAD=track`: 2 homepage-shaped `/v1/track` per round (72 h from a UTC midnight, 20-min grid, 217 samples) at fresh lat/lons, ~8 req/s; also works under `profile.sh`. `LOAD=search`: one cold 12-month Brooklyn Bridge Park `POST /v1/alignment/search` per round (fresh target height: 14 never-seen windows), ~2/s (`SEARCH_SLEEP`); works under `profile.sh`. |
 | `python3 scripts/obs/queue.py --from ISO --to ISO [--path /v1/position] [--over 20] [--version id] [--json out]` | Server-side wait before the handler ran, per request: Effect request span start − runtime request span start. Lists the requests that waited, each tagged **new isolate** (blocks/geoid not yet in L1: start-up) or **busy isolate** (L1 warm: stuck behind other JS), with CPU and `ephem.isolate_computes`. Use it instead of client p99 for "did X slow Y down" (see "Position tail under scan load"). `--path /v1/alignment/search/window` for Api windows. `--json`: one row per request (wait, cpu, isolate_computes, kind, version, ray). |
 | `python3 scripts/obs/cold-split.py --from ISO --to ISO [--route track] [--json out.json]` | Api CPU by isolate warmth: each Api invocation of the route joined to its handler span's `ephem.isolate_computes` (1 = the isolate's first computation), p50/p90/p99 and CPU sum per bucket, and the runtime-GET → Effect-GET gap (isolate start-up before the router). Versions before the attribute fall back to "L1 empty" as the cold proxy. |
 | `python3 scripts/obs/metar-cache.py [--minutes 30] [--version 80f5b087] [--slice 2]` | METAR feed cache: per (version, tier) request count, share, wall and CPU p50/p99, parses, data age; upstream calls (MetarFeed's `{"evt":"metar.upstream"}`) by status, conditional, and per minute. Joins each `{"evt":"metar"}` log line to its invocation on `$metadata.requestId`. |
@@ -618,6 +618,42 @@ start. Slimming the window JSON would cut front-door CPU a few ms per scan and i
 The lever left was fewer CPU-heavy invocations on the front door's isolates: window compute in a separate Worker was done
 on 2026-10-30 and did not move this tail (5/1 420 → 5/1 425 probes, still new front-door isolates); see "Compute split".
 
+**Cold window cost (2026-10-30, 21250fb5 → 7708ca81 (git a7eb737, via 2015422) → 8413211a (git cdf06b0)).** Why window
+MISS cost varies ~4×: **isolate warmth, not the window.** Evidence trace 8efbf0eb (21250fb5): its two MISSes did the same
+work (1 269 vs 1 263 scan evaluations, 183 vs 135 track) but window 2027-03-03 ran on a warm EWR isolate (42 ms CPU, 62 ms)
+and 2027-04-02 on a fresh IAD isolate (`ephem.isolate_computes` = 1: 112 ms before the handler, 90 ms CPU, 245 ms = the
+scan's critical path). Over the A/B's E arm (cc6ddd8e, 41 617 windows, cold-split.py): fresh isolates were 11 % of windows,
+27 % of window CPU, p50 139 vs 36 ms warm, plus ~119 ms start-up. Locally (Node, `window/bin/perwindow.ts`) a year of windows
+differs ≤ 2× (bbox 5.6–10.3 ms, park 9.5–19.3 ms) with scan evaluations flat (1 259–1 285 per window): no window is
+intrinsically heavy. And 80–91 % of cold scans had at least one fresh-isolate window; those were ~150 ms slower (client
+p50 ~400 vs ~250 ms; `window/bin/fresh-split.py`). Two fixes, both measured:
+
+1. **Less work, rigorously** (git a7eb737, CACHE_VERSION 8): altitude rate bound ω·cos φ + 1°/h at R (12.4°/h in NYC, was
+   16), a latitude-aware azimuth bound, scan jumps on the azimuth too, and span ends pulled in by the same jumps (DESIGN
+   §10.x). 12-month park scan: scan evaluations 16 649 → 6 210, track 4 376 → 2 563; same 64 / 125, Nov 16 entry
+   03:45:19.646Z, entries/exits within 1 ms; brute force 1 s over 12 months 0 missed.
+2. **Code V8 can optimise** (git cdf06b0, bit-identical output): `searchWindow` was one big function whose OSR'd inner loops
+   deopted on every exit (~250 deopts per scan, TurboFan compiles 32–54 ms each, `node --trace-deopt`), so it mostly ran
+   unoptimised and boxed every double (the edge loop alone ~146 MB per scan; inspector allocation sampling with collected
+   objects, `window/bin/alloc.ts`). Inner loops are now small functions, edges come from a y-strip index, evalBlock fills
+   scratch instead of a closure + 3 tuples per call. Node first (cold-JIT) run of the scan 201 → 104 ms, allocation 343 →
+   160 MB. The prod profile (21250fb5, LOAD=search) had 19 % GC vs 1 % in Node, which is why allocation matters more there.
+
+Prod, 124 cold 12-month park scans/min from EWR (unique keys), 3 × 120 s per version (`window/bin/load.ts`, `pull.py`;
+server e2e = runtime POST start → Effect POST end; CPU per scan = Σ its 14 window Api CPU + POST CPU, own rays only):
+
+| | 21250fb5 (before) | 7708ca81 (round 1) | 8413211a (round 2) |
+| --- | --- | --- | --- |
+| window MISS CPU p50 / p90 / p99 | 46–49 / 131–134 / 236–253 ms | 31–35 / 108–117 / 206–219 | **23–25 / 76–83 / 150–158** |
+| … fresh isolate p50 / warm (> 20 computes) p50 | 133–135 / 35 | 114–116 / 22–23 | 96–101 / 19–20 |
+| cold scan server e2e p50 / p90 | 291–319 / 455–499 ms | 276–298 / 429–495 | **227–233 / 379–395** |
+| CPU per scan | 936–951 ms | 712–772 | **500–519** |
+| scans with ≥ 1 fresh-isolate window | 80–84 % | 79–91 % | 63–70 % (p50 ~365 vs ~185 ms without) |
+| window wait p90 / p99 | 80–97 / 184–194 ms | 45–103 / 178–207 | 19–50 / 180–185 |
+
+What is left is isolate start-up: a scan that hits a fresh isolate pays ~119 ms before the handler plus ~100 ms first-request
+CPU; window wait p99 (~180 ms) did not move. That is the next lever, not the search code.
+
 ## Instrument (`/instrument`, src/instrument.ts)
 
 The live sky as a working RPN calculator laid out like a 48-series graphing calculator (Ivar's photo of two 48G+, no maker's
@@ -901,6 +937,7 @@ column.
 | 2026-10-30 | S ephem 02dd1270 + ephem-compute fca6e275 vs E ephem cc6ddd8e (git 5edf1b7), 20:42:57–21:11:57Z | Concurrent A/B of the compute split (one commit, two versions 50/50, both arms pinned and loaded at the same instants; 6 × 240 s). S − E [95 % CI]: cold scan server e2e p50 −29 [−40, −20] ms, p90 −48 [−73, −29]; window wait p90 −25 [−31, −19], p99 −53 [−64, −44] (re-pulled after the dedup fix; was −26 / −52); **CPU per scan +30 [+21, +40] ms (993 vs 963, +3 %)**; position waits > 20 ms 1/7 324 vs 2/7 337, warm hop 4/8 ms both, fresh isolates equal. | pre-registered rule → E, confirmed: the latency gain was measured only at synthetic contention (124 cold scans/min), warm/live paths unchanged, two-Worker cost on every deploy. ephem d3caf38f (git 7a125fd), ephem-compute deleted; re-run at real load if search nears contention (5edf1b7 holds both arms; guide "Compute split") |
 | 2026-10-30 | 8a308729 → 0d870218 (git ac69e35) | Rates analytic (DE440 velocity) instead of a ±10 s difference: the flaky rate property was the nadir side (5.6e-5 vs 1e-5 within 10° of it); now ≤ 3.6e-7 vs Richardson, 0 exceedances in 400k body-samples above −89° (guide "Rates"). Local: position() 18.5 → 12.8 µs, ratesAt 4.0 → 2.3 µs. Prod /v1/track (no rates; `LOAD=track` 120 cold, 13:19:25–13:19:50Z) Api CPU p50 13 / p90 65 / p99 108 ms vs 9 / 61 / 101 on e4d16979 (n=242): unchanged, isolate warmth. | rates 25–60× closer to the positions; position CPU −31% |
 | 2026-10-30 | 02dd1270 → 639e952a (git 5026667 ⊇ 5d9103c) | **/instrument** (RPN view): bundle 474.46 → 590.04 KiB (gzip 164.08 → 221.19); local `cf workers check` median active/window 36.3/55.1 → 36.3/54.8 ms (6 alternating runs); deploy-reported startup 56 ms (n=1) vs 43, 44, 50, 51 ms for the previous four 474 KiB uploads. Prod browser (390×844, fresh context + never-seen lat/lon, n=7): 2 API requests cold and warm (+ 3 fonts, `(cache)` warm), HTML 18.3 KB on the wire. | data rendered p50 cold 388 / warm 88 ms; /v1/day rendered 552 / 53 ms (scratchpad instrument/prod.json) |
+| 2026-10-30 | 21250fb5 → 7708ca81 (git a7eb737) → 8413211a (git cdf06b0) | Cold search windows: the ~4× MISS spread is isolate warmth (trace 8efbf0eb: same work, fresh IAD isolate 112 ms start-up + 90 vs 42 ms CPU); windows are not intrinsically heavy (≤ 2× over a year, scan evaluations flat). (1) rigorous tighter scan bounds + azimuth jumps + span trimming (CACHE_VERSION 8): scan evals 16 649 → 6 210, track 4 376 → 2 563 per 12-month scan, same 64/125, brute force 0 missed. (2) searchWindow split into small functions (OSR deopts ~250/scan, boxed doubles), edge strip index, evalBlock allocation-free: bit-identical, allocation 343 → 160 MB/scan. Prod 124 scans/min, 3 runs each: window MISS CPU p50/p90/p99 46–49/131–134/236–253 → 23–25/76–83/150–158 ms; scan e2e p50/p90 291–319/455–499 → 227–233/379–395 ms; CPU per scan 936–951 → 500–519 ms. | left: fresh-isolate start-up (~119 ms + ~100 ms first-request CPU; 63–70 % of cold scans hit one); guide "Alignment search" |
 
 ## Gotchas
 
