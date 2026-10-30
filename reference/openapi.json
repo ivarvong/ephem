@@ -606,6 +606,16 @@
         }
        }
       }
+     },
+     "503": {
+      "description": "GeoidUnavailable",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/GeoidUnavailableEncoded"
+        }
+       }
+      }
      }
     }
    }
@@ -1180,6 +1190,16 @@
         }
        }
       }
+     },
+     "503": {
+      "description": "GeoidUnavailable",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/GeoidUnavailableEncoded"
+        }
+       }
+      }
      }
     }
    }
@@ -1727,6 +1747,16 @@
            "$ref": "#/components/schemas/InvalidInputEncoded"
           }
          ]
+        }
+       }
+      }
+     },
+     "503": {
+      "description": "GeoidUnavailable",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/GeoidUnavailableEncoded"
         }
        }
       }
@@ -2548,6 +2578,16 @@
         }
        }
       }
+     },
+     "503": {
+      "description": "GeoidUnavailable",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/GeoidUnavailableEncoded"
+        }
+       }
+      }
      }
     }
    }
@@ -3243,6 +3283,25 @@
       "type": "string",
       "enum": [
        "OutOfRange"
+      ]
+     },
+     "message": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "_tag",
+     "message"
+    ],
+    "additionalProperties": false
+   },
+   "GeoidUnavailableEncoded": {
+    "type": "object",
+    "properties": {
+     "_tag": {
+      "type": "string",
+      "enum": [
+       "GeoidUnavailable"
       ]
      },
      "message": {

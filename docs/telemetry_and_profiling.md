@@ -49,6 +49,7 @@ this.
 | `api.fetch` | src/responses.ts | `ephem.api_key` (path + sorted query), `ephem.api_cache`, `http.status_code` — real ms: the whole loopback incl. tier lookups |
 | `alignment` / `day` / `position` / `track` / `crossing` | handlers (Api invocation) | `blocks`, `reads`, `l1`, `blocks_<status>`, `fetchedBytes`, `ephem.isolate_computes` (computations this isolate has run, this one included: 1 = fresh isolate) |
 | `compute.<endpoint>` | handlers | `ephem.block_reads`, `ephem.instants`, `ephem.iterations`, `ephem.track_points`, `ephem.events`, `ephem.crossings` (compute.crossing) |
+| `geoid.load` | src/geoid.ts (position, day, crossing, track: every route with an observer) | `geoid.bands` (1, or 2 at a band edge), `geoid.l1`, `geoid.<status>` per fetched band (`geoid.hit`, `geoid.miss`, …), `geoid.fetchedBytes`, `ephem.geoid_cache` (`L1`, or `HIT:1`). Runs concurrently with `blocks.load`. See "Geoid bands (EGM96 from R2)" |
 | `blocks.load` | src/blocks.ts | `blocks.count`, `ephem.blocks_cache` (`L1`, or `HIT:2,MISS:1`: BlockStore loopback statuses), `cache.l1`, `cache.blocks_hit` / `cache.blocks_miss` / …, `cache.fetchedBytes`; `cache.originReads/originBytes` only for in-process reads (tests, dev) |
 | `GET` (runtime) | workerd | `cpu_time_ms`, `wall_time_ms`, geo |
 | `fetch` / `jsRpcCall` (runtime) | workerd | a loopback fetch; `jsRpcCall method=send` is the Basin pipeline send (~1 s, after the response) |
@@ -86,6 +87,7 @@ eyeball ─▶ default (cache OFF: always runs → every request has its trace, 
              ├─ GET /v1/day, /v1/alignment, /v1/track, /v1/crossing, /v1/position|magnetic with time
              │     ─▶ loopback.ts api: Api.fetch(path + sorted query, { cf: { cacheKey: "/v<CACHE_VERSION>" + path + query } })
              │        Api (cache ON) ─▶ blocks: loopback.ts block  GET /block/v<N>/<sha16>/<i>  (BlockStore, cache ON) ─▶ R2 range read
+             │                      ├▶ geoid:  loopback.ts geoid  GET /geoid/v<N>/<sha16>/<band> (BlockStore, cache ON) ─▶ R2 range read (ephem-geoid)
              │                      └▶ weather: loopback.ts feed  GET /feed/v<N>/metars.cache.csv.gz (MetarFeed, cache ON) ─▶ aviationweather.gov
              └─ live (position / magnetic without time) and /v1/weather: computed in the front door (blocks via BlockStore, feed via MetarFeed)
 ```
@@ -106,6 +108,7 @@ records the Api's `cf-cache-status` as `ephem.api_cache` (span) / `api_cache` (B
 | `/docs`, `/openapi.json` | — | `public, max-age=300` | cheap; served by the front door |
 | `/mcp` | — (POST; tool calls go through the same forward) | — | |
 | BlockStore `/block/v<N>/<sha16>/<i>` | `public, max-age=31536000, immutable` | — | blocks never change for a file hash (in the path) |
+| BlockStore `/geoid/v<N>/<sha16>/<band>` | `public, max-age=31536000, immutable` | — | a band never changes for the geoid object's hash (in the path); sha-checked before it is served |
 | MetarFeed `/feed/v<N>/metars.cache.csv.gz` | `public, max-age=60, stale-while-revalidate=600, stale-if-error=86400` | — | upstream regenerates ~1/min; ≤ 10 min stale while one revalidation runs; a day of upstream outage still answers (STALE) |
 
 **Keys and versions.** Workers Caching keys by entrypoint + path + query (+ ctx.props, + version unless
@@ -114,7 +117,7 @@ rays, same query → MISS then HIT, c72a360c). `crossVersionCache` is Worker-wid
 cache is on"). It is on (ivar, 2026-10-29: "Turn on cross version, but we keep our own version tag in code if we need to
 bump"), so cached answers, blocks and the feed survive deploys, and the only partition is **`CACHE_VERSION`** in
 `src/cache-version.ts`, carried by every loopback key: Api `cf.cacheKey` = `/v<N>` + path + sorted query, BlockStore
-`/block/v<N>/<sha16>/<i>`, MetarFeed `/feed/v<N>/…`. Two guardrails:
+`/block/v<N>/<sha16>/<i>` and `/geoid/v<N>/<sha16>/<band>`, MetarFeed `/feed/v<N>/…`. Two guardrails:
 
 - `src/loopback.ts` is the only code that fetches our entrypoints; `test/loopback.test.ts` scans `src/` and fails on any
   other read of a binding off `ctx.exports`.
@@ -182,6 +185,36 @@ HIT (blocks MISS once too). The golden test caught the refraction change (31b437
 
 Where things run: a MISS runs the cached entrypoint at the tier colo (Api invocations for EWR traffic: IAD 94, EWR 53, ORD
 6, ATL 4, MIA 4 in one 5-min window, c72a360c), which is why a miss costs more wall than a front-door compute.
+
+## Geoid bands (EGM96 from R2)
+
+Every route with an observer (position, day, crossing, track; also MCP tools and the front door's live position) needs
+the EGM96 undulation N, because `observer.geoidUndulation` is always in the answer and a missing `height` puts the observer
+on the geoid. Alignment, magnetic, weather and the static routes do not. Until 2026-10-30 the 30′ grid was bundled
+(`egm96-grid.ts`, 384 KB = 38% of the script); now the Worker bundles only its manifest (`packages/core/src/egm96-bands.ts`:
+per band offset, length, sha256 prefix; 1.7 KB) and reads bands from R2:
+
+```
+handler ─ geoid.load (concurrent with blocks.load) ─ L1 (isolate Map, ≤ 46 bands) ─▶ loopback.ts geoid
+          ─▶ BlockStore GET /geoid/v<CACHE_VERSION>/<sha16>/<band>  (Workers Caching, immutable)
+          ─▶ R2 ephem-geoid  egm96-30/<sha16>.bin, exact range of that band
+```
+
+- **Granularity:** the existing 46 bands of 8 rows (5.6–6.6 KB each); a lookup reads 1 band, 2 when its rows straddle a
+  band edge (`geoidBandsFor(lat)`). The band count is what decides fetches; bytes are tiny next to a round trip.
+- **Integrity / fail closed:** BlockStore checks length + sha256 before answering (else 502 `no-store`); the consumer
+  checks again before the band enters L1. Any failure is a typed **503 `GeoidUnavailable`** naming the band and the cause
+  (in the contract for the four routes); nothing is cached and the next request retries. Core throws if a band was not
+  prefetched, so a wiring bug can never answer with a wrong height.
+- **Bit-identical:** same decoder over the same bytes. Golden test unchanged; sweep of 8.28 M lookups (random, every node
+  and midpoint, every row/band edge ± 1e-9, poles, lon wrap) old bundled code vs new code over the bytes read back from R2:
+  0 differ (`Object.is`), scratchpad `bundle/sweep.ts`, 2026-10-30.
+- **Upload:** `node --experimental-strip-types scripts/geoid-r2.ts upload` (idempotent: reads the object back and skips if
+  the sha matches; key carries the sha), `verify`, and `manifest` after `reference/geoid/make_grid.py` regenerates the grid.
+  Bucket `ephem-geoid` (ENAM), binding `GEOID`. **Never** write to `ephem-de440`.
+- **Tests:** no network. `test-setup.ts` installs the source-tree grid (`geoid-bundled.ts`, never imported by the Worker)
+  as core's band source; `packages/worker/test/geoid.test.ts` injects the band fetch (fake R2, failing loopback, wrong
+  bytes, concurrent dedupe).
 
 ## MCP (`/mcp`, src/mcp.ts)
 

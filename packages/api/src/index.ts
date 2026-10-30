@@ -330,15 +330,17 @@ export const WeatherResponse = S.Struct({
 // ─────────────────────────────── errors ───────────────────────────────
 export class OutOfRange extends S.TaggedError<OutOfRange>()("OutOfRange", { message: S.String }, { httpApiStatus: 422 }) {}
 export class InvalidInput extends S.TaggedError<InvalidInput>()("InvalidInput", { message: S.String }, { httpApiStatus: 422 }) {}
+/** The EGM96 geoid band an observer's height needs could not be loaded (fail closed: no guessed height). */
+export class GeoidUnavailable extends S.TaggedError<GeoidUnavailable>()("GeoidUnavailable", { message: S.String }, { httpApiStatus: 503 }) {}
 export class WeatherUnavailable extends S.TaggedError<WeatherUnavailable>()("WeatherUnavailable", { message: S.String }, { httpApiStatus: 503 }) {}
 
 // ─────────────────────────────── the API value ───────────────────────────────
 export const SkyGroup = HttpApiGroup.make("sky").add(
-  HttpApiEndpoint.get("position", "/v1/position", { query: PositionQuery, success: PositionResponse, error: [OutOfRange, InvalidInput] }),
-  HttpApiEndpoint.get("day", "/v1/day", { query: DayQuery, success: DayResponse, error: [OutOfRange, InvalidInput] }),
-  HttpApiEndpoint.get("crossing", "/v1/crossing", { query: CrossingQuery, success: CrossingResponse, error: [OutOfRange, InvalidInput] }),
+  HttpApiEndpoint.get("position", "/v1/position", { query: PositionQuery, success: PositionResponse, error: [OutOfRange, InvalidInput, GeoidUnavailable] }),
+  HttpApiEndpoint.get("day", "/v1/day", { query: DayQuery, success: DayResponse, error: [OutOfRange, InvalidInput, GeoidUnavailable] }),
+  HttpApiEndpoint.get("crossing", "/v1/crossing", { query: CrossingQuery, success: CrossingResponse, error: [OutOfRange, InvalidInput, GeoidUnavailable] }),
   HttpApiEndpoint.get("alignment", "/v1/alignment", { query: AlignmentQuery, success: AlignmentResponse, error: [OutOfRange, InvalidInput] }),
-  HttpApiEndpoint.get("track", "/v1/track", { query: TrackQuery, success: TrackResponse, error: [OutOfRange, InvalidInput] }),
+  HttpApiEndpoint.get("track", "/v1/track", { query: TrackQuery, success: TrackResponse, error: [OutOfRange, InvalidInput, GeoidUnavailable] }),
 )
 export const EarthGroup = HttpApiGroup.make("earth").add(
   HttpApiEndpoint.get("magnetic", "/v1/magnetic", { query: MagneticQuery, success: MagneticResponse, error: [OutOfRange, InvalidInput] }),

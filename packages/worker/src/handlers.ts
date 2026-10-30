@@ -4,6 +4,7 @@ import { HttpApiBuilder } from "effect/http-api"
 import { EphemApi, InvalidInput, OutOfRange } from "@ephem/api"
 import { SUPPORTED, TRACK_DEFAULT_STEP_S, alignment, blocksFor, crossingRequest, crossingWindow, dayRequest, instant, instrumented, isValidZone, localMidnight, nextDate, positionRequest, trackRequest, trackWindowError } from "@ephem/core"
 import { Blocks, blocksCache } from "./blocks.ts"
+import { Geoid, geoidCache } from "./geoid.ts"
 import { EarthLive } from "./weather.ts"
 
 export const VERSION = "0.1.0"
@@ -22,12 +23,20 @@ const prefix = (p: string, o: object): Attrs => Object.fromEntries(Object.entrie
 
 /** Computations this isolate has run, this one included: 1 = a fresh isolate (cold JIT, empty L1, lazy tables). */
 let isolateComputes = 0
-/** Run a pure computation over prefetched blocks, timing it and attaching diagnostics; spans carry cache tiers and work counts. */
-const compute = <A>(name: string, blocks: ReadonlyArray<number>, f: (src: Parameters<typeof instrumented>[0]) => A, attrs: (out: A) => Attrs = () => ({})) => Effect.gen(function* () {
+/** The EGM96 bands an observer at `lat` needs (every route with an observer: position, day, crossing, track). */
+const geoidAt = (lat: number) => Effect.gen(function* () {
+  const s = yield* (yield* Geoid).load(lat)
+  yield* Effect.annotateCurrentSpan({ ...s, "ephem.geoid_cache": geoidCache(s) })
+}).pipe(Effect.withSpan("geoid.load"))
+/** Run a pure computation over prefetched blocks (and whatever `pre` loads concurrently: the observer's geoid bands),
+ *  timing it and attaching diagnostics; spans carry cache tiers and work counts. */
+const compute = <A, E = never, R = never>(name: string, blocks: ReadonlyArray<number>, f: (src: Parameters<typeof instrumented>[0]) => A, attrs: (out: A) => Attrs = () => ({}),
+  pre: Effect.Effect<void, E, R> = Effect.void as Effect.Effect<void, E, R>) => Effect.gen(function* () {
   const { load } = yield* Blocks
-  const loaded = yield* load(blocks).pipe(
+  const blocksLoad = load(blocks).pipe(
     Effect.tap(l => Effect.annotateCurrentSpan({ ...prefix("cache.", l.stats), "ephem.blocks_cache": blocksCache(l.stats) })),
     Effect.withSpan("blocks.load", { attributes: { "blocks.count": blocks.length } }), Effect.orDie)
+  const [loaded] = yield* Effect.all([blocksLoad, pre], { concurrency: 2 })
   const { src, stats } = instrumented(loaded.src)
   const t0 = performance.now()
   const out = yield* Effect.sync(() => f(src)).pipe(
@@ -42,7 +51,7 @@ export const SkyLive = HttpApiBuilder.group(EphemApi, "sky", h => h
   .handle("position", ({ query: q }) => Effect.gen(function* () {
     const ms = q.time === undefined ? yield* Clock.currentTimeMillis : yield* parseUtc(q.time)
     const { out, provenance } = yield* compute("position", blocksFor(jd(ms), jd(ms)), src =>
-      positionRequest(src, { utcMs: ms, lat: q.lat, lon: q.lon, height: q.height, heightRef: q.heightRef, temperature: q.temperature, pressure: q.pressure, horizon: q.horizon, dut1: q.dut1 }))
+      positionRequest(src, { utcMs: ms, lat: q.lat, lon: q.lon, height: q.height, heightRef: q.heightRef, temperature: q.temperature, pressure: q.pressure, horizon: q.horizon, dut1: q.dut1 }), undefined, geoidAt(q.lat))
     return { ...out, provenance }
   }).pipe(Effect.withSpan("position")))
   .handle("day", ({ query: q }) => Effect.gen(function* () {
@@ -51,7 +60,7 @@ export const SkyLive = HttpApiBuilder.group(EphemApi, "sky", h => h
     if (t0 < SUPPORTED.fromMs || t1 >= SUPPORTED.toMs) return yield* new OutOfRange({ message: `${q.date} is outside the supported range` })
     const { out, provenance } = yield* compute("day", blocksFor(jd(t0), jd(t1)), src =>
       dayRequest(src, { date: q.date, tz: q.tz, lat: q.lat, lon: q.lon, height: q.height, heightRef: q.heightRef, temperature: q.temperature, pressure: q.pressure,
-        horizon: q.horizon, horizonProfile: q.horizonProfile, limb: q.limb, dut1: q.dut1 }), o => ("ok" in o ? { "ephem.events": o.ok.events.length } : {}))
+        horizon: q.horizon, horizonProfile: q.horizonProfile, limb: q.limb, dut1: q.dut1 }), o => ("ok" in o ? { "ephem.events": o.ok.events.length } : {}), geoidAt(q.lat))
     if ("error" in out) return yield* new InvalidInput({ message: out.error })
     return { ...out.ok, provenance }
   }).pipe(Effect.withSpan("day")))
@@ -66,7 +75,7 @@ export const SkyLive = HttpApiBuilder.group(EphemApi, "sky", h => h
     const { out, provenance } = yield* compute("crossing", blocksFor(jd(startMs), jd(endMs)), src =>
       crossingRequest(src, { startMs, endMs, lat: q.lat, lon: q.lon, height: q.height, heightRef: q.heightRef, body: q.body, altitude: q.altitude, altitudeType: q.altitudeType,
         horizonProfile: q.horizonProfile, limb: q.limb, direction: q.direction, temperature: q.temperature, pressure: q.pressure, dut1: q.dut1 }),
-      o => ("ok" in o ? { "ephem.crossings": o.ok.crossings.length } : {}))
+      o => ("ok" in o ? { "ephem.crossings": o.ok.crossings.length } : {}), geoidAt(q.lat))
     if ("error" in out) return yield* new InvalidInput({ message: out.error })
     return { ...out.ok, provenance }
   }).pipe(Effect.withSpan("crossing")))
@@ -89,7 +98,7 @@ export const SkyLive = HttpApiBuilder.group(EphemApi, "sky", h => h
     if (bad) return yield* new InvalidInput({ message: bad })
     const { out, provenance } = yield* compute("track", blocksFor(jd(start), jd(end)), src =>
       trackRequest(src, { lat: q.lat, lon: q.lon, height: q.height, heightRef: q.heightRef, startMs: start, endMs: end, stepSeconds: step,
-        temperature: q.temperature, pressure: q.pressure, horizon: q.horizon, dut1: q.dut1 }), o => ({ "ephem.instants": o.count }))
+        temperature: q.temperature, pressure: q.pressure, horizon: q.horizon, dut1: q.dut1 }), o => ({ "ephem.instants": o.count }), geoidAt(q.lat))
     return { ...out, provenance }
   }).pipe(Effect.withSpan("track"))))
 

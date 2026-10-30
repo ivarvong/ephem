@@ -3,6 +3,7 @@
 
     reference/geoid/fetch.sh                      # NGA zip (WW15MGH.GRD + NGA's test points), PROJ's GeoTIFF; SHA-256 pinned
     python3 reference/geoid/make_grid.py          # writes the TS module and prints sizes + subsampling error stats
+    node --experimental-strip-types scripts/geoid-r2.ts manifest && … upload   # the Worker reads bands from R2 (2026-10-30)
 
 Source: NGA, "EGM96 15-minute interpolation grid" (earth-info.nga.mil, file egm-96interpolation: WW15MGH.GRD, 721 × 1441 point
 values, 90°N→90°S, 0°E→360°E). Every 2nd row/column is kept (361 × 720, 0..359.5°E), rounded to the centimetre (≤ 0.005 m),

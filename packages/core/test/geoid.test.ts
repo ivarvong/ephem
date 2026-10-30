@@ -3,7 +3,10 @@
 import { describe, expect, it } from "vitest"
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
-import { GEOID, geoidBandsDecoded, geoidUndulation } from "../src/geoid.ts"
+import { createHash } from "node:crypto"
+import { EGM96_BANDS } from "../src/egm96-bands.ts"
+import { GEOID, decodeGeoidBand, geoidBandsDecoded, geoidBandsFor, geoidUndulation, setGeoidSource } from "../src/geoid.ts"
+import { bundledGeoidBand, bundledGeoidObject } from "../src/geoid-bundled.ts"
 import { observerHeights, seaDip } from "../src/horizon.ts"
 
 const fx = JSON.parse(readFileSync(resolve(__dirname, "fixtures/geoid/egm96.json"), "utf8")) as { nodes30: number[][]; ngaTestPoints: number[][]; bilinear15: number[][] }
@@ -13,6 +16,35 @@ describe("EGM96 geoid undulation", () => {
     expect(geoidBandsDecoded()).toBe(0)
     geoidUndulation(40.7, -74); expect(geoidBandsDecoded()).toBe(1)
     geoidUndulation(90 - 7.5 * 0.5 - 0.1, 10); expect(geoidBandsDecoded()).toBe(3)   // rows 7 and 8 straddle bands 0 and 1
+  })
+  it("geoidBandsFor names exactly the bands a lookup decodes", () => {
+    for (let lat = -90; lat <= 90; lat += 0.0625) {
+      const seen = new Set<number>(); setGeoidSource(b => { seen.add(b); return bundledGeoidBand(b) })
+      geoidUndulation(lat, 17.3)
+      expect([...seen].toSorted((a, b) => a - b), `lat ${lat}`).toEqual(geoidBandsFor(lat))
+    }
+    setGeoidSource(bundledGeoidBand)
+  })
+  it("the R2 manifest (egm96-bands.ts) is the bundled grid: offsets, lengths, per-band and object sha256", () => {
+    const obj = bundledGeoidObject()
+    expect(obj.length).toBe(EGM96_BANDS.bytes)
+    expect(createHash("sha256").update(obj).digest("hex")).toBe(EGM96_BANDS.sha256)
+    expect(EGM96_BANDS.key).toBe(`egm96-30/${EGM96_BANDS.sha256.slice(0, 16)}.bin`)
+    EGM96_BANDS.bands.forEach(([off, len, sha], b) => {
+      const x = bundledGeoidBand(b)
+      expect(obj.subarray(off, off + len)).toEqual(x)
+      expect(createHash("sha256").update(x).digest("hex").slice(0, 16)).toBe(sha)
+    })
+    expect(EGM96_BANDS.bands.length).toBe(Math.ceil(EGM96_BANDS.rows / EGM96_BANDS.bandRows))
+  })
+  it("fails closed: no source, a truncated band or trailing bytes throw instead of answering", () => {
+    try {
+      setGeoidSource(b => { throw new Error(`band ${b} unavailable`) })
+      expect(() => geoidUndulation(40.7, -74)).toThrow(/band 12 unavailable/)
+    } finally { setGeoidSource(bundledGeoidBand) }
+    const x = bundledGeoidBand(12)
+    expect(() => decodeGeoidBand(12, x.subarray(0, x.length - 1))).toThrow(/truncated/)
+    expect(() => decodeGeoidBand(12, Uint8Array.from([...x, 0]))).toThrow(/trailing/)
   })
   it("every sampled 30′ node equals NGA's WW15MGH.GRD value to the centimetre rounding (≤ 0.005 m)", () => {
     for (const [lat, lon, n] of fx.nodes30) expect(Math.abs(geoidUndulation(lat!, lon! > 180 ? lon! - 360 : lon!) - n!), `${lat},${lon}`).toBeLessThanOrEqual(0.005 + 1e-9)

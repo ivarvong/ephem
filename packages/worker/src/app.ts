@@ -5,6 +5,7 @@ import { HttpApiBuilder, HttpApiError } from "effect/http-api"
 import { EphemApi, QUERY_PARAMS } from "@ephem/api"
 import { HandlersLive } from "./handlers.ts"
 import type { Blocks } from "./blocks.ts"
+import { GeoidInstalled, type Geoid } from "./geoid.ts"
 import { TracerLive } from "./trace.ts"
 import { Edge, Gateway, type Role } from "./responses.ts"
 import { Home } from "./home.ts"
@@ -38,8 +39,9 @@ export const SCALAR = "https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.74.0
 const DOCS_HTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ephem API</title></head><body><script id="api-reference" data-url="/openapi.json"></script><script src="${SCALAR}"></script></body></html>`
 const Docs = HttpRouter.add("GET", "/docs", HttpServerResponse.html(DOCS_HTML))
 
-/** `edge`: which side of the front door → Api loopback this router is (src/responses.ts); default `local` (tests, dev). */
-export const makeApp = (blocks: Layer.Layer<Blocks>, edge: Role = { role: "local" }, weather: Layer.Layer<Weather> = WeatherNone) =>
+/** `edge`: which side of the front door → Api loopback this router is (src/responses.ts); default `local` (tests, dev).
+ *  `geoid`: the Worker passes makeGeoid (R2 bands via BlockStore); the default relies on a band source the caller installed. */
+export const makeApp = (blocks: Layer.Layer<Blocks>, edge: Role = { role: "local" }, weather: Layer.Layer<Weather> = WeatherNone, geoid: Layer.Layer<Geoid> = GeoidInstalled) =>
   Layer.mergeAll(
     HttpApiBuilder.layer(EphemApi, { openapiPath: "/openapi.json" }),
     Home,
@@ -49,10 +51,10 @@ export const makeApp = (blocks: Layer.Layer<Blocks>, edge: Role = { role: "local
     Gateway,
     Mcp,
     TracerLive,
-  ).pipe(Layer.provide(ExplainSchemaErrors.layer), Layer.provide(HandlersLive), Layer.provide(weather), Layer.provide(blocks), Layer.provide(Layer.succeed(Edge, edge)), Layer.provide(PlatformWeb))
+  ).pipe(Layer.provide(ExplainSchemaErrors.layer), Layer.provide(HandlersLive), Layer.provide(weather), Layer.provide(blocks), Layer.provide(geoid), Layer.provide(Layer.succeed(Edge, edge)), Layer.provide(PlatformWeb))
 
-export const makeHandler = (blocks: Layer.Layer<Blocks>, edge?: Role, weather?: Layer.Layer<Weather>) => {
-  const { handler } = HttpRouter.toWebHandler(makeApp(blocks, edge, weather) as Layer.Layer<never, never, HttpRouter.HttpRouter>, { disableLogger: true })
+export const makeHandler = (blocks: Layer.Layer<Blocks>, edge?: Role, weather?: Layer.Layer<Weather>, geoid?: Layer.Layer<Geoid>) => {
+  const { handler } = HttpRouter.toWebHandler(makeApp(blocks, edge, weather, geoid) as Layer.Layer<never, never, HttpRouter.HttpRouter>, { disableLogger: true })
   /** `log`: where this request's Basin row goes (src/requestlog.ts); without it nothing is logged. */
   return async (request: Request, log?: RequestLogSink): Promise<Response> => {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, POST, OPTIONS", "access-control-allow-headers": "*" } })

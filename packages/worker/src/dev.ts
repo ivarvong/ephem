@@ -4,7 +4,8 @@
 import { createServer } from "node:http"
 import { open } from "node:fs/promises"
 import { resolve } from "node:path"
-import { DE440 } from "@ephem/core"
+import { DE440, setGeoidSource } from "@ephem/core"
+import { bundledGeoidBand } from "../../core/src/geoid-bundled.ts"
 import { REC, blockOffset, direct, makeBlocks } from "./blocks.ts"
 import { makeHandler } from "./app.ts"
 import { makeFeed, serveFeed } from "./metar-feed.ts"
@@ -18,6 +19,7 @@ const blocks = makeBlocks(direct(async (first, count) => {
 }))
 // METARs from aviationweather.gov through the MetarFeed code with no cache in front: one upstream GET per weather request
 const handler = makeHandler(blocks, undefined, weatherLive(makeFeed({ fetch: req => serveFeed(req, { fetch: (u, i) => fetch(u, i) }) })))
+setGeoidSource(bundledGeoidBand)   // the grid from the source tree; prod reads bands from R2 (src/geoid.ts)
 const port = Number(process.argv[2] ?? 8787)
 
 createServer(async (req, res) => {

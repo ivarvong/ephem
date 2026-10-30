@@ -27,6 +27,8 @@ export default defineConfig({
 			EPH: bindings.r2({
 				name: "ephem-de440",
 			}),
+			// EGM96 geoid bands (one sha-addressed object, scripts/geoid-r2.ts); read by BlockStore, src/geoid.ts.
+			GEOID: bindings.r2({ name: "ephem-geoid" }),
 			// Basin stream ephem_requests (schema ops/basin/requests.schema.json); request rows, src/requestlog.ts.
 			LOGS: bindings.pipeline({ name: "d43e9589a2784812afda39033b6792eb" }),
 			VERSION: bindings.versionMetadata(),
