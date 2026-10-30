@@ -329,7 +329,7 @@ draws (`ab-split/bin/stats.py`, `runs/ab1.stats.txt`).
 | position probes waiting > 20 ms before the handler | 0.01 % (1 / 7 324) | 0.03 % (2 / 7 337) | −0.01 pp [−0.10, +0.05] | 0–0.08 / 0–0.16 % |
 | position wait p99 | 0 ms | 0 ms | 0 [0, 0] | |
 | cold scan e2e p50 / p90 (server: runtime POST start → Effect POST end) | 307 / 464 ms | 336 / 512 ms | **−29 [−40, −20] / −48 [−73, −29]** | p50 289–325 / 322–355 |
-| Api window pre-handler wait p90 / p99 | 71 / 152 ms | 97 / 204 ms | **−26 [−31, −20] / −52 [−61, −44]** | p90 67–78 / 79–103 |
+| Api window pre-handler wait p90 / p99 | 71 / 152 ms | 96 / 205 ms | **−25 [−31, −19] / −53 [−64, −44]** | p90 67–78 / 79–103 |
 | warm hop `api.fetch` HIT p50 / p99 | 4 / 8 ms | 4 / 8 ms | 0 [−1, 0] / 0 [−1, +1] | |
 | CPU per scan (Σ window Api CPU + POST CPU) | 993 ms | 963 ms | **+30 [+21, +40]** (+3 %) | 975–1 025 / 942–979; S higher 6/6 |
 | fresh isolates per run: front door (first computation) / Api | 0.3 / 762 | 0.3 / 781 | 0 [−0.5, +0.5] / −19 [−42, +9] | Api 723–861 / 684–847 |
@@ -337,7 +337,12 @@ draws (`ab-split/bin/stats.py`, `runs/ab1.stats.txt`).
 
 Also per run: front-door POST CPU p50 21–22 ms both; fresh Api isolate pre-router gap p50 87–91 (S) vs 115–122 ms (E).
 
-**Decision: E.** S is faster (scans −29 ms p50, window waits −26 / −52 ms) but costs +3 % CPU per scan with a CI excluding
+Audit (dedup bug, 2026-10-30 22:25Z): the first pull of r1–r2 used `events_all`'s `$metadata.id` dedup (lost 25–37 % of
+queue.py rows, 5–9 % of cold-split / cpu-by-version rows); r3 onward and the final r1–r2 were pulled with the whole-`$metadata`
+key. A fresh re-pull of all 6 runs with the fixed scripts (scratchpad `audit/ab1/ab1.stats.txt`) reproduces every row; only
+E's window wait moved (97 / 204 → 96 / 205 ms, CI −26 [−31, −20] / −52 [−61, −44] → above; late-ingested r4 rows). Decision unchanged.
+
+**Decision: E.** S is faster (scans −29 ms p50, window waits −25 / −53 ms) but costs +3 % CPU per scan with a CI excluding
 0, so by the pre-registered rule ephem-compute was removed: one Worker again (Api + BlockStore cache-enabled entrypoints of
 ephem; deploy.sh `compute` target, bindings, packages/compute, smoke `--pin-compute` gone). The position tail the split
 was built for did not show in either arm in this run (it was 0.35–5 % in earlier runs), so it is not what the split buys;
@@ -393,8 +398,11 @@ loop + `/v1/position` every 200 ms; before 647f5bbc 19:31:36–19:33:36Z and 19:
 | cold scan client p50 / p90 | 469–472 / 622–663 ms | 377–425 / 532–594 ms |
 | warm scan (14 × HIT) client p50 | 84–109 ms | 87–127 ms |
 | hop, warm: `api.fetch` HIT (front-door span) | 4 / 6 / 11 ms (ctx.exports, n = 56) | 4 / 6 / 7 ms (binding, n = 28) |
-| hop, warm: `search.window.fetch` HIT, same workload | 12 / 15 / 20 ms (n = 336) | 13 / 18 / 66 ms (n = 364) |
-| hop, cold: `search.window.fetch` MISS, same workload | 92 / 296 / 522 ms (n = 3 360) | 93 / 259 / 458 ms (n = 3 626) |
+| hop, warm: `search.window.fetch` HIT, same workload | 12 / 15 / 20 ms (n = 350; was 336) | 13 / 18 / 66 ms (n = 364) |
+| hop, cold: `search.window.fetch` MISS, same workload | 92 / 295 / 522 ms (n = 3 388; was 296, 3 360) | 93 / 260 / 458 ms (n = 3 635; was 259, 3 626) |
+
+Hop rows re-derived 2026-10-30 22:25Z (hop.py deduplicated by `$metadata.id`): 0 id collisions in these single-span pulls, so
+no events were dropped; n rose ~1 % from late ingest, percentiles moved ≤ 1 ms. Queue rows (traceId-keyed, no id dedup): unaffected.
 
 **Verdict.** The split did **not** move the position tail: the same 0.35 % of probes waited, all on new front-door isolates,
 and the after run carried ~20 % more scans. The front door still starts new isolates under this load (and did twice in
@@ -764,7 +772,7 @@ column.
 | 2026-10-30 | same versions | Cold e2e of a homepage /v1/track (a geoid route: every observer route needs N) from EWR, fresh connection + fresh Api isolate, median: base 319 ms (n 14; server 227, gap 122, CPU 51) → geoid 352 (n 15; server 220, gap 120, CPU 61, geoid.load 11) → both 289 (n 28; server 179, gap 90, CPU 51, geoid.load 6). Warm isolate 131 / 146 / 141 (n 35 / 15 / 20). `geoid.load` over 1 185 spans 12:28–12:41Z: L1 0 ms (24%), HIT p50/p90/p99 5/17/41 (HIT:2 6/28/47), **MISS p50/p90 134/289** (5%, R2 ENAM from the tier colo; once per band per tier, immutable + crossVersionCache); concurrent with blocks.load (HIT 4–6 ms), so a HIT adds ~1–2 ms wall and a MISS ~130 ms. 0 5xx. | next: isolate start-up is platform-side; home.ts 60 KB is the largest piece left |
 | 2026-10-30 | 8a308729, 0d870218, 37d28e99 → eb25caa2 (e2d5ac3) → 647f5bbc (0c29b78, revert) | Position p99 under cold-scan load: client p99 from the laptop is noise (idle 60 s phases 84–525 ms). Server-side (`queue.py`), 0.4–5.1 % of probes under load vs 0–0.9 % idle waited 70–234 ms before the handler, 35 of 37 on a **new front-door isolate**; 2 of 1 937 waited (23, 37 ms) behind JS in a warm isolate. Merge-only load (14 × HIT at the same rate): 0 / 503. Front-door CPU per scan p50 25 ms (cold) / 22 (warm). Sliced window compute: no measured effect (window wait p99 218 → 205 ms, new-isolate probes 2.0 → 1.2 %), reverted. | cause is isolate start-up, not merge CPU; next lever: window compute off the front door's isolates |
 | 2026-10-30 | 647f5bbc → 121b7984 + ephem-compute bb0a1127 (git 01e0323) | Api + BlockStore moved to their own Worker (service bindings, same keys, callee's Workers Caching verified MISS → HIT). Position probes waiting > 20 ms under ~120–150 cold scans/min: 5/1 420 → 5/1 425 (0.35 %), all new front-door isolates either way. Api window pre-handler wait p90/p99 109/215 → 73/150 ms; cold scan p50 470 → 380–425 ms; binding hop ≤ 1 ms (api.fetch HIT 4 ms both). | split kept; the position tail is front-door isolate start-up that the split does not change (guide "Compute split") |
-| 2026-10-30 | S ephem 02dd1270 + ephem-compute fca6e275 vs E ephem cc6ddd8e (git 5edf1b7), 20:42:57–21:11:57Z | Concurrent A/B of the compute split (one commit, two versions 50/50, both arms pinned and loaded at the same instants; 6 × 240 s). S − E [95 % CI]: cold scan server e2e p50 −29 [−40, −20] ms, p90 −48 [−73, −29]; window wait p90 −26 [−31, −20], p99 −52 [−61, −44]; **CPU per scan +30 [+21, +40] ms (993 vs 963, +3 %)**; position waits > 20 ms 1/7 324 vs 2/7 337, warm hop 4/8 ms both, fresh isolates equal. | pre-registered rule → E, confirmed: the latency gain was measured only at synthetic contention (124 cold scans/min), warm/live paths unchanged, two-Worker cost on every deploy. ephem d3caf38f (git 7a125fd), ephem-compute deleted; re-run at real load if search nears contention (5edf1b7 holds both arms; guide "Compute split") |
+| 2026-10-30 | S ephem 02dd1270 + ephem-compute fca6e275 vs E ephem cc6ddd8e (git 5edf1b7), 20:42:57–21:11:57Z | Concurrent A/B of the compute split (one commit, two versions 50/50, both arms pinned and loaded at the same instants; 6 × 240 s). S − E [95 % CI]: cold scan server e2e p50 −29 [−40, −20] ms, p90 −48 [−73, −29]; window wait p90 −25 [−31, −19], p99 −53 [−64, −44] (re-pulled after the dedup fix; was −26 / −52); **CPU per scan +30 [+21, +40] ms (993 vs 963, +3 %)**; position waits > 20 ms 1/7 324 vs 2/7 337, warm hop 4/8 ms both, fresh isolates equal. | pre-registered rule → E, confirmed: the latency gain was measured only at synthetic contention (124 cold scans/min), warm/live paths unchanged, two-Worker cost on every deploy. ephem d3caf38f (git 7a125fd), ephem-compute deleted; re-run at real load if search nears contention (5edf1b7 holds both arms; guide "Compute split") |
 | 2026-10-30 | 8a308729 → 0d870218 (git ac69e35) | Rates analytic (DE440 velocity) instead of a ±10 s difference: the flaky rate property was the nadir side (5.6e-5 vs 1e-5 within 10° of it); now ≤ 3.6e-7 vs Richardson, 0 exceedances in 400k body-samples above −89° (guide "Rates"). Local: position() 18.5 → 12.8 µs, ratesAt 4.0 → 2.3 µs. Prod /v1/track (no rates; `LOAD=track` 120 cold, 13:19:25–13:19:50Z) Api CPU p50 13 / p90 65 / p99 108 ms vs 9 / 61 / 101 on e4d16979 (n=242): unchanged, isolate warmth. | rates 25–60× closer to the positions; position CPU −31% |
 | 2026-10-30 | 02dd1270 → 639e952a (git 5026667 ⊇ 5d9103c) | **/instrument** (RPN view): bundle 474.46 → 590.04 KiB (gzip 164.08 → 221.19); local `cf workers check` median active/window 36.3/55.1 → 36.3/54.8 ms (6 alternating runs); deploy-reported startup 56 ms (n=1) vs 43, 44, 50, 51 ms for the previous four 474 KiB uploads. Prod browser (390×844, fresh context + never-seen lat/lon, n=7): 2 API requests cold and warm (+ 3 fonts, `(cache)` warm), HTML 18.3 KB on the wire. | data rendered p50 cold 388 / warm 88 ms; /v1/day rendered 552 / 53 ms (scratchpad instrument/prod.json) |
 
@@ -800,12 +808,18 @@ column.
   10/10 with `--limit-rate 4k`), and is the cause of 1bff6e62's "/docs has no /openapi.json link": o11y shows every /docs
   request to 1bff6e62 (13:18:12–13:18:33Z) returned 200. smoke.sh writes bodies to files and greps those
   (`echo "$S" | head -1 | grep` had the same flaw). Repro: scratchpad `deploy/repro-pipefail.sh`.
-- **`$metadata.id` is not unique.** One query returned 78 rows for 78 distinct cf-rays with only 67 distinct ids (smoke run
-  g1793394107, 2026-10-30). `telemetry.events_all` deduplicated by it and silently dropped ~14% of events: /v1/position
-  20:50–21:00Z kept 2133 of 2478 (cc6ddd8e) and 2116 of 2459 (02dd1270), equally in both arms. That was the "15–24% o11y
-  loss" in the compute-mode A/B: it is not ingest loss. Fixed (dedup by the whole `$metadata`). Cross-check on the same
-  10 min: o11y invocations front 9414 / Api 13898, root spans 9403 / 13896, ephem-tail `tail_batch` rows 9410 / 13906,
-  all within 0.1%. Never count or dedup by `$metadata.id`; count rays or traceIds.
+- **`$metadata.id` is not unique; dedupe by the whole `$metadata` (or rayId + type), never by id.** One query returned 78
+  rows for 78 distinct cf-rays with only 67 distinct ids (smoke run g1793394107, 2026-10-30). Ids collide across event kinds:
+  20:43–20:44Z (A/B load) ephem invocations 2 879 events / 2 497 ids, spans 33 226 / 26 981 (geoid.load, search.window.fetch,
+  blocks.load most often); ephem-compute 1 727 / 1 585 and 18 328 / 14 564. `telemetry.events_all` deduplicated by id from
+  33ac398 (20:32Z) to 5026667 (21:12Z) and silently dropped events: /v1/position 20:50–21:00Z kept 2133 of 2478 (cc6ddd8e)
+  and 2116 of 2459 (02dd1270). The loss depends on the tool, not only the window: in the compute A/B's first pull of r1–r2,
+  queue.py (joins two spans per request) lost 25–37 % of rows, cold-split.py / cpu-by-version.py 5–9 %. That was the "15–24%
+  o11y loss": it is not ingest loss. Fixed (whole `$metadata`; canary-gate.py the same). A pull filtered to one span name
+  can be clean (split/bin/hop.py, same id dedup, 19:00–20:10Z: 0 collisions in 8 006 rows), so check, don't assume. Independent
+  cross-check, same 10 min: o11y invocations front 9414 / Api 13898, root spans 9403 / 13896, ephem-tail `tail_batch` rows
+  (the tail Worker feeding Basin `ephem.invocations`) 9410 / 13906, all within 0.1%. Count rays or traceIds. Audit of every finding (2026-10-30
+  22:25Z): only the two A/B tables in "Compute split" used an id dedup; both re-pulled (retention 7 days), changes ≤ 1 ms.
 - Spans carry the version as `source.cloudflare.script_version.id` and the entrypoint as `source.cloudflare.entrypoint`
   (no `$workers`); filter spans by ray with key `cloudflare.ray_id` (root spans only). Console JSON lines have no
   `$metadata.level`; `console.error` lines have level `error`.
