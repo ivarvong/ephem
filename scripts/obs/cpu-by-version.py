@@ -48,7 +48,7 @@ def pct(v: list, p: float):
     v = sorted(v); return v[min(len(v) - 1, int(len(v) * p))]
 
 
-print(f"{'version':9} {'entrypoint':10} {'path':16} {'st':>4} {'n':>5}  {'cpu p50':>7} {'p90':>4} {'p99':>4}  {'wall p50':>8} {'p90':>4} {'p99':>4}")
+print(f"{'version':9} {'entrypoint':10} {'path':16} {'st':>4} {'n':>5}  {'cpu p50':>7} {'p90':>4} {'p99':>4} {'cpu sum':>8}  {'wall p50':>8} {'p90':>4} {'p99':>4}")
 for (ver, ep, path, st), (cpu, wall) in sorted(rows.items(), key=lambda kv: (kv[0][2][:9], kv[0][0], kv[0][1])):
-    print(f"{ver:9} {ep:10} {path[:16]:16} {st!s:>4} {len(cpu):>5}  {pct(cpu,.5):>7} {pct(cpu,.9):>4} {pct(cpu,.99):>4}  {pct(wall,.5):>8} {pct(wall,.9):>4} {pct(wall,.99):>4}")
+    print(f"{ver:9} {ep:10} {path[:16]:16} {st!s:>4} {len(cpu):>5}  {pct(cpu,.5):>7} {pct(cpu,.9):>4} {pct(cpu,.99):>4} {sum(cpu):>8}  {pct(wall,.5):>8} {pct(wall,.9):>4} {pct(wall,.99):>4}")
 print("(events view caps at 1000 rows per query: narrow --minutes or --path for busy windows)", file=sys.stderr)
