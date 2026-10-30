@@ -1,16 +1,10 @@
 #!/bin/bash
-# Deploy ephem (and ephem-compute, ephem-tail) from a committed revision only: never from the shared working tree.
-#   scripts/deploy.sh <rev> "<message>" [auto|ephem|compute|tail|all|ab|ab-end]     (DRY=1 runs the gate in the clean worktree and stops)
+# Deploy ephem (and ephem-tail) from a committed revision only: never from the shared working tree.
+#   scripts/deploy.sh <rev> "<message>" [auto|ephem|tail|all]     (DRY=1 runs the gate in the clean worktree and stops)
 # Checks out <rev> into a throwaway git worktree, links node_modules from the main checkout (no npm install), runs the full
 # gate there, then deploys from that worktree:
 #   tail   ephem-tail (packages/tail) first: cf deploy, then (after ephem's smoke has sent it traffic) scripts/obs/tail-check.py
 #          must see its invocations ok and the smoke's route labels; otherwise ephem-tail is rolled back.
-#   compute  ephem-compute (packages/compute: Api + BlockStore, called by ephem over service bindings), after the tail and
-#          before ephem, so a front door never calls a compute that lacks its interface. Gradual like ephem: 0% canary, smoked
-#          through the live front door with ephem-compute="<id>" in Cloudflare-Workers-Version-Overrides (the front door
-#          forwards it; smoke.sh's compute check needs a fresh MISS computed by <id>), promote, live smoke, auto-rollback.
-#          Its first deploy (no deployment yet) is a plain cf deploy: nothing calls it until ephem's canary, which smokes it.
-#          ephem rolling back does not roll compute back: compute must keep answering the previous front door.
 #   ephem  gradual: upload a version (cf workers versions create), route it 0% next to the current version at 100%, smoke it
 #          pinned (Cloudflare-Workers-Version-Overrides; x-ephem-version proves which version answered), promote to 100%,
 #          wait until /healthz answers from it, smoke again. Any smoke failure is retried once (only the failed checks, after
@@ -18,15 +12,10 @@
 #          A change to non-versioned settings (tailConsumers, observability, logpush in packages/worker/cloudflare.config.ts)
 #          deploys with cf deploy instead (no 0% stage: those settings apply on deployment), with the same live smoke + rollback.
 # auto (default) = ephem, plus tail first when packages/tail, the shared route list or the invocations schema changed since
-# the last deployed-tail/ tag, or tailConsumers changed since the last deployed/ tag, plus compute (before ephem) when
-# packages/compute, core, api or worker/src changed since the last deployed-compute/ tag. Success tags deployed/<ts> (ephem),
-# deployed-compute/<ts> and deployed-tail/<ts>. Smoke checks live in the deployed commit's scripts/smoke.sh. Fails closed at every step.
-#   ab     the compute-split A/B (guide "Compute split"): <rev> must be the commit ephem's 100% version was deployed from. Uploads
-#          a second version of it built with `--mode entrypoint` (COMPUTE_MODE=entrypoint: Api + BlockStore over ctx.exports),
-#          smokes it pinned at 0% (its fresh MISS must be computed by itself), then routes 50/50 and smokes both pinned. Records
-#          both ids in <git dir>/ephem-ab; no tag. Load pins each arm with Cloudflare-Workers-Version-Overrides.
-#   ab-end routes 100% back to the recorded binding-mode version, waits until it serves, smokes it, removes the record.
-# Telemetry gate (scripts/obs/canary-gate.py): after every pinned canary smoke (ephem and ephem-compute) and before promotion,
+# the last deployed-tail/ tag, or tailConsumers changed since the last deployed/ tag. Success tags deployed/<ts> (ephem) and
+# deployed-tail/<ts>. (ephem-compute, a separate Worker for Api + BlockStore, and its `compute` target were removed after the
+# 2026-10-30 A/B, DESIGN §12.0; old deployed-compute/ tags are history.) Smoke checks live in the deployed commit's scripts/smoke.sh. Fails closed at every step.
+# Telemetry gate (scripts/obs/canary-gate.py): after the pinned canary smoke and before promotion,
 # the gate reads Workers Observability for exactly the smoke's requests (smoke.sh --run: x-ephem-smoke header; --manifest:
 # their cf-rays) and fails on exceptions, 5xx, error logs, missing entrypoints/spans or missing telemetry; a failure removes
 # the canary exactly like a failed smoke. After promotion it runs again over the live smoke plus all real traffic for
@@ -34,8 +23,8 @@
 # The body is one function so bash parses the whole file before running it: editing deploy.sh can't break a running deploy.
 main() {
 set -euo pipefail
-REV=${1:?usage: deploy.sh <rev> "<message>" [auto|ephem|compute|tail|all|ab|ab-end]}; MSG=${2:?usage: deploy.sh <rev> "<message>"}; TARGET=${3:-auto}
-case "$TARGET" in auto|ephem|compute|tail|all|ab|ab-end) ;; *) echo "target must be auto|ephem|compute|tail|all|ab|ab-end" >&2; exit 2 ;; esac
+REV=${1:?usage: deploy.sh <rev> "<message>" [auto|ephem|tail|all]}; MSG=${2:?usage: deploy.sh <rev> "<message>"}; TARGET=${3:-auto}
+case "$TARGET" in auto|ephem|tail|all) ;; *) echo "target must be auto|ephem|tail|all" >&2; exit 2 ;; esac
 ROOT=${EPHEM_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}; B=https://ephem.ivar.workers.dev; RETRY_S=${RETRY_S:-5}
 SHA=$(git -C "$ROOT" rev-parse --short=12 "$REV")
 # One deploy at a time, and never backwards: concurrent agents' deploys raced and an older commit replaced a newer one
@@ -47,21 +36,18 @@ WT=""; cleanup() { [ -n "$WT" ] && git -C "$ROOT" worktree remove --force "$WT" 
 trap cleanup EXIT
 LAST=$(git -C "$ROOT" tag --list 'deployed/*' --sort=-refname | head -1)
 LAST_TAIL=$(git -C "$ROOT" tag --list 'deployed-tail/*' --sort=-refname | head -1)
-LAST_COMPUTE=$(git -C "$ROOT" tag --list 'deployed-compute/*' --sort=-refname | head -1)
 older() { [ -n "$1" ] && [ "${ALLOW_OLDER:-}" != 1 ] && ! git -C "$ROOT" merge-base --is-ancestor "$1" "$SHA"; }
 changed() { [ -z "$1" ] || ! git -C "$ROOT" diff --quiet "$1" "$SHA" -- "${@:2}"; }
 tc_changed() { [ -n "$LAST" ] && git -C "$ROOT" diff "$LAST" "$SHA" -- packages/worker/cloudflare.config.ts | grep -qE '^[+-][^+-].*tailConsumers'; }
-DO_TAIL=0; DO_EPHEM=0; DO_COMPUTE=0
+DO_TAIL=0; DO_EPHEM=0
 case "$TARGET" in
-  ephem) DO_EPHEM=1 ;; tail) DO_TAIL=1 ;; compute) DO_COMPUTE=1 ;; all) DO_TAIL=1; DO_COMPUTE=1; DO_EPHEM=1 ;;
-  ab|ab-end) [ "$(git -C "$ROOT" rev-parse "$LAST")" = "$(git -C "$ROOT" rev-parse "$SHA")" ] || { echo "$TARGET: $SHA is not the last deployed ephem commit ($LAST); both arms must come from one commit" >&2; exit 1; } ;;
-  auto) DO_EPHEM=1; { changed "$LAST_TAIL" packages/tail packages/worker/src/routes.ts packages/worker/ops/basin/invocations.schema.json || tc_changed; } && DO_TAIL=1
-        changed "$LAST_COMPUTE" packages/compute packages/core packages/api packages/worker/src && DO_COMPUTE=1 ;;
+  ephem) DO_EPHEM=1 ;; tail) DO_TAIL=1 ;; all) DO_TAIL=1; DO_EPHEM=1 ;;
+  auto) DO_EPHEM=1; { changed "$LAST_TAIL" packages/tail packages/worker/src/routes.ts packages/worker/ops/basin/invocations.schema.json || tc_changed; } && DO_TAIL=1 ;;
 esac
-for t in $([ $DO_EPHEM = 1 ] && echo "$LAST") $([ $DO_TAIL = 1 ] && echo "$LAST_TAIL") $([ $DO_COMPUTE = 1 ] && echo "$LAST_COMPUTE"); do
+for t in $([ $DO_EPHEM = 1 ] && echo "$LAST") $([ $DO_TAIL = 1 ] && echo "$LAST_TAIL"); do
   older "$t" && { echo "$SHA does not contain the last deployed commit ($t = $(git -C "$ROOT" rev-parse --short=12 "$t")): rebase onto main, or ALLOW_OLDER=1 for a rollback" >&2; exit 1; }
 done
-echo "== targets @ $SHA: $([ $DO_TAIL = 1 ] && echo "ephem-tail ")$([ $DO_COMPUTE = 1 ] && echo "ephem-compute ")$([ $DO_EPHEM = 1 ] && echo ephem)"
+echo "== targets @ $SHA: $([ $DO_TAIL = 1 ] && echo "ephem-tail ")$([ $DO_EPHEM = 1 ] && echo ephem)"
 
 WT=$(mktemp -d "${TMPDIR:-/tmp}/ephem-deploy-$SHA-XXXX")
 git -C "$ROOT" worktree add --detach -q "$WT" "$SHA"
@@ -122,19 +108,6 @@ serving() {
     sleep 0.5
   done
 }
-# computing <id> <timeout-s> [pin]: wait until 3 consecutive never-seen deterministic keys (MISS) are computed by ephem-compute
-# <id> (x-ephem-compute-version), pinned via the front door's forwarded override header or not; prints seconds
-computing() {
-  local id=$1 to=$2 pin=${3:-} t0 ok=0 v h=()
-  [ -n "$pin" ] && h=(-H "cloudflare-workers-version-overrides: ephem-compute=\"$id\"")
-  t0=$(now)
-  while :; do
-    v=$(curl -s -o /dev/null -D - --max-time 10 ${h[@]+"${h[@]}"} "$B/v1/position?lat=40.$(printf '%07d' $((RANDOM * 32768 + RANDOM)))&lon=-74&time=2026-10-30T12:00:00Z" | tr -d '\r' | awk -F': ' 'tolower($1)=="x-ephem-compute-version"{print $2}')
-    if [ "$v" = "$id" ]; then ok=$((ok + 1)); [ $ok -ge 3 ] && { since "$t0"; return 0; }; else ok=0; fi
-    [ "$(python3 -c "import sys,time; print(int(time.time()-float(sys.argv[1]) > float(sys.argv[2])))" "$t0" "$to")" = 1 ] && { since "$t0"; return 1; }
-    sleep 0.5
-  done
-}
 # smoke_twice <label> <smoke args...>: run the deployed commit's smoke; retry only the failed checks once after RETRY_S s
 smoke_twice() {
   local label=$1; shift; local f="$WT/.smoke-failed"
@@ -186,91 +159,6 @@ tail_verify() {   # after ephem traffic (the smoke): the new tail ran ok and lab
   route ephem-tail "rollback: tail check failed for $TAIL_NEW [git $SHA]" "$TAIL_PREV:100"
   echo "TAIL CHECK FAILED: ephem-tail rolled back to $TAIL_PREV" >&2; return 1
 }
-# --- ephem-compute ---------------------------------------------------------------------------------------------------------
-CNEW=""
-if [ $DO_COMPUTE = 1 ]; then
-  cd "$WT/packages/compute"
-  CLAST_CFG=""; [ -n "$LAST_COMPUTE" ] && CLAST_CFG=$LAST_COMPUTE
-  if ! exists ephem-compute; then
-    echo "== deploy ephem-compute @ $SHA (first deployment: direct; ephem's canary smoke exercises it)"
-    out=$(cf deploy --message "$MSG [git $SHA]" 2>&1) || { echo "$out" | tail -20 >&2; echo "ephem-compute deploy failed" >&2; exit 1; }
-    CNEW=$(echo "$out" | sed -n 's/.*Current Version ID: *\([0-9a-f-]*\).*/\1/p' | head -1)
-    [ -n "$CNEW" ] || { echo "$out" | tail -20 >&2; echo "ephem-compute deploy: no version id in the output" >&2; exit 1; }
-    echo "$out" | grep -E 'Startup Time|Total Upload' || true
-  else
-    CPREV=$(active ephem-compute)
-    [ -n "$CPREV" ] || { echo "ephem-compute has a split deployment; resolve it first" >&2; exit 1; }
-    CMODE=gradual
-    if [ "${GRADUAL:-1}" = 0 ] || { [ -n "$CLAST_CFG" ] && git -C "$ROOT" diff "$CLAST_CFG" "$SHA" -- packages/compute/cloudflare.config.ts | grep -qE '^[+-][^+-].*(tailConsumers|observability|logpush)'; }; then CMODE=direct; fi
-    echo "== deploy ephem-compute @ $SHA ($CMODE; previous $CPREV)"
-    if [ $CMODE = gradual ]; then
-      out=$(cf workers versions create --message "$MSG [git $SHA]" 2>&1) || { echo "$out" | tail -20 >&2; echo "ephem-compute version upload failed" >&2; exit 1; }
-      CNEW=$(echo "$out" | sed -n 's/.*Worker Version ID: *\([0-9a-f-]*\).*/\1/p' | head -1)
-      [ -n "$CNEW" ] || { echo "$out" | tail -20 >&2; echo "ephem-compute version upload: no version id in the output" >&2; exit 1; }
-      echo "$out" | grep -E 'Startup Time|Total Upload' || true
-      route ephem-compute "canary 0%: $MSG [git $SHA]" "$CNEW:0" "$CPREV:100"
-      s=$(computing "$CNEW" 60 pin) || { route ephem-compute "canary abandoned: pin never reached $CNEW [git $SHA]" "$CPREV:100"; echo "COMPUTE CANARY FAILED: no pinned MISS reached $CNEW in ${s}s; removed it (prod stayed on $CPREV)" >&2; exit 1; }
-      echo "pinned misses computed by $CNEW after ${s}s"
-      CS=$(iso_now); CRUN="cc-$SHA-$(date +%s)"; : > "$WT/.manifest-ccanary"
-      if ! smoke_twice "compute canary, pinned $CNEW" --pin-compute "$CNEW" $(gate_args "$CRUN" "$WT/.manifest-ccanary"); then
-        route ephem-compute "canary failed: $MSG [git $SHA]" "$CPREV:100"
-        echo "COMPUTE CANARY SMOKE FAILED on $CNEW (twice): removed it (100% $CPREV)" >&2; exit 1
-      fi
-      if ! o11y_gate ephem-compute "$CNEW" "$CPREV" "$CS" "$CRUN" "$WT/.manifest-ccanary"; then
-        TR=$(now); route ephem-compute "canary failed: telemetry gate [git $SHA]" "$CPREV:100"
-        echo "COMPUTE CANARY TELEMETRY GATE FAILED on $CNEW: removed it in $(since "$TR")s (100% $CPREV; prod never served it). Not tagged." >&2; exit 1
-      fi
-      T0C=$(iso_now); route ephem-compute "$MSG [git $SHA]" "$CNEW:100"; echo "promoted ephem-compute $CNEW to 100%"
-    else
-      out=$(cf deploy --message "$MSG [git $SHA]" 2>&1) || { echo "$out" | tail -20 >&2; echo "ephem-compute deploy failed" >&2; exit 1; }
-      CNEW=$(echo "$out" | sed -n 's/.*Current Version ID: *\([0-9a-f-]*\).*/\1/p' | head -1)
-      [ -n "$CNEW" ] || { echo "$out" | tail -20 >&2; echo "ephem-compute deploy: no version id in the output" >&2; exit 1; }
-    fi
-    C_OK=1
-    if s=$(computing "$CNEW" 60); then echo "ephem-compute $CNEW computing 3 consecutive misses ${s}s after promotion"; else echo "FAIL ephem-compute $CNEW not computing after ${s}s"; C_OK=0; fi
-    CLRUN="cl-$SHA-$(date +%s)"; : > "$WT/.manifest-clive"
-    [ $C_OK = 1 ] && { smoke_twice "compute live" --expect-compute "$CNEW" $(gate_args "$CLRUN" "$WT/.manifest-clive") || C_OK=0; }
-    [ $C_OK = 1 ] && { o11y_gate ephem-compute "$CNEW" "${CPREV:-}" "${T0C:-$(iso_now)}" "$CLRUN" "$WT/.manifest-clive" --live "$O11Y_LIVE_S" || C_OK=0; }
-    if [ $C_OK = 0 ]; then
-      route ephem-compute "rollback: smoke failed for $CNEW [git $SHA]" "$CPREV:100"
-      s=$(computing "$CPREV" 60) && echo "ROLLBACK: ephem-compute $CPREV computing again ${s}s after the rollback" || echo "ROLLBACK: ephem-compute $CPREV not computing after ${s}s" >&2
-      echo "COMPUTE LIVE CHECK FAILED on $CNEW (smoke twice, or the telemetry gate): rolled back to $CPREV. Not tagged; ephem not deployed." >&2; exit 1
-    fi
-  fi
-  git -C "$ROOT" tag -f "deployed-compute/$(date -u +%Y%m%dT%H%M%SZ)" "$SHA" >/dev/null; echo "== deployed ephem-compute $SHA ($CNEW)"
-fi
-# the compute version ephem's smokes must see on a fresh MISS
-CEXP=${CNEW:-$(active ephem-compute 2>/dev/null || true)}
-
-# --- compute-split A/B: a COMPUTE_MODE=entrypoint version of the same commit beside the binding one ----------------------
-ABF="$(git -C "$ROOT" rev-parse --absolute-git-dir)/ephem-ab"
-if [ "$TARGET" = ab ]; then
-  [ -e "$ABF" ] && { echo "an A/B is already running ($(cat "$ABF")); run ab-end first" >&2; exit 1; }
-  PREV=$(active ephem); [ -n "$PREV" ] || { echo "ephem has a split deployment; resolve it first" >&2; exit 1; }
-  cd "$WT/packages/worker"
-  out=$(cf workers versions create --mode entrypoint --message "A/B arm E (COMPUTE_MODE=entrypoint): $MSG [git $SHA]" 2>&1) || { echo "$out" | tail -20 >&2; echo "version upload failed" >&2; exit 1; }
-  NEW=$(echo "$out" | sed -n 's/.*Worker Version ID: *\([0-9a-f-]*\).*/\1/p' | head -1)
-  [ -n "$NEW" ] || { echo "$out" | tail -20 >&2; echo "version upload: no version id in the output" >&2; exit 1; }
-  echo "$out" | grep -E 'COMPUTE_MODE|Startup Time|Total Upload' || true
-  route ephem "A/B arm E 0%: $MSG [git $SHA]" "$NEW:0" "$PREV:100"
-  s=$(serving "$NEW" 60 pin) || { route ephem "A/B abandoned [git $SHA]" "$PREV:100"; echo "AB FAILED: pin never reached $NEW" >&2; exit 1; }
-  # arm E computes in ephem itself: its fresh MISS carries x-ephem-compute-version = its own ephem version id
-  smoke_twice "A/B arm E, pinned $NEW" --pin "$NEW" --expect-compute "$NEW" || { route ephem "A/B arm E failed smoke [git $SHA]" "$PREV:100"; echo "AB FAILED: arm E smoke; removed it (100% $PREV)" >&2; exit 1; }
-  route ephem "A/B 50/50 S=$PREV E=$NEW: $MSG [git $SHA]" "$PREV:50" "$NEW:50"
-  echo "S=$PREV E=$NEW sha=$SHA from=$(date -u +%FT%TZ)" > "$ABF"
-  smoke_twice "A/B arm S, pinned $PREV" --pin "$PREV" ${CEXP:+--expect-compute "$CEXP"} && smoke_twice "A/B arm E, pinned $NEW" --pin "$NEW" --expect-compute "$NEW" \
-    || { route ephem "A/B ended: smoke failed [git $SHA]" "$PREV:100"; rm -f "$ABF"; echo "AB FAILED after the 50/50 split; back to 100% $PREV" >&2; exit 1; }
-  echo "== A/B running: S (binding) $PREV 50%, E (entrypoint) $NEW 50% ($ABF)"; exit 0
-fi
-if [ "$TARGET" = ab-end ]; then
-  [ -e "$ABF" ] || { echo "no A/B record ($ABF)" >&2; exit 1; }
-  PREV=$(sed -n 's/^S=\([0-9a-f-]*\) .*/\1/p' "$ABF")
-  route ephem "A/B ended: back to 100% $PREV (binding) [git $SHA]" "$PREV:100"
-  s=$(serving "$PREV" 60) || { echo "AB-END: $PREV not serving after ${s}s" >&2; exit 1; }
-  smoke_twice "after A/B, $PREV" --expect "$PREV" ${CEXP:+--expect-compute "$CEXP"} || { echo "AB-END: smoke failed on $PREV" >&2; exit 1; }
-  rm -f "$ABF"; echo "== A/B ended: ephem 100% $PREV"; exit 0
-fi
-
 if [ $DO_EPHEM = 0 ]; then
   [ $DO_TAIL = 1 ] && { bash "$WT/scripts/smoke.sh" "$B" >/dev/null || true; }   # traffic for the tail check; ephem itself is unchanged
   tail_verify; exit $?
@@ -293,7 +181,7 @@ if [ $MODE = gradual ]; then
   s=$(serving "$NEW" 60 pin) || { route ephem "canary abandoned: pin never reached $NEW [git $SHA]" "$PREV:100"; echo "CANARY FAILED: a pinned request never reached $NEW in ${s}s; removed it (prod stayed on $PREV)" >&2; exit 1; }
   echo "pinned requests reach $NEW after ${s}s"
   CS=$(iso_now); RUN="c-$SHA-$(date +%s)"; : > "$WT/.manifest-canary"
-  if ! smoke_twice "canary, pinned $NEW" --pin "$NEW" ${CEXP:+--expect-compute "$CEXP"} $(gate_args "$RUN" "$WT/.manifest-canary"); then
+  if ! smoke_twice "canary, pinned $NEW" --pin "$NEW" --expect-compute "$NEW" $(gate_args "$RUN" "$WT/.manifest-canary"); then
     route ephem "canary failed: $MSG [git $SHA]" "$PREV:100"
     echo "CANARY SMOKE FAILED on $NEW (twice): prod never served it; removed it from the deployment (100% $PREV)" >&2; exit 1
   fi
@@ -314,7 +202,7 @@ fi
 LIVE_OK=1
 if s=$(serving "$NEW" 60); then echo "$NEW serving all of 5 consecutive /healthz ${s}s after promotion"; else echo "FAIL $NEW not serving after ${s}s"; LIVE_OK=0; fi
 LRUN="l-$SHA-$(date +%s)"; : > "$WT/.manifest-live"
-[ $LIVE_OK = 1 ] && { smoke_twice "live" --expect "$NEW" ${CEXP:+--expect-compute "$CEXP"} $(gate_args "$LRUN" "$WT/.manifest-live") || LIVE_OK=0; }
+[ $LIVE_OK = 1 ] && { smoke_twice "live" --expect "$NEW" --expect-compute "$NEW" $(gate_args "$LRUN" "$WT/.manifest-live") || LIVE_OK=0; }
 # real traffic for O11Y_LIVE_S s after promotion: a new error signature (one the previous version did not show) rolls back
 [ $LIVE_OK = 1 ] && { o11y_gate ephem "$NEW" "$PREV" "$T0ISO" "$LRUN" "$WT/.manifest-live" --live "$O11Y_LIVE_S" || LIVE_OK=0; }
 if [ $LIVE_OK = 0 ]; then

@@ -1,15 +1,14 @@
 #!/bin/bash
 # Smoke ephem: every route, the content checks, and the MCP probe.
-#   scripts/smoke.sh <base> [--pin <id>] [--expect <id>] [--pin-compute <id>] [--expect-compute <id>] [--only a,b] [--failed-to <file>]
+#   scripts/smoke.sh <base> [--pin <id>] [--expect <id>] [--expect-compute <id>] [--only a,b] [--failed-to <file>]
 #                    [--run <id>] [--manifest <file>]
 # --pin     send Cloudflare-Workers-Version-Overrides: ephem="<id>" (a version at 0% in the current deployment) and require
 #           x-ephem-version == <id> on every response
 # --expect  require x-ephem-version == <id> without pinning (after promotion: catches a response from the old version)
-# --pin-compute     add ephem-compute="<id>" to the override header (the front door forwards it over the service binding) and
-#                   require the compute check's fresh MISS to be computed by <id> (x-ephem-compute-version)
-# --expect-compute  require that without pinning (after promoting ephem-compute)
-# The compute / compute-hit checks prove the split end to end on every deploy: a never-seen deterministic key is a MISS
-# computed by ephem-compute (x-ephem-cache MISS, x-ephem-compute-version), and the same key again is a HIT (Workers Caching
+# --expect-compute  require the compute check's fresh MISS to be computed by <id> (x-ephem-compute-version: the Api's version;
+#                   deploy.sh passes the version under test, so a canary's forwarded MISS must run on the canary itself)
+# The compute / compute-hit checks prove the Api loopback end to end on every deploy: a never-seen deterministic key is a MISS
+# computed by the Api (x-ephem-cache MISS, x-ephem-compute-version), and the same key again is a HIT (Workers Caching
 # of the callee across the service binding).
 # --run       send `x-ephem-smoke: <id>` on every request (curl checks and the MCP probe): scripts/obs/canary-gate.py selects
 #             exactly these front-door invocations in Workers Observability
@@ -24,13 +23,13 @@
 {
 set -uo pipefail
 B=${1:?usage: smoke.sh <base> [--pin id] [--expect id] [--only a,b] [--failed-to file]}; B=${B%/}; shift
-PIN=""; EXPECT=""; CPIN=""; CEXPECT=""; ONLY=""; FAILED_TO=""; RUN=""; MANIFEST=""
+PIN=""; EXPECT=""; CEXPECT=""; ONLY=""; FAILED_TO=""; RUN=""; MANIFEST=""
 while [ $# -gt 0 ]; do case "$1" in
   --pin) PIN=$2; EXPECT=$2; shift 2 ;; --expect) EXPECT=$2; shift 2 ;; --only) ONLY=",$2,"; shift 2 ;; --failed-to) FAILED_TO=$2; shift 2 ;;
-  --pin-compute) CPIN=$2; CEXPECT=$2; shift 2 ;; --run) RUN=$2; shift 2 ;; --manifest) MANIFEST=$2; shift 2 ;; --expect-compute) CEXPECT=$2; shift 2 ;;
+  --run) RUN=$2; shift 2 ;; --manifest) MANIFEST=$2; shift 2 ;; --expect-compute) CEXPECT=$2; shift 2 ;;
   *) echo "smoke.sh: unknown arg $1" >&2; exit 2 ;; esac; done
 D=$(mktemp -d "${TMPDIR:-/tmp}/ephem-smoke-XXXX"); trap 'rm -rf "$D"' EXIT
-OVR=$( { [ -n "$PIN" ] && printf 'ephem="%s"' "$PIN"; [ -n "$PIN" ] && [ -n "$CPIN" ] && printf ', '; [ -n "$CPIN" ] && printf 'ephem-compute="%s"' "$CPIN"; } || true)
+OVR=$( { [ -n "$PIN" ] && printf 'ephem="%s"' "$PIN"; } || true)
 H=(); [ -n "$OVR" ] && H=(-H "cloudflare-workers-version-overrides: $OVR")
 [ -n "$RUN" ] && H+=(-H "x-ephem-smoke: $RUN")
 T=$(date -u +%Y-%m-%dT%H:%M:%SZ); FAILED=(); N=0
@@ -51,8 +50,8 @@ chk() {
   [ -z "$why" ] && [ -n "$PIN" ] && [ -n "$RUN" ] && [ "${er:-0}" != 0 ] && why="isolate logged ${er} errors (x-ephem-errors)"
   [ -n "$MANIFEST" ] && echo "$(tr -d '\r' < "$D/h" | awk -F': ' 'tolower($1)=="cf-ray"{print $2}' | tail -1 | grep . || echo -) $c $([ -n "$data" ] && echo POST || echo GET) ${p%%\?*} $name" >> "$MANIFEST"
   [ -z "$why" ] && [ -n "$wc" ] && [ "$x" != "$wc" ] && why="x-ephem-cache ${x:-none}, want $wc"
-  [ -z "$why" ] && [ -n "$wcv" ] && [ "$wcv" = any ] && [ -z "$cv" ] && why="no x-ephem-compute-version (not answered by ephem-compute)"
-  [ -z "$why" ] && [ -n "$wcv" ] && [ "$wcv" != any ] && [ "$cv" != "$wcv" ] && why="computed by ephem-compute ${cv:-none}, want ${wcv:0:8}"
+  [ -z "$why" ] && [ -n "$wcv" ] && [ "$wcv" = any ] && [ -z "$cv" ] && why="no x-ephem-compute-version (not computed by the Api)"
+  [ -z "$why" ] && [ -n "$wcv" ] && [ "$wcv" != any ] && [ "$cv" != "$wcv" ] && why="computed by Api version ${cv:-none}, want ${wcv:0:8}"
   if [ -z "$why" ]; then echo "ok   $name $c ${v:0:8}${x:+ $x}${cv:+ compute ${cv:0:8}} $p"; else echo "FAIL $name: $why ($(tr -d '\r' < "$D/h" | awk -F': ' 'tolower($1)=="cf-ray"{print $2}')) $p"; FAILED+=("$name"); fi
 }
 chk home 200 "/"
@@ -77,17 +76,17 @@ chk unknown-param 400 "/v1/day?lat=40.7&lon=-74&date=2026-10-29&tz=America/New_Y
 # the customer's Nov 16 2026 pass over a bbox of Brooklyn Bridge Park (fans out to cached window GETs)
 chk search 200 "/v1/alignment/search" '"enter":{"time":"2026-11-17T03:4' \
   '{"body":"moon","target":{"lat":40.68925,"lon":-74.0445,"height":70,"heightRef":"msl"},"region":[-73.9995,40.7,-73.993,40.706],"observerHeight":5,"heightRef":"msl","start":"2026-11-16T00:00:00Z","end":"2026-11-18T00:00:00Z"}'
-# A deterministic key nobody has asked for (random lat at 1e-7°): MISS computed by ephem-compute, then HIT from its cache.
+# A deterministic key nobody has asked for (random lat at 1e-7°): MISS computed by the Api, then HIT from its cache.
 U="/v1/position?lat=40.$(printf '%07d' $((RANDOM * 32768 + RANDOM)))&lon=-74&time=$T"
 chk compute 200 "$U" '"provenance"' "" MISS "${CEXPECT:-any}"
 chk compute-hit 200 "$U" '"provenance"' "" HIT any
 chk blocks-miss 200 "/v1/position?lat=40.7&lon=-74&time=$(python3 -c 'import random,datetime as d; print((d.datetime(1972,1,2)+d.timedelta(seconds=random.randrange(5_617_000_000))).strftime("%Y-%m-%dT%H:%M:%SZ"))')" '"provenance"' "" MISS "${CEXPECT:-any}"
 if want mcp; then
   N=$((N + 1))
-  if EPHEM_VERSION=$PIN EPHEM_COMPUTE_VERSION=$CPIN EPHEM_SMOKE_RUN=$RUN EPHEM_SMOKE_MANIFEST=$MANIFEST node --experimental-strip-types "$(dirname "$0")/obs/mcp-probe.ts" "$B" > "$D/mcp" 2>&1; then echo "ok   mcp $(tail -1 "$D/mcp")"
+  if EPHEM_VERSION=$PIN EPHEM_SMOKE_RUN=$RUN EPHEM_SMOKE_MANIFEST=$MANIFEST node --experimental-strip-types "$(dirname "$0")/obs/mcp-probe.ts" "$B" > "$D/mcp" 2>&1; then echo "ok   mcp $(tail -1 "$D/mcp")"
   else grep -E 'FAIL' "$D/mcp" | head -5; echo "FAIL mcp: $(tail -1 "$D/mcp")"; FAILED+=("mcp"); fi
 fi
 [ -n "$FAILED_TO" ] && { : > "$FAILED_TO"; for f in ${FAILED[@]+"${FAILED[@]}"}; do echo "$f" >> "$FAILED_TO"; done; }
-if [ ${#FAILED[@]} -eq 0 ]; then echo "SMOKE ok $N/$N${PIN:+ (pinned ${PIN:0:8})}${EXPECT:+ (all from ${EXPECT:0:8})}${CPIN:+ (compute pinned ${CPIN:0:8})}${CEXPECT:+ (compute ${CEXPECT:0:8})}"; exit 0; fi
+if [ ${#FAILED[@]} -eq 0 ]; then echo "SMOKE ok $N/$N${PIN:+ (pinned ${PIN:0:8})}${EXPECT:+ (all from ${EXPECT:0:8})}${CEXPECT:+ (compute ${CEXPECT:0:8})}"; exit 0; fi
 echo "SMOKE FAILED ${#FAILED[@]}/$N: ${FAILED[*]}"; exit 1
 }

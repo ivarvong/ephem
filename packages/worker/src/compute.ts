@@ -1,12 +1,11 @@
-// ephem-compute: the CPU-heavy, cache-enabled entrypoints, in their own Worker so their misses run in their own isolate pool
-// (packages/compute deploys this file). ephem's front door calls them over service bindings (src/loopback.ts).
+// ephem's CPU-heavy, cache-enabled entrypoints (exported by src/index.ts); the front door calls them over ctx.exports
+// (src/loopback.ts). They ran in a separate Worker (ephem-compute) from 2026-10-30 until a concurrent A/B removed it (DESIGN §12.0).
 //   Api         cache ON.  The /v1 routes only (src/router.ts makeApiHandler); Cache-Control per route (src/responses.ts).
 //               Every deterministic answer, every alignment/search window. Sets x-ephem-compute-version (stored with the
 //               cached answer, so on a HIT it names the version that computed it).
 //   BlockStore  cache ON.  GET /block/v<N>/<sha>/<i> → one DE440 block (R2 ephem-de440), GET /geoid/v<N>/<sha>/<band> → one
-//                          EGM96 band (R2 ephem-geoid); exact range reads, sha-checked, immutable. Called by this Worker's
-//                          Api (ctx.exports) and by the front door's live routes (service binding STORE).
-//   default     cache OFF. 404: ephem-compute has no public route (workers.dev is off).
+//                          EGM96 band (R2 ephem-geoid); exact range reads, sha-checked, immutable. Called by the Api and by
+//                          the front door's live routes (both ctx.exports).
 import { WorkerEntrypoint, tracing } from "cloudflare:workers"
 import { makeApiHandler } from "./router.ts"
 import { loopbackBlocks, makeBlocks, r2Origin, serveBlock, type R2BucketLike } from "./blocks.ts"
@@ -24,10 +23,6 @@ const lb = makeLoopback(() => resolveBindings(loop))
 const blocks = makeBlocks(loopbackBlocks(lb.block))
 const geoid = makeGeoid(loopbackGeoid(lb.geoid))
 let api: ReturnType<typeof makeApiHandler> | undefined
-
-export default {
-  async fetch(): Promise<Response> { return new Response("ephem-compute has no public routes; see https://ephem.ivar.workers.dev\n", { status: 404, headers: { "cache-control": "no-store" } }) },
-}
 
 export class Api extends WorkerEntrypoint<Env> {
   async fetch(request: Request): Promise<Response> {

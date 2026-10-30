@@ -68,10 +68,9 @@ export const live = (url: URL) => url.pathname === "/v1/weather" ||
   ((url.pathname === "/v1/position" || url.pathname === "/v1/magnetic") && !url.searchParams.has("time"))
 export const forwards = (method: string, url: URL) => (method === "GET" || method === "HEAD") && url.pathname.startsWith("/v1/") && !live(url)
 
-/** Request headers the front door sends with every forward to ephem-compute. x-ephem-ray joins the Api invocation's log row
- *  to this one. Cloudflare-Workers-Version-Overrides is passed through so a smoke can pin ephem-compute's 0% canary from
- *  the eyeball (`ephem-compute="<id>"`; docs: version overrides, "Service bindings"). Neither is in the cache key (the key
- *  is entrypoint + path + query + cf.cacheKey; only Cloudflare-Workers-Version-Key would partition it). */
+/** Request headers the front door sends with every forward to the Api. x-ephem-ray joins the Api invocation's log row to
+ *  this one. Cloudflare-Workers-Version-Overrides is passed through (harmless: ctx.exports already runs the caller's
+ *  version). Neither is in the cache key (the key is entrypoint + path + query + cf.cacheKey). */
 export const VERSION_OVERRIDES = "cloudflare-workers-version-overrides"
 export const forwardHeaders = (h: Readonly<Record<string, string | undefined>>): Record<string, string> => {
   const out: Record<string, string> = {}, ray = h["cf-ray"], pin = h[VERSION_OVERRIDES]

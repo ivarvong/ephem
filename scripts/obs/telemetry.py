@@ -37,16 +37,22 @@ def events_all(filters: list, window: tuple[int, int], step: int = 60_000, worke
     rays, 2026-10-30), and deduplicating by it dropped 14-24% of events."""
     import threading   # not concurrent.futures: it imports the stdlib `queue`, which scripts/obs/queue.py shadows
     def pmap(ws: list) -> list:
-        res: list = [None] * len(ws); nxt = iter(range(len(ws))); lock = threading.Lock()
+        res: list = [None] * len(ws); nxt = iter(range(len(ws))); lock = threading.Lock(); err: list = [None]
         def run() -> None:
             while True:
                 with lock:
                     i = next(nxt, None)
                 if i is None:
                     return
-                res[i] = events(0, filters, window=ws[i], service=service)
+                for k in range(6):   # the o11y API rate-limits bursts (429 [971]): retry with backoff, then fail loudly
+                    try:
+                        res[i] = events(0, filters, window=ws[i], service=service); break
+                    except SystemExit as e:
+                        err[0] = e; time.sleep(2 * 2 ** k)
         th = [threading.Thread(target=run) for _ in range(min(workers, len(ws)))]
         [t.start() for t in th]; [t.join() for t in th]
+        if any(r is None for r in res):   # never a partial result (a failed slice used to vanish into a TypeError)
+            raise SystemExit(f"events_all: {sum(r is None for r in res)} slices failed after retries: {err[0]}")
         return res
     out, seen, todo = [], set(), [(t, min(window[1], t + step)) for t in range(window[0], window[1], step)]
     while todo:

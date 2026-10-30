@@ -12,7 +12,7 @@ const SRC = resolve(__dirname, "../src")
 /** Source without comments and string/template literals, so prose and URLs never trip the check. */
 const code = (f: string) => readFileSync(`${SRC}/${f}`, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1").replace(/`[^`]*`|"[^"\n]*"|'[^'\n]*'/g, "''")
 /** A read of a binding off ctx.exports (exports.Api, exports?.X, exports["X"]), off the `loop` / `bound` hand-offs in
- *  index.ts / compute.ts, or of the ephem-compute service bindings (env.COMPUTE, env.STORE). */
+ *  index.ts / compute.ts, or of a service binding to a compute Worker (env.COMPUTE, env.STORE: removed, DESIGN §12.0). */
 const bypass = (line: string) => /\bexports\b\s*(\?\.|\.|\[)/.test(line) || /\b(loop|bound)\b\s*(\?\.|\.|\[)/.test(line) || /\b(COMPUTE|STORE)\b\s*(\?\.|\.|\[)/.test(line)
 
 describe("loopback guardrail", () => {
@@ -38,24 +38,14 @@ describe("loopback guardrail", () => {
     expect(seen[2]!.url).toBe(`/feed/${CACHE_TAG}/metars.cache.csv.gz`); expect(FEED_PATH).toBe(seen[2]!.url)
     expect(() => makeLoopback(() => undefined).feed()).toThrow(/unavailable/)
   })
-  it("front door: Api and BlockStore go to ephem-compute's service bindings with the same keys; MetarFeed stays on ctx.exports", async () => {
-    const seen: Array<{ to: string; url: string; key?: string | undefined; pin: string | null }> = []
-    const bind = (to: string): Binding => ({ fetch: async (req, init) => { const u = new URL(req.url); seen.push({ to, url: u.pathname + u.search, key: init?.cf?.cacheKey, pin: req.headers.get("cloudflare-workers-version-overrides") }); return new Response("") } })
-    const own = { Api: bind("own Api"), BlockStore: bind("own BlockStore"), MetarFeed: bind("MetarFeed") }
-    const lb = makeLoopback(() => resolveBindings(own, { COMPUTE: bind("COMPUTE"), STORE: bind("STORE") }))
-    await lb.api("/v1/track?a=1", { method: "GET", headers: { "cloudflare-workers-version-overrides": 'ephem-compute="x"' } }); await lb.block(1); await lb.geoid(3); await lb.feed()
-    expect(seen.map(s => s.to)).toEqual(["COMPUTE", "STORE", "STORE", "MetarFeed"])
-    expect(seen[0]).toMatchObject({ key: `/${CACHE_TAG}/v1/track?a=1`, pin: 'ephem-compute="x"' })
+  it("front door: Api, BlockStore and MetarFeed are this Worker's own ctx.exports, with the tagged keys", async () => {
+    const seen: Array<{ to: string; url: string; key?: string | undefined }> = []
+    const bind = (to: string): Binding => ({ fetch: async (req, init) => { const u = new URL(req.url); seen.push({ to, url: u.pathname + u.search, key: init?.cf?.cacheKey }); return new Response("") } })
+    const lb = makeLoopback(() => resolveBindings({ Api: bind("Api"), BlockStore: bind("BlockStore"), MetarFeed: bind("MetarFeed") }))
+    await lb.api("/v1/track?a=1", { method: "GET", headers: {} }); await lb.block(1); await lb.geoid(3); await lb.feed()
+    expect(seen.map(s => s.to)).toEqual(["Api", "BlockStore", "BlockStore", "MetarFeed"])
+    expect(seen[0]!.key).toBe(`/${CACHE_TAG}/v1/track?a=1`)
     expect(seen[2]!.url).toMatch(new RegExp(`^/geoid/${CACHE_TAG}/[0-9a-f]{16}/3$`))
-    // ephem-compute itself: no service bindings, its own ctx.exports
-    seen.length = 0; await makeLoopback(() => resolveBindings(own)).block(2); expect(seen[0]!.to).toBe("own BlockStore")
-    // COMPUTE_MODE=entrypoint (the split A/B's E arm): the front door's own Api / BlockStore, the same keys
-    seen.length = 0
-    const e = makeLoopback(() => resolveBindings(own, { COMPUTE: bind("COMPUTE"), STORE: bind("STORE"), COMPUTE_MODE: "entrypoint" }))
-    await e.api("/v1/track?a=1", { method: "GET", headers: {} }); await e.block(1); await e.geoid(3)
-    expect(seen.map(s => s.to)).toEqual(["own Api", "own BlockStore", "own BlockStore"])
-    expect(seen[0]!.key).toBe(`/${CACHE_TAG}/v1/track?a=1`); expect(seen[2]!.url).toMatch(new RegExp(`^/geoid/${CACHE_TAG}/[0-9a-f]{16}/3$`))
-    seen.length = 0; await makeLoopback(() => resolveBindings(own, { COMPUTE: bind("COMPUTE"), STORE: bind("STORE"), COMPUTE_MODE: "binding" })).block(1); expect(seen[0]!.to).toBe("STORE")
   })
   it("BlockStore answers only the tagged path", async () => {
     expect((await serveBlock(new Request("https://b/de440/29915576d0a65557/5442"), async () => new ArrayBuffer(8))).status).toBe(404)

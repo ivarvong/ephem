@@ -42,7 +42,7 @@ describe("geoid bands via BlockStore", () => {
     const bad = await serveGeoid(new Request(`https://b${geoidPath(6)}`), async () => ab(bundledGeoidBand(7)))
     expect(bad.status).toBe(502); expect(bad.headers.get("cache-control")).toBe("no-store"); expect(await bad.text()).toMatch(/band 6/)
   })
-  it("two makeGeoid in one isolate (COMPUTE_MODE=entrypoint: front door + Api): bands either one fetched are visible to core", async () => {
+  it("two makeGeoid in one isolate (front door + Api): bands either one fetched are visible to core", async () => {
     setGeoidSource(bundledGeoidBand); const want = geoidUndulation(40.7, -74)
     const fetch = async (b: number) => ({ buf: ab(bundledGeoidBand(b)), status: "MISS" })
     const api = makeHandler(blocks(), undefined, undefined, makeGeoid(fetch))

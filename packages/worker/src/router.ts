@@ -1,6 +1,5 @@
-// The HTTP router both Workers run, minus the front door's pages. ephem-compute (src/compute.ts) runs makeApiHandler: the
-// EphemApi routes only, so its bundle has no homepage, docs or MCP (isolate start-up grows with code bytes, guide
-// "Findings" 2026-10-30). ephem's front door runs makeApp (src/app.ts) = this plus Home, Docs and Mcp.
+// The HTTP router minus the front door's pages. The Api entrypoint (src/compute.ts) runs makeApiHandler: the EphemApi routes
+// only, no homepage, docs or MCP. The front door runs makeApp (src/app.ts) = this plus Home, Docs and Mcp.
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
@@ -44,7 +43,7 @@ export const ExplainSchemaErrors = HttpRouter.middleware(http => Effect.catchDef
 export const provideApp = <A, E, R>(app: Layer.Layer<A, E, R>, blocks: Layer.Layer<Blocks>, edge: Role, weather: Layer.Layer<Weather>, geoid: Layer.Layer<Geoid>) =>
   app.pipe(Layer.provide(ExplainSchemaErrors.layer), Layer.provide(Layer.mergeAll(HandlersLive, SearchLive)), Layer.provide(weather), Layer.provide(blocks), Layer.provide(geoid), Layer.provide(Layer.succeed(Edge, edge)))
 
-/** ephem-compute's Api: the /v1 routes only (no openapi.json, homepage, docs or MCP). */
+/** The Api entrypoint: the /v1 routes only (no openapi.json, homepage, docs or MCP). */
 export const makeApiApp = (blocks: Layer.Layer<Blocks>, edge: Role = { role: "api" }, weather: Layer.Layer<Weather> = WeatherNone, geoid: Layer.Layer<Geoid> = GeoidInstalled) =>
   provideApp(Layer.mergeAll(HttpApiBuilder.layer(EphemApi), RequestLogging, Cors, Gateway, TracerLive), blocks, edge, weather, geoid)
 

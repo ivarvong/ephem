@@ -5,7 +5,7 @@ smoke (before promotion) and after the live smoke (with --live, over real traffi
     python3 scripts/obs/canary-gate.py <worker> <new-version> <prev-version|-> --since ISO --run <smoke run id> --manifest FILE
         [--wait 90] [--live SECONDS] [--baseline-min 15] [--json out.json]
 
-<worker>   ephem (the front door is the version under test) or ephem-compute (Api + BlockStore are)
+<worker>   ephem (the version under test: front door, Api and BlockStore all run in it)
 --run      the smoke's run id: smoke.sh --run sends `x-ephem-smoke: <run>` on every request (curl checks and the MCP probe), so
            the gate selects exactly the smoke's front-door invocations; other traffic can't pollute the counts
 --manifest smoke.sh --manifest: one line per request the smoke sent, `<cf-ray> <status> <method> <path> <check>`
@@ -15,7 +15,7 @@ smoke (before promotion) and after the live smoke (with --live, over real traffi
 --live S   after promotion: also judge ALL traffic the new version served in [since, since+S] (waits until then)
 
 Joins: front-door invocation (header x-ephem-smoke) → cf-ray → Api invocations (request header x-ephem-ray = front ray)
-and BlockStore invocations (rayId starts with the front ray) on ephem-compute (or on ephem, COMPUTE_MODE=entrypoint) →
+and BlockStore invocations (rayId starts with the front ray) on ephem →
 traceIds → every span and log line of those traces. Plus every invocation and log line of <new-version> in the window
 (at 0% only pinned requests reach it: the smoke, deploy.sh's /healthz polls).
 
@@ -44,7 +44,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import telemetry as t  # noqa: E402
 
 ap = argparse.ArgumentParser()
-ap.add_argument("worker", choices=["ephem", "ephem-compute"])
+ap.add_argument("worker", choices=["ephem"])   # ephem-compute (a separate Api Worker) was removed 2026-10-30, DESIGN §12.0
 ap.add_argument("new"); ap.add_argument("prev")
 ap.add_argument("--since", required=True); ap.add_argument("--run", required=True); ap.add_argument("--manifest", required=True)
 ap.add_argument("--wait", type=float, default=90); ap.add_argument("--live", type=float, default=0)
@@ -55,7 +55,7 @@ PREV = None if a.prev in ("", "-") else a.prev
 ms = lambda s: int(datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp() * 1000)  # noqa: E731
 iso = lambda m: datetime.fromtimestamp(m / 1000, timezone.utc).strftime("%H:%M:%S.%f")[:-5] + "Z"  # noqa: E731
 T0 = ms(a.since) - 5_000   # clock skew between this laptop and the edge
-COMPUTE_SVCS = ["ephem-compute", "ephem"]   # Api/BlockStore live in ephem-compute; in ephem for COMPUTE_MODE=entrypoint
+COMPUTE_SVCS = ["ephem"]   # Api/BlockStore are ephem's own entrypoints
 NOT_SPAN = {"key": "$metadata.type", "operation": "neq", "type": "string", "value": "span"}
 INV = t.eq("$metadata.type", "cf-worker-event")
 inn = lambda k, vs: {"key": k, "operation": "in", "type": "string", "value": ",".join(vs)}  # noqa: E731
@@ -107,10 +107,10 @@ def collect(until: int):
         linked += [e for e in t.events_all([INV, t.eq("$workers.entrypoint", "BlockStore")], w, service=s) if ray0(e) in fr]
     traces = sorted({e["$metadata"].get("traceId") for e in front + linked} - {None})
     tev = []
-    for s in ["ephem", "ephem-compute"]:
+    for s in ["ephem"]:
         for c in chunks(traces, 15):
             tev += t.events(0, [inn("$metadata.traceId", c)], window=w, service=s)
-    newsvc = "ephem" if a.worker == "ephem" else "ephem-compute"
+    newsvc = "ephem"
     lw = (T0, max(until, T0 + 1)) if not a.live else (ms(a.since), until)
     mine = t.events_all([t.eq("$workers.scriptVersion.id", a.new), NOT_SPAN], lw, service=newsvc)
     return front, linked, tev, mine
@@ -142,12 +142,10 @@ def judge(front, linked, tev, mine, final: bool):
         st = status(es[0])
         if m["status"] and st != m["status"]: fails.append(f"status: {m['check']} {m['path']} server {st}, client saw {m['status']} (ray {m['ray']})")
     # version under test answered
-    if a.worker == "ephem":
-        for e in front:
-            if ver(e) != a.new: fails.append(f"version: {path(e)} answered by ephem {ver(e)[:8]} (ray {ray0(e)})")
-    else:
-        for e in linked:
-            if svc(e) == "ephem-compute" and ver(e) != a.new: fails.append(f"version: {ep(e)} {path(e)} ran on ephem-compute {ver(e)[:8]} (ray {ray0(e)})")
+    for e in front:
+        if ver(e) != a.new: fails.append(f"version: {path(e)} answered by ephem {ver(e)[:8]} (ray {ray0(e)})")
+    for e in linked:   # ctx.exports runs the caller's version: a forwarded MISS on another version is a routing bug
+        if ver(e) != a.new: fails.append(f"version: {ep(e)} {path(e)} ran on {ver(e)[:8]} (ray {ray0(e)})")
     # outcomes, 5xx, error logs: the smoke's invocations, everything on their traces, everything the new version ran
     seen, errs = set(), []
     for e in front + linked + tev + mine:
@@ -187,8 +185,6 @@ def judge(front, linked, tev, mine, final: bool):
             ("MCP span mcp.tools/call", names[("default", "mcp.tools/call")] > 0), ("MCP span mcp.initialize", names[("default", "mcp.initialize")] > 0),
             ("Api invocation", len(api) > 0), ("Api span position", names[("Api", "position")] > 0), ("Api span blocks.load", names[("Api", "blocks.load")] > 0),
             (f"BlockStore invocation ({len(forced)} forced MISS)", len(bst) > 0 or not forced)]
-    if a.worker == "ephem-compute":
-        need.append(("Api on new compute version", any(svc(e) == "ephem-compute" and ver(e) == a.new for e in api)))
     missing += [f"no {n}" for n, ok in need if not ok]
     return fails, warns, missing, dict(api=api, bst=bst, forced=forced, names=names, need=need)
 
@@ -199,7 +195,7 @@ def pct(v, p): v = sorted(v); return v[min(len(v) - 1, int(len(v) * p))] if v el
 BASE_SIGS, BASE = set(), collections.defaultdict(list)
 if PREV:
     bw = (ms(a.since) - int(a.baseline_min * 60_000), ms(a.since))
-    bsvc = "ephem" if a.worker == "ephem" else "ephem-compute"
+    bsvc = "ephem"
     for e in t.events_all([t.eq("$workers.scriptVersion.id", PREV), NOT_SPAN], bw, service=bsvc):
         if e["$metadata"].get("type") == "cf-worker-event":
             BASE[(ep(e), "/block/…" if ep(e) == "BlockStore" else path(e))].append(e["$workers"].get("cpuTimeMs", 0))
@@ -227,7 +223,7 @@ waited = time.time() - start
 first_complete = waited if complete else None
 
 # --- table ---------------------------------------------------------------------------------------------------------------
-under = "front door (ephem)" if a.worker == "ephem" else "ephem-compute (Api, BlockStore)"
+under = "ephem (front door, Api, BlockStore)"
 print(f"== telemetry gate: {a.worker} {a.new[:8]} vs {PREV[:8] if PREV else '-'} | run {a.run} | {under}{' | live ' + str(int(a.live)) + 's' if a.live else ''}")
 nspan = sum(1 for e in front if e["$metadata"].get("from") == "root span")
 print(f"   ingest: coverage {len({ray0(e) for e in front} & rays)}/{len(rays)} smoke requests visible after {waited:.0f}s ({polls} polls; floor {a.coverage:.0%}; {nspan} only by root span); "
@@ -239,7 +235,7 @@ for e in info["api"] + info["bst"]:
     r = rows[(ep(e), path(e) if ep(e) == "Api" else "/block/…")]; r["n"] += 1; r["st"][status(e)] += 1; r["cpu"].append(e["$workers"].get("cpuTimeMs", 0)); r["ver"].add(ver(e)[:8])
 print(f"   {'entrypoint':10} {'path':24} {'n':>3} {'status':10} {'version':9} {'cpu p50':>7} {'max':>4} | {'prev p50':>8} {'p99':>4} {'n':>5}  cpu")
 cpu_warn = []
-judged = "default" if a.worker == "ephem" else ("Api", "BlockStore")
+judged = ("default", "Api", "BlockStore")   # one Worker: all of it is the version under test (CPU warnings only)
 for (e_, p_), r in sorted(rows.items()):
     b = BASE.get((e_, p_), []); bp50, bp99 = pct(b, .5), pct(b, .99); np50, nmax = pct(r["cpu"], .5), max(r["cpu"])
     flag = ""

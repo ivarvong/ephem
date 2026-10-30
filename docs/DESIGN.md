@@ -38,8 +38,7 @@ reference/oracle/crosscheck.py  diffs any two implementations field by field
 | --- | --- | --- |
 | `@ephem/core` | `block` (DE440 record evaluator) · `time` · `linalg` · `frames` · `ephemeris` · `observe` · `geodesic` · `position` · `day` · `alignment` | nothing |
 | `@ephem/api` | `EphemApi` (groups `sky`, `meta`), request/response schemas, tagged errors, `CONVENTIONS` | `effect` |
-| `@ephem/worker` | `handlers` (decode → block set → load → core → diagnostics) · `blocks` (cache tiers) · `router` (shared /v1 router, CORS, explained 400s) · `app` (front door: + home, `/instrument` (RPN view, `instrument.ts`), `/docs`, MCP) · `ingest` + `admin` (JPL → R2 RPC) · `index` (ephem entry) · `compute` (ephem-compute entry, §12.0) · `dev` (Node server) · `ops/` (local-only RPC caller) | core, api, effect |
-| `@ephem/compute` | ephem-compute's config + a one-line entry re-exporting `@ephem/worker/src/compute.ts` | worker |
+| `@ephem/worker` | `handlers` (decode → block set → load → core → diagnostics) · `blocks` (cache tiers) · `router` (shared /v1 router, CORS, explained 400s) · `app` (front door: + home, `/instrument` (RPN view, `instrument.ts`), `/docs`, MCP) · `ingest` + `admin` (JPL → R2 RPC) · `index` (ephem entry) · `compute` (the Api + BlockStore entrypoints, §12.0) · `dev` (Node server) · `ops/` (local-only RPC caller) | core, api, effect |
 
 The dependency rule is one-way and mechanical: core's `package.json` lists no dependencies; `tsc -p packages/core` fails
 if anything else is imported. Core is runtime-agnostic (Workers, Node, browsers, Bun, Deno) because it does no I/O: the
@@ -434,37 +433,39 @@ gap p50 117 → 99 ms, first-request CPU unchanged (docs/telemetry_and_profiling
 blocks range-read from a local copy of the DE440 file (`data/jpl/`) with the same `makeBlocks` and the same offsets
 as R2; this is what the cross-check harness targets.
 
-### 12.0 Two Workers: front door and compute (2026-10-30)
+### 12.0 One Worker: front door and cache-enabled entrypoints (decided by A/B, 2026-10-30)
 
 ```
-eyeball ─▶ ephem (default, cache OFF; always runs: traces, Basin row, request.cf)
-             ├─ /, /docs, /llms.txt, /openapi.json, /mcp, /healthz, live position / magnetic, /v1/weather (MetarFeed, own ctx.exports)
+eyeball ─▶ ephem default (cache OFF; always runs: traces, Basin row, request.cf)
+             ├─ /, /instrument, /docs, /llms.txt, /openapi.json, /mcp, /healthz, live position / magnetic, /v1/weather
              ├─ POST /v1/alignment/search: validate, fan out the window GETs, merge (no astronomy)
-             └─ deterministic GET /v1/* and every search window ─▶ env.COMPUTE (service binding)
-                    ephem-compute Api (cache ON: Workers Caching of the callee, cf.cacheKey = /v<CACHE_VERSION><path?sorted query>)
-                        └─ blocks / geoid ─▶ ctx.exports.BlockStore (cache ON) ─▶ R2
-             live routes' blocks / geoid ─▶ env.STORE (service binding) ─▶ ephem-compute BlockStore (cache ON) ─▶ R2
+             └─ deterministic GET /v1/* and every search window ─▶ ctx.exports.Api (cache ON: cf.cacheKey = /v<CACHE_VERSION><path?sorted query>)
+                    └─ blocks / geoid ─▶ ctx.exports.BlockStore (cache ON) ─▶ R2
+           live routes' blocks / geoid ─▶ ctx.exports.BlockStore; weather ─▶ ctx.exports.MetarFeed (cache ON)
 ```
 
-Why: a Worker's entrypoints share one isolate pool. While Api window misses ran inside `ephem`, heavy compute made the
-platform start more `ephem` isolates, and a live request sometimes landed on a fresh one (~100–230 ms start-up before the
-handler; telemetry guide "Position tail under scan load"). `ephem-compute` (packages/compute; code in
-`packages/worker/src/compute.ts`, router `src/router.ts makeApiHandler`: the /v1 routes without homepage, docs or MCP) has its
-own pool. BlockStore moved with it: compute's block and geoid fetches stay same-Worker, and R2 range reads stay off front-door
-isolates; MetarFeed stayed: only the front door's weather reads it.
+Api and BlockStore (src/compute.ts, the lean /v1 router src/router.ts `makeApiHandler`) are cache-enabled entrypoints of
+`ephem` itself, called through `src/loopback.ts` with CACHE_VERSION in every key; crossVersionCache is on. A loopback runs
+the caller's version, so a pinned canary's forwarded MISSes run on the canary (`x-ephem-compute-version` = its own id;
+scripts/smoke.sh `compute` check).
 
-Rules that carry over unchanged: Workers Caching only; every cross-entrypoint or cross-Worker fetch goes through
-`src/loopback.ts` (`resolveBindings`: a service binding when the Worker has one, else its own `ctx.exports`), keyed with
-CACHE_VERSION; crossVersionCache is on in both Workers. The two caches are separate (a cache belongs to a Worker), so the
-split started ephem-compute's Api and BlockStore caches empty. The front door forwards `cf-ray` (as `x-ephem-ray`) and
-`Cloudflare-Workers-Version-Overrides` with every forward, so ephem-compute's 0% canary can be pinned from the eyeball;
-neither header is in the cache key. Interface rule: ephem-compute deploys first (scripts/deploy.sh does) and must keep
-answering the previous front door, because rolling ephem back does not roll compute back.
+**Tried and removed: `ephem-compute`, a separate Worker for Api + BlockStore behind service bindings** (git 01e0323,
+live 2026-10-30 19:44Z – 21:4xZ). Hypothesis: window compute shared the front door's isolate pool, so under scan load live
+requests landed on fresh front-door isolates. Decided by a pre-registered concurrent A/B (telemetry guide "Compute split"):
+one commit (5edf1b7) as two ephem versions 50/50, S = 02dd1270 (binding → ephem-compute fca6e275) and E = cc6ddd8e
+(entrypoints over ctx.exports), each pinned by version override and fed the identical open-loop load at the same instants
+(124 cold 12-month scans/min, /v1/position every 200 ms, warm HITs), 6 × 240 s runs (20:42:57–21:11:57Z). Rule: keep S only
+if a primary metric improves with a 95 % CI excluding 0 and no other regresses with a CI excluding 0. Result (S − E, paired
+hierarchical bootstrap): cold scan server e2e p50 −29 ms [−40, −20], p90 −48 [−73, −29]; Api window pre-handler wait p90
+−26 [−31, −20], p99 −52 [−61, −44]; **CPU per scan +30 ms [+21, +40] (993 vs 963 ms, +3 %, S higher in 6/6 runs)**;
+position wait, warm hop and fresh-isolate counts unchanged within noise (position probes waiting > 20 ms: 1 / 7 324 vs
+2 / 7 337). CPU regressed beyond noise, so the rule chose E: ephem-compute, its bindings, deploy target and package were
+deleted. The position tail the split was built for did not appear in either arm in this run (it was 0.35–5 % in earlier
+runs), so it was not the lever; the latency the split bought came from compute's smaller bundle starting faster
+(fresh-isolate pre-router gap p50 ~89 vs ~119 ms), which is reachable inside one Worker too (a leaner bundle).
 
-Measured (2026-10-30, ephem 121b7984 + ephem-compute bb0a1127 vs 647f5bbc; telemetry guide "Compute split"): the binding
-costs ≤ 1 ms (a forwarded HIT is 4 ms either way), Api windows wait less before running (p90 109 → 73 ms) and cold
-12-month scans got ~50–90 ms faster at p50, but the live-position tail it was built for did not move (0.35 % of probes
-waited on a new front-door isolate before and after). Kept for the faster scans and independent deploys.
+Found on the way (kept): core's EGM96 band source is a process global, and an isolate holds two `makeGeoid` (front door +
+Api); src/geoid.ts now installs a source that reads every L1 (the E arm's first canary 500'd /v1/position?time= without it).
 
 ### 12.1 Storage sizes, and why R2 rather than a Durable Object
 

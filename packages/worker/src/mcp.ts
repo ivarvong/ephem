@@ -325,7 +325,7 @@ const handlePost = (req: HttpServerRequest.HttpServerRequest, rest: Rest) => Eff
 
 /** Registers POST/GET/DELETE /mcp. Tool calls dispatch to the router's own /v1 routes, in-process, in the caller's fiber. */
 export const Mcp = HttpRouter.use(router => Effect.gen(function* () {
-  // fwd: the outer request's cf-ray and version override, so a tool's forward to ephem-compute is joined
+  // fwd: the outer request's cf-ray and version override, so a tool's forward to the Api is joined
   // to this request's row and pinned like the REST call would be.
   const restWith = (fwd: Record<string, string>): Rest => (path, query, body) => Effect.gen(function* () {
     const inner = HttpServerRequest.fromWeb(body === undefined ? new Request(`http://ephem.internal${path}?${new URLSearchParams(query)}`, { headers: fwd })

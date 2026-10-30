@@ -43,8 +43,8 @@ export const geoidCache = (s: GeoidStats): string => {
   return parts.length ? parts.join(",") : "L1"
 }
 
-// core's band source is a process global (setGeoidSource), and an isolate can hold two makeGeoid (ephem in
-// COMPUTE_MODE=entrypoint: the front door's and its Api's). Each keeps its own L1; the installed source reads all of them,
+// core's band source is a process global (setGeoidSource), and an isolate holds two makeGeoid (the front door's and its
+// Api's, src/index.ts + src/compute.ts). Each keeps its own L1; the installed source reads all of them,
 // so a band prefetched by either is visible to core. (With one L1 per install, the last install won and the Api's bands were
 // invisible: position 500s on the A/B's E arm, 58363fbc, 2026-10-30; the gradual canary caught it at 0%.)
 const isolateL1s: Array<Map<number, Uint8Array>> = []

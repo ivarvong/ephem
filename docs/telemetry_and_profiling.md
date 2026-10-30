@@ -4,7 +4,7 @@ How to see what prod ephem is doing: traces, per-version CPU numbers, and CPU/he
 run against prod. **Keep this file current:** when a command, flag, span, attribute or gotcha changes, update it in the
 same change, and add the date to "Last verified".
 
-Last verified: 2026-10-30 (compute split: ephem 121b7984 + ephem-compute bb0a1127, git 01e0323; version 4e7c34ee; crossing span + MCP probe b49a8a02; MCP section 68c58ae5; Caching section c72a360c; cold-split, LOAD=track and isolate warmth fbdb337e; geoid bands + bundle A/B 5c337183 / 164e1cd7 / 61305294).
+Last verified: 2026-10-30 (compute split A/B: S 02dd1270 + ephem-compute fca6e275 vs E cc6ddd8e, git 5edf1b7, → one Worker; compute split: ephem 121b7984 + ephem-compute bb0a1127, git 01e0323; version 4e7c34ee; crossing span + MCP probe b49a8a02; MCP section 68c58ae5; Caching section c72a360c; cold-split, LOAD=track and isolate warmth fbdb337e; geoid bands + bundle A/B 5c337183 / 164e1cd7 / 61305294).
 
 ## The loop
 
@@ -17,17 +17,17 @@ Every number you report carries its version id (and trace id or profile file). L
 
 | Tool | What it gives you |
 | --- | --- |
-| `python3 scripts/obs/cpu-by-version.py [--service ephem-compute] [--minutes 30] [--path /v1/alignment] [--version 80f5b087] [--entrypoint Api] [--from ISO --to ISO]` | CPU and wall p50/p90/p99 and the CPU sum per (version, entrypoint, path, status) from invocation events; entrypoint is `default` (front door) or `MetarFeed` in `ephem`, `Api` or `BlockStore` in `--service ephem-compute` (since 121b7984 / bb0a1127; before that all four were in `ephem`). Every obs script takes `--service` (or `EPHEM_SERVICE`). The A/B tool. `--path` is sent as a server-side filter (the events view caps at 1000 rows per query); `--from/--to` pin an absolute window. Wall includes waitUntil: see "Request logs (Basin)". |
+| `python3 scripts/obs/cpu-by-version.py [--minutes 30] [--path /v1/alignment] [--version 80f5b087] [--entrypoint Api] [--from ISO --to ISO]` | CPU and wall p50/p90/p99 and the CPU sum per (version, entrypoint, path, status) from invocation events; entrypoint is `default` (front door), `Api`, `BlockStore` or `MetarFeed`, all in `ephem` (in `--service ephem-compute` only 2026-10-30 19:44Z – the removal: "Compute split"). Every obs script takes `--service` (or `EPHEM_SERVICE`). The A/B tool. `--path` is sent as a server-side filter; `--from/--to` pin an absolute window and read it in full (`telemetry.events_all`: parallel slices, split at the 1000-row cap); `--json` writes one row per invocation. Wall includes waitUntil: see "Request logs (Basin)". |
 | `python3 scripts/obs/basin.py status\|failures\|provision\|sql <name>\|crosscheck\|types` | Basin request logs: resources, `basin_send_failed` counts, sink/pipeline provisioning, canned Basin SQL, Basin-vs-o11y counts. See "Request logs (Basin)". |
 | `python3 scripts/obs/trace.py <traceId>` or `--latest /v1/day` | One request: invocation CPU/wall, the Effect span tree with work counts, and the runtime's own spans (fetch, jsRpc, R2). The front door and the Api invocation it called are two traces sharing one cf-ray (the Api's ends in its colo, e.g. `-IAD`). |
 | `scripts/obs/profile.sh <full-version-uuid> [cpu\|heap] [ms]` | Drives uncached load, captures a prod profile of that exact version, symbolizes it, prints the top. Files land in `profiles/` (gitignored). |
 | `scripts/obs/load.sh [rounds] [base]` | Uncached load: per round, one 24 h Moon alignment and one `/v1/day`, each with a fresh window or place so the Api cache misses. `LOAD=weather` instead sends 4 `/v1/weather` requests per round (random land-weighted lat/lons, n = 1–3), ~16 req/s. `LOAD=track`: 2 homepage-shaped `/v1/track` per round (72 h from a UTC midnight, 20-min grid, 217 samples) at fresh lat/lons, ~8 req/s; also works under `profile.sh`. |
-| `python3 scripts/obs/queue.py --from ISO --to ISO [--path /v1/position] [--over 20]` | Server-side wait before the handler ran, per request: Effect request span start − runtime request span start. Lists the requests that waited, each tagged **new isolate** (blocks/geoid not yet in L1: start-up) or **busy isolate** (L1 warm: stuck behind other JS), with CPU and `ephem.isolate_computes`. Use it instead of client p99 for "did X slow Y down" (see "Position tail under scan load"). `--path /v1/alignment/search/window --service ephem-compute` for Api windows (since the compute split). |
+| `python3 scripts/obs/queue.py --from ISO --to ISO [--path /v1/position] [--over 20] [--version id] [--json out]` | Server-side wait before the handler ran, per request: Effect request span start − runtime request span start. Lists the requests that waited, each tagged **new isolate** (blocks/geoid not yet in L1: start-up) or **busy isolate** (L1 warm: stuck behind other JS), with CPU and `ephem.isolate_computes`. Use it instead of client p99 for "did X slow Y down" (see "Position tail under scan load"). `--path /v1/alignment/search/window` for Api windows. `--json`: one row per request (wait, cpu, isolate_computes, kind, version, ray). |
 | `python3 scripts/obs/cold-split.py --from ISO --to ISO [--route track] [--json out.json]` | Api CPU by isolate warmth: each Api invocation of the route joined to its handler span's `ephem.isolate_computes` (1 = the isolate's first computation), p50/p90/p99 and CPU sum per bucket, and the runtime-GET → Effect-GET gap (isolate start-up before the router). Versions before the attribute fall back to "L1 empty" as the cold proxy. |
 | `python3 scripts/obs/metar-cache.py [--minutes 30] [--version 80f5b087] [--slice 2]` | METAR feed cache: per (version, tier) request count, share, wall and CPU p50/p99, parses, data age; upstream calls (MetarFeed's `{"evt":"metar.upstream"}`) by status, conditional, and per minute. Joins each `{"evt":"metar"}` log line to its invocation on `$metadata.requestId`. |
 | `python3 scripts/obs/cache-probe.py [base] --mode repeat\|unique\|burst [--keys 10] [--repeats 5] [--burst 50] [--routes day,…]` | Client-side cross-check of Workers Caching: per request `x-ephem-cache` (the Api's cf-cache-status relayed by the front door), client and server-timing latency; p50/p99 by (route, status). `burst` fires N concurrent identical cold requests (collapsing test); count Api invocations for that key with a `starts_with` filter on `$workers.event.request.url = https://api.internal/<path>?<sorted query>`. |
 | `node --experimental-strip-types scripts/obs/mcp-probe.ts [base]` | Full MCP client session against `/mcp` (legacy handshake + modern 2026-07-28 flow + error cases); every tool call (8 tools, incl. `crossing` and `sight_line`; the alignment call uses heightRef/targetHeightRef=msl, aim=litCentroid, include=sun,phase) is checked equal to its REST endpoint (the POST tool `alignment_search` against its REST POST), plus the REST 400 UnknownParameter and a null `apparentAltitude` case. Pass/fail table with latency and cf-ray. Run after every deploy. |
-| `scripts/smoke.sh <base> [--pin <version>] [--expect <version>] [--pin-compute <id>] [--expect-compute <id>] [--only a,b]` | Every route + content checks + the MCP probe; `--pin` sends `Cloudflare-Workers-Version-Overrides` and requires `x-ephem-version` = that version on every response (the probe too, via `EPHEM_VERSION`). `--pin-compute` adds `ephem-compute="<id>"` (forwarded by the front door; probe: `EPHEM_COMPUTE_VERSION`); the `compute` / `compute-hit` checks send a never-seen position+time key and require MISS computed by ephem-compute (`x-ephem-compute-version`, = the expected id if given), then HIT. deploy.sh runs the deployed commit's copy. See "Deploys". |
+| `scripts/smoke.sh <base> [--pin <version>] [--expect <version>] [--expect-compute <id>] [--only a,b]` | Every route + content checks + the MCP probe; `--pin` sends `Cloudflare-Workers-Version-Overrides` and requires `x-ephem-version` = that version on every response (the probe too, via `EPHEM_VERSION`). The `compute` / `compute-hit` checks send a never-seen position+time key and require a MISS computed by the Api (`x-ephem-compute-version`, = `--expect-compute` if given; deploy.sh passes the version under test, since a loopback runs the caller's version), then HIT. deploy.sh runs the deployed commit's copy. See "Deploys". |
 | `python3 scripts/obs/tail-check.py [--minutes 10] [--version <id>] [--wait 90] [--require /v1/track,…]` | ephem-tail from its own o11y events (no Basin token needed): invocations by (version, outcome), `basin_send_failed` lines, and the route labels summed from its `tail_batch` log lines. Exit 1 on a non-ok outcome, a send failure or a missing required label. deploy.sh runs it after a tail deploy. |
 | `python3 scripts/obs/trace.py --jsonrpc-id <id>` | The trace of one MCP message (the probe's ids are `<run>-<step>`). |
 | `python3 scripts/obs/symbolize.py in.pb [out.pb]` | Replaces minified function names in a prod pprof with names read from the source (see "Source maps"). |
@@ -82,21 +82,14 @@ Views: `events` (invocations: `$metadata.type = cf-worker-event`; spans: `type =
 
 ## Deploys (`scripts/deploy.sh`)
 
-`scripts/deploy.sh <rev> "<message>" [auto|ephem|compute|tail|all]` (`DRY=1`: gate only). Lock, never-backwards guard
+`scripts/deploy.sh <rev> "<message>" [auto|ephem|tail|all]` (`DRY=1`: gate only). Lock, never-backwards guard
 (`ALLOW_OLDER=1` to roll back on purpose), clean worktree of `<rev>`, full gate, then:
 
 1. **ephem-tail** first when targeted (`auto`: packages/tail, packages/worker/src/routes.ts or the invocations schema
    changed since the last `deployed-tail/` tag, or `tailConsumers` changed): `cf deploy`. After ephem's smoke has sent it
    traffic, `scripts/obs/tail-check.py --version <new> --require <the smoke's routes>` must pass, else ephem-tail is routed
    back to its previous version. Tag `deployed-tail/<ts>`.
-2. **ephem-compute** when targeted (`auto`: packages/compute, core, api or worker/src changed since the last
-   `deployed-compute/` tag), always before ephem. Gradual like ephem: `versions create` in packages/compute, 0% + previous
-   100%, wait until 3 never-seen keys in a row come back MISS with `x-ephem-compute-version` = new (pinned with
-   `ephem-compute="<new>"`, which the live front door forwards over the binding), `smoke.sh --pin-compute <new>`, promote,
-   the same wait unpinned, `smoke.sh --expect-compute <new>`, else route back to the previous version and exit 1 (ephem is
-   not deployed). First deployment (no Worker yet): plain `cf deploy`; ephem's canary smoke then exercises it. Tag
-   `deployed-compute/<ts>`. ephem's own smokes then require fresh MISSes from that compute version (`--expect-compute`).
-   An ephem rollback does not roll compute back, so compute must keep answering the previous front door.
+2. (Removed 2026-10-30: the `compute` target for ephem-compute; see "Compute split".)
 3. **ephem, gradual**: record the version at 100% (`cf workers deployments list`; a split deployment aborts), `cf workers
    versions create`, `cf workers deployments create` with new 0% + previous 100%, wait until 5 pinned `/healthz` in a row
    come from the new version, then `smoke.sh --pin <new>`. Prod traffic never sees the canary. Fail → remove it, exit 1.
@@ -132,21 +125,20 @@ No `caches.default` anywhere (`grep -rn "caches\." packages/worker/src` is empty
 the entrypoints whose `exports` entry enables it (`cloudflare.config.ts`), driven only by the Cache-Control they return.
 
 ```
-ephem (front door)                                                     ephem-compute (since 121b7984 / bb0a1127)
+ephem (one Worker; ephem-compute 2026-10-30 19:44Z – removal, "Compute split")
 eyeball ─▶ default (cache OFF: always runs → every request has its trace, Basin row, request.cf; `/` and `/mcp` live here)
              ├─ GET /v1/day, /v1/alignment, /v1/track, /v1/sightline, /v1/crossing, /v1/position|magnetic with time, search windows
-             │     ─▶ loopback.ts api: env.COMPUTE.fetch(path + sorted query, { cf: { cacheKey: "/v<CACHE_VERSION>" + path + query } })
-             │        ──service binding──▶ Api (cache ON) ─▶ blocks: loopback.ts block  GET /block/v<N>/<sha16>/<i>  (ctx.exports.BlockStore, cache ON) ─▶ R2
+             │     ─▶ loopback.ts api: ctx.exports.Api.fetch(path + sorted query, { cf: { cacheKey: "/v<CACHE_VERSION>" + path + query } })
+             │        ─▶ Api (cache ON) ─▶ blocks: loopback.ts block  GET /block/v<N>/<sha16>/<i>  (ctx.exports.BlockStore, cache ON) ─▶ R2
              │                                             └▶ geoid:  loopback.ts geoid  GET /geoid/v<N>/<sha16>/<band> (ctx.exports.BlockStore, cache ON) ─▶ R2 ephem-geoid
-             ├─ live (position / magnetic without time): computed here; blocks / geoid via env.STORE ──service binding──▶ BlockStore (cache ON)
+             ├─ live (position / magnetic without time): computed here; blocks / geoid via ctx.exports.BlockStore (cache ON)
              └─ /v1/weather: computed here; feed via loopback.ts feed GET /feed/v<N>/metars.cache.csv.gz (ctx.exports.MetarFeed, cache ON) ─▶ aviationweather.gov
 ```
 
-Across the service binding the callee's Workers Caching applies exactly as over ctx.exports: docs ("Caching between
-Workers": the callee's cache is consulted; cf.cacheKey is honoured for same-account calls). Verified live on every deploy
-by smoke.sh's `compute` / `compute-hit` checks (fresh key → `x-ephem-cache: MISS`, `x-ephem-compute-version` set; same key →
-`HIT`), and 30/30 MISS → 30/30 HIT in a probe (19:57:06–19:57:46Z, 121b7984). The two Workers' caches are separate: the
-split started ephem-compute's Api and BlockStore caches empty (one refill from R2).
+Verified live on every deploy by smoke.sh's `compute` / `compute-hit` checks (fresh key → `x-ephem-cache: MISS`,
+`x-ephem-compute-version` = the version under test; same key → `HIT`). While Api + BlockStore lived in ephem-compute
+(2026-10-30), the callee's Workers Caching applied across the service binding exactly as over ctx.exports (30/30 MISS →
+30/30 HIT, 19:57:06–19:57:46Z, 121b7984); a cache belongs to a Worker, so moving them emptied and refilled it each way.
 
 A HIT never runs the cached entrypoint, so it leaves no Api invocation, trace or log; the front door always runs and
 records the Api's `cf-cache-status` as `ephem.api_cache` (span) / `api_cache` (Basin row) and relays it to clients as
@@ -242,7 +234,44 @@ HIT (blocks MISS once too). The golden test caught the refraction change (31b437
 Where things run: a MISS runs the cached entrypoint at the tier colo (Api invocations for EWR traffic: IAD 94, EWR 53, ORD
 6, ATL 4, MIA 4 in one 5-min window, c72a360c), which is why a miss costs more wall than a front-door compute.
 
-## Compute split (ephem-compute, 2026-10-30)
+## Compute split (ephem-compute, 2026-10-30: tried, measured, removed)
+
+**Concurrent A/B, then removed** (2026-10-30; Ivar: "We need data."). Pre-registered rule (lab notebook, 20:45Z): keep S only
+if a primary metric improves with a 95 % CI excluding 0 and no other primary metric regresses with a CI excluding 0.
+Method: one commit (git 5edf1b7) as two `ephem` versions in one 50/50 deployment (`deploy.sh … ab`, since removed): **S** =
+02dd1270 (service bindings → ephem-compute fca6e275), **E** = cc6ddd8e (`--mode entrypoint`: Api + BlockStore as ephem's
+own cache-enabled entrypoints over ctx.exports). Same keys; separate caches (warm keys pre-warmed in each arm, cold keys
+fresh). Laptop EWR client (scratchpad `ab-split/bin/load.ts`) pinned each arm with the version override and fired both
+arms' identical open-loop schedules at the same instants (arm order alternating): 124 cold 12-month Brooklyn Bridge Park
+scans/min (fresh target height, 14 × MISS), `/v1/position` every 200 ms, a pre-warmed day/track/alignment HIT every 400 ms.
+60 s warmup (discarded), 6 runs × 240 s with 60 s gaps, 20:42:57–21:11:57Z; 0 client errors. Server-side rows per run and
+arm: queue.py (`--json`), cold-split.py (`--route alignment/search/window`), cpu-by-version.py (`--json`), plus the POST and
+`api.fetch` spans (`ab-split/bin/pull.py`); ~495 scans, ~6 920 windows, ~1 220 position probes, ~600 warm hops per run and
+arm, matching the client's counts. CI: paired hierarchical bootstrap (resample runs, then rows within run × arm), 2 000
+draws (`ab-split/bin/stats.py`, `runs/ab1.stats.txt`).
+
+| primary metric | S (binding) | E (ctx.exports) | S − E [95 % CI] | runs S / E |
+| --- | --- | --- | --- | --- |
+| position probes waiting > 20 ms before the handler | 0.01 % (1 / 7 324) | 0.03 % (2 / 7 337) | −0.01 pp [−0.10, +0.05] | 0–0.08 / 0–0.16 % |
+| position wait p99 | 0 ms | 0 ms | 0 [0, 0] | |
+| cold scan e2e p50 / p90 (server: runtime POST start → Effect POST end) | 307 / 464 ms | 336 / 512 ms | **−29 [−40, −20] / −48 [−73, −29]** | p50 289–325 / 322–355 |
+| Api window pre-handler wait p90 / p99 | 71 / 152 ms | 97 / 204 ms | **−26 [−31, −20] / −52 [−61, −44]** | p90 67–78 / 79–103 |
+| warm hop `api.fetch` HIT p50 / p99 | 4 / 8 ms | 4 / 8 ms | 0 [−1, 0] / 0 [−1, +1] | |
+| CPU per scan (Σ window Api CPU + POST CPU) | 993 ms | 963 ms | **+30 [+21, +40]** (+3 %) | 975–1 025 / 942–979; S higher 6/6 |
+| fresh isolates per run: front door (first computation) / Api | 0.3 / 762 | 0.3 / 781 | 0 [−0.5, +0.5] / −19 [−42, +9] | Api 723–861 / 684–847 |
+| (secondary) cold scan client p50 / p90 | 440 / 620 ms | 469 / 664 ms | −29 [−39, −20] / −44 [−64, −30] | |
+
+Also per run: front-door POST CPU p50 21–22 ms both; fresh Api isolate pre-router gap p50 87–91 (S) vs 115–122 ms (E).
+
+**Decision: E.** S is faster (scans −29 ms p50, window waits −26 / −52 ms) but costs +3 % CPU per scan with a CI excluding
+0, so by the pre-registered rule ephem-compute was removed: one Worker again (Api + BlockStore cache-enabled entrypoints of
+ephem; deploy.sh `compute` target, bindings, packages/compute, smoke `--pin-compute` gone). The position tail the split
+was built for did not show in either arm in this run (it was 0.35–5 % in earlier runs), so it is not what the split buys;
+the speed came from the lean compute bundle's faster isolate start (gap ~89 vs ~119 ms), a lever available inside one
+Worker. Earlier sequential runs (below) said the split had "no measured cost": they had no CPU-per-scan comparison.
+Caveats: one client colo (EWR), one 30-min window, 6 runs; CPU per scan is a per-run scalar bootstrapped over runs only.
+
+**History: the split as built and its first, sequential A/B.**
 
 **Change** (git 01e0323): `Api` and `BlockStore` moved from `ephem` into a new Worker `ephem-compute` (packages/compute;
 code packages/worker/src/compute.ts on the lean router src/router.ts, 365 KiB / 125 KiB gzip vs ephem's 472 / 163). ephem
@@ -334,7 +363,7 @@ it) and `search.windows[].cache`, so a client sees which windows computed.
 **Measure** (by exact version; windows are Api invocations on path `/v1/alignment/search/window`, the POST is the front door):
 
 ```sh
-python3 scripts/obs/cpu-by-version.py --service ephem-compute --minutes 20 --path /v1/alignment/search/window --entrypoint Api   # per-window CPU / wall
+python3 scripts/obs/cpu-by-version.py --minutes 20 --path /v1/alignment/search/window --entrypoint Api   # per-window CPU / wall
 python3 scripts/obs/cpu-by-version.py --minutes 20 --path /v1/alignment/search                           # the front door's merge
 python3 scripts/obs/trace.py --latest /v1/alignment/search                                              # fan-out tree
 ```
@@ -639,6 +668,7 @@ column.
 | 2026-10-30 | same versions | Cold e2e of a homepage /v1/track (a geoid route: every observer route needs N) from EWR, fresh connection + fresh Api isolate, median: base 319 ms (n 14; server 227, gap 122, CPU 51) → geoid 352 (n 15; server 220, gap 120, CPU 61, geoid.load 11) → both 289 (n 28; server 179, gap 90, CPU 51, geoid.load 6). Warm isolate 131 / 146 / 141 (n 35 / 15 / 20). `geoid.load` over 1 185 spans 12:28–12:41Z: L1 0 ms (24%), HIT p50/p90/p99 5/17/41 (HIT:2 6/28/47), **MISS p50/p90 134/289** (5%, R2 ENAM from the tier colo; once per band per tier, immutable + crossVersionCache); concurrent with blocks.load (HIT 4–6 ms), so a HIT adds ~1–2 ms wall and a MISS ~130 ms. 0 5xx. | next: isolate start-up is platform-side; home.ts 60 KB is the largest piece left |
 | 2026-10-30 | 8a308729, 0d870218, 37d28e99 → eb25caa2 (e2d5ac3) → 647f5bbc (0c29b78, revert) | Position p99 under cold-scan load: client p99 from the laptop is noise (idle 60 s phases 84–525 ms). Server-side (`queue.py`), 0.4–5.1 % of probes under load vs 0–0.9 % idle waited 70–234 ms before the handler, 35 of 37 on a **new front-door isolate**; 2 of 1 937 waited (23, 37 ms) behind JS in a warm isolate. Merge-only load (14 × HIT at the same rate): 0 / 503. Front-door CPU per scan p50 25 ms (cold) / 22 (warm). Sliced window compute: no measured effect (window wait p99 218 → 205 ms, new-isolate probes 2.0 → 1.2 %), reverted. | cause is isolate start-up, not merge CPU; next lever: window compute off the front door's isolates |
 | 2026-10-30 | 647f5bbc → 121b7984 + ephem-compute bb0a1127 (git 01e0323) | Api + BlockStore moved to their own Worker (service bindings, same keys, callee's Workers Caching verified MISS → HIT). Position probes waiting > 20 ms under ~120–150 cold scans/min: 5/1 420 → 5/1 425 (0.35 %), all new front-door isolates either way. Api window pre-handler wait p90/p99 109/215 → 73/150 ms; cold scan p50 470 → 380–425 ms; binding hop ≤ 1 ms (api.fetch HIT 4 ms both). | split kept; the position tail is front-door isolate start-up that the split does not change (guide "Compute split") |
+| 2026-10-30 | S ephem 02dd1270 + ephem-compute fca6e275 vs E ephem cc6ddd8e (git 5edf1b7), 20:42:57–21:11:57Z | Concurrent A/B of the compute split (one commit, two versions 50/50, both arms pinned and loaded at the same instants; 6 × 240 s). S − E [95 % CI]: cold scan server e2e p50 −29 [−40, −20] ms, p90 −48 [−73, −29]; window wait p90 −26 [−31, −20], p99 −52 [−61, −44]; **CPU per scan +30 [+21, +40] ms (993 vs 963, +3 %)**; position waits > 20 ms 1/7 324 vs 2/7 337, warm hop 4/8 ms both, fresh isolates equal. | pre-registered rule → E: ephem-compute removed, one Worker (guide "Compute split") |
 | 2026-10-30 | 8a308729 → 0d870218 (git ac69e35) | Rates analytic (DE440 velocity) instead of a ±10 s difference: the flaky rate property was the nadir side (5.6e-5 vs 1e-5 within 10° of it); now ≤ 3.6e-7 vs Richardson, 0 exceedances in 400k body-samples above −89° (guide "Rates"). Local: position() 18.5 → 12.8 µs, ratesAt 4.0 → 2.3 µs. Prod /v1/track (no rates; `LOAD=track` 120 cold, 13:19:25–13:19:50Z) Api CPU p50 13 / p90 65 / p99 108 ms vs 9 / 61 / 101 on e4d16979 (n=242): unchanged, isolate warmth. | rates 25–60× closer to the positions; position CPU −31% |
 | 2026-10-30 | 02dd1270 → 639e952a (git 5026667 ⊇ 5d9103c) | **/instrument** (RPN view): bundle 474.46 → 590.04 KiB (gzip 164.08 → 221.19); local `cf workers check` median active/window 36.3/55.1 → 36.3/54.8 ms (6 alternating runs); deploy-reported startup 56 ms (n=1) vs 43, 44, 50, 51 ms for the previous four 474 KiB uploads. Prod browser (390×844, fresh context + never-seen lat/lon, n=7): 2 API requests cold and warm (+ 3 fonts, `(cache)` warm), HTML 18.3 KB on the wire. | data rendered p50 cold 388 / warm 88 ms; /v1/day rendered 552 / 53 ms (scratchpad instrument/prod.json) |
 
@@ -677,8 +707,13 @@ column.
 - Workers Observability splits JSON log keys on ".": `{"routes":{"- /llms.txt":1}}` came back as
   `{"- /llms":{"txt":1}}` (ephem-tail 9b316309). Log label/count pairs as strings ("- /llms.txt 1"), not as object keys.
 - The default handler's TailItem has no `entrypoint` (ephem-tail labels it "-"); only `Api`, `BlockStore`, `MetarFeed` carry one.
-  Since the compute split ephem-tail labels another script's entrypoint `<script>/<entrypoint>` (`ephem-compute/Api`,
-  `ephem-compute/BlockStore`; a schema change would need a new stream), from the TailItem's `scriptName`.
+  ephem-tail labels another script's entrypoint `<script>/<entrypoint>` from the TailItem's `scriptName`
+  (`ephem-compute/Api` rows exist for 2026-10-30 19:44Z – the removal; a schema change would need a new stream).
+- The o11y query API rate-limits bursts: 6 obs scripts × 8 parallel slices got `429 [971] Please wait and consider
+  throttling` (2026-10-30). `events_all` must fail loudly on a failed slice, never return a partial result; run pulls one
+  tool at a time.
+- `scripts/obs/queue.py` shadows the stdlib `queue` module for every script in that directory: `concurrent.futures` (and
+  anything else importing `queue`) fails with a circular import. `events_all` uses `threading` directly.
 - `npm install` in the shared tree removes the per-package `node_modules/wrangler` symlinks cf needs (`wrangler is declared
   in packages/worker/package.json but is not installed`): cf checks `<package>/node_modules/wrangler/package.json`. Restore
   with `ln -sfn "$PWD/node_modules/wrangler" packages/<p>/node_modules/wrangler` (worker, tail, compute) (2026-10-30).

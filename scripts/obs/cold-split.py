@@ -39,13 +39,14 @@ def spans(name: str) -> dict:
 
 inv = [e for e in events_all([eq("$metadata.type", "cf-worker-event"), starts("$workers.event.request.url", f"https://api.internal/v1/{a.route}")], W)
        if not a.version or e["$workers"]["scriptVersion"]["id"].startswith(a.version)]
-handler, loads, gets = spans(a.route), spans("blocks.load"), spans("GET")
+HANDLER = {"alignment/search/window": "search.window"}   # handler span name when it is not the route's
+handler, loads, gets = spans(HANDLER.get(a.route, a.route)), spans("blocks.load"), spans("GET")
 rows = []
 for e in inv:
     tid, w = e["$metadata"]["traceId"], e["$workers"]
     h = (handler.get(tid) or [{}])[0]; b = (loads.get(tid) or [{}])[0]; g = gets.get(tid, [])
     rt = [s["startTime"] for s in g if "effect.span_id" not in s]; ef = [s["startTime"] for s in g if "effect.span_id" in s]
-    rows.append(dict(version=w["scriptVersion"]["id"][:8], cpu=w.get("cpuTimeMs", 0), wall=w.get("wallTimeMs", 0), trace=tid,
+    rows.append(dict(version=w["scriptVersion"]["id"][:8], cpu=w.get("cpuTimeMs", 0), wall=w.get("wallTimeMs", 0), trace=tid, ray=e["$metadata"].get("rayId"),
                      seq=h.get("ephem.isolate_computes"), l1=b.get("cache.l1"), gap=(min(ef) - min(rt)) if rt and ef else None))
 if a.json:
     json.dump(rows, open(a.json, "w"))

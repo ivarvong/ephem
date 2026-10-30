@@ -8,9 +8,8 @@ const base = (process.argv[2] && !process.argv[2].startsWith("--") ? process.arg
 const run = `p${Date.now().toString(36)}`
 // EPHEM_VERSION=<version uuid>: pin every request to that version (Cloudflare-Workers-Version-Overrides; scripts/smoke.sh,
 // deploy.sh's 0% canary) and fail any response whose x-ephem-version is another version.
-// EPHEM_COMPUTE_VERSION=<uuid>: also pin ephem-compute (the front door forwards the header over the service binding).
-const PIN = process.env.EPHEM_VERSION || undefined, CPIN = process.env.EPHEM_COMPUTE_VERSION || undefined, offPin: string[] = []
-const OVR = [PIN && `ephem="${PIN}"`, CPIN && `ephem-compute="${CPIN}"`].filter(Boolean).join(", ")
+const PIN = process.env.EPHEM_VERSION || undefined, offPin: string[] = []
+const OVR = PIN ? `ephem="${PIN}"` : ""
 // EPHEM_SMOKE_RUN=<id>: send x-ephem-smoke: <id> (scripts/obs/canary-gate.py selects the smoke's invocations by it);
 // EPHEM_SMOKE_MANIFEST=<file>: append `<cf-ray> <status> <method> <path> mcp-probe` per request (smoke.sh --manifest).
 const RUN = process.env.EPHEM_SMOKE_RUN || undefined, MANIFEST = process.env.EPHEM_SMOKE_MANIFEST || undefined, isoErr: string[] = []
