@@ -105,7 +105,7 @@ records the Api's `cf-cache-status` as `ephem.api_cache` (span) / `api_cache` (B
 | `/v1/position`, `/v1/magnetic` without `time` | not forwarded (`API_LIVE` = `public, max-age=0` if called directly) | `no-store` / `public, max-age=3600` | max-age=0 forwarding measured +35 ms server p50 with no sequential hits (below) |
 | any non-200 from the Api, or no Cache-Control | `no-store` | `no-store` | errors are never cached (a router 404 was heuristically cached for 3 min on fd72f501) |
 | `/` | — (never forwarded) | `private, no-store` | the sky at request.cf's location; the cache key ignores request.cf |
-| `/docs`, `/openapi.json` | — | `public, max-age=300` | cheap; served by the front door |
+| `/docs` (plain HTML), `/docs/interactive` (Scalar), `/llms.txt`, `/openapi.json` | — | `public, max-age=300` | cheap; served by the front door (src/docs.ts) |
 | `/mcp` | — (POST; tool calls go through the same forward) | — | |
 | BlockStore `/block/v<N>/<sha16>/<i>` | `public, max-age=31536000, immutable` | — | blocks never change for a file hash (in the path) |
 | BlockStore `/geoid/v<N>/<sha16>/<band>` | `public, max-age=31536000, immutable` | — | a band never changes for the geoid object's hash (in the path); sha-checked before it is served |

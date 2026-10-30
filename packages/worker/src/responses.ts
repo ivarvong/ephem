@@ -46,7 +46,7 @@ export const internalCacheControl = (status: number, url: URL): string | undefin
 /** What browsers and other downstream caches see from the (uncached) front door. */
 export const outwardCacheControl = (status: number, url: URL): string | undefined => {
   if (url.pathname === "/") return "private, no-store"   // the sky at request.cf's location: never shared
-  if (url.pathname === "/docs" || url.pathname === "/openapi.json") return "public, max-age=300"
+  if (url.pathname === "/docs" || url.pathname === "/docs/interactive" || url.pathname === "/llms.txt" || url.pathname === "/openapi.json") return "public, max-age=300"
   if (!url.pathname.startsWith("/v1/")) return undefined
   if (status !== 200) return NO_STORE
   if (deterministic(url)) return IMMUTABLE

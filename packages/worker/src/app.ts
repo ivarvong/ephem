@@ -16,6 +16,7 @@ import { Edge, Gateway, type Role } from "./responses.ts"
 import { Home } from "./home.ts"
 import { WeatherNone, type Weather } from "./weather.ts"
 import { Mcp } from "./mcp.ts"
+import { SCALAR_HTML, docsHtml, llmsTxt } from "./docs.ts"
 import { RequestLog, RequestLogging, type RequestLogSink } from "./requestlog.ts"
 
 // No HttpPlatform / FileSystem / Path / Etag layers (HttpServer.layerServices): only file responses and on-disk multipart
@@ -39,11 +40,14 @@ const ExplainSchemaErrors = HttpRouter.middleware(http => Effect.catchDefect(htt
     })
     : Effect.die(defect)))
 
-/** /docs: a few hundred bytes of HTML that loads a pinned Scalar from jsDelivr. HttpApiScalar.layerCdn inlines a
- *  ~3 MB bundle into the Worker, which was 73% of the script; this keeps the same page at ~0 bundle cost. */
-export const SCALAR = "https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.74.0"
-const DOCS_HTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ephem API</title></head><body><script id="api-reference" data-url="/openapi.json"></script><script src="${SCALAR}"></script></body></html>`
-const Docs = HttpRouter.add("GET", "/docs", HttpServerResponse.html(DOCS_HTML))
+/** /docs (plain HTML), /llms.txt and /docs/interactive (Scalar from jsDelivr, ~0 bundle cost): src/docs.ts. */
+let docsPages: { html: string; llms: string } | undefined
+const pages = () => (docsPages ??= { html: docsHtml(), llms: llmsTxt() })
+const Docs = Layer.mergeAll(
+  HttpRouter.add("GET", "/docs", Effect.sync(() => HttpServerResponse.html(pages().html))),
+  HttpRouter.add("GET", "/docs/interactive", HttpServerResponse.html(SCALAR_HTML)),
+  HttpRouter.add("GET", "/llms.txt", Effect.sync(() => HttpServerResponse.text(pages().llms, { contentType: "text/plain; charset=utf-8" }))),
+)
 
 /** `edge`: which side of the front door → Api loopback this router is (src/responses.ts); default `local` (tests, dev).
  *  `geoid`: the Worker passes makeGeoid (R2 bands via BlockStore); the default relies on a band source the caller installed. */

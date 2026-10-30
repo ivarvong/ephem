@@ -83,7 +83,7 @@ const sumPrefix = (spans: ReadonlyArray<Attrs>, p: string) => { let s = 0, seen 
 
 /** Every route is a static path, so on the front door (which forwards /v1/* without matching) the path is the route if it is one
  *  of these; anything else is left out rather than stored raw. test/requestlog.test.ts checks this covers /openapi.json. */
-export const ROUTES: ReadonlySet<string> = new Set(["/", "/docs", "/openapi.json", "/healthz", "/mcp", "/v1/position", "/v1/day", "/v1/crossing", "/v1/alignment", "/v1/track", "/v1/magnetic", "/v1/weather"])
+export const ROUTES: ReadonlySet<string> = new Set(["/", "/docs", "/docs/interactive", "/llms.txt", "/openapi.json", "/healthz", "/mcp", "/v1/position", "/v1/day", "/v1/crossing", "/v1/alignment", "/v1/track", "/v1/magnetic", "/v1/weather"])
 
 export interface RowInput {
   readonly now: number; readonly method: string; readonly url: URL; readonly headers: Readonly<Record<string, string | undefined>>
