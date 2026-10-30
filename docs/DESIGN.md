@@ -449,8 +449,8 @@ Api and BlockStore (src/compute.ts, the lean /v1 router src/router.ts `makeApiHa
 the caller's version, so a pinned canary's forwarded MISSes run on the canary (`x-ephem-compute-version` = its own id;
 scripts/smoke.sh `compute` check).
 
-**Tried and removed: `ephem-compute`, a separate Worker for Api + BlockStore behind service bindings** (git 01e0323,
-live 2026-10-30 19:44Z – 21:4xZ). Hypothesis: window compute shared the front door's isolate pool, so under scan load live
+**Tried and removed: `ephem-compute`, a separate Worker for Api + BlockStore behind service bindings** (git 01e0323;
+it served 2026-10-30 19:44Z – 21:37Z; ephem d3caf38f, git 7a125fd, is one Worker again). Hypothesis: window compute shared the front door's isolate pool, so under scan load live
 requests landed on fresh front-door isolates. Decided by a pre-registered concurrent A/B (telemetry guide "Compute split"):
 one commit (5edf1b7) as two ephem versions 50/50, S = 02dd1270 (binding → ephem-compute fca6e275) and E = cc6ddd8e
 (entrypoints over ctx.exports), each pinned by version override and fed the identical open-loop load at the same instants
@@ -459,8 +459,13 @@ if a primary metric improves with a 95 % CI excluding 0 and no other regresses w
 hierarchical bootstrap): cold scan server e2e p50 −29 ms [−40, −20], p90 −48 [−73, −29]; Api window pre-handler wait p90
 −26 [−31, −20], p99 −52 [−61, −44]; **CPU per scan +30 ms [+21, +40] (993 vs 963 ms, +3 %, S higher in 6/6 runs)**;
 position wait, warm hop and fresh-isolate counts unchanged within noise (position probes waiting > 20 ms: 1 / 7 324 vs
-2 / 7 337). CPU regressed beyond noise, so the rule chose E: ephem-compute, its bindings, deploy target and package were
-deleted. The position tail the split was built for did not appear in either arm in this run (it was 0.35–5 % in earlier
+2 / 7 337). CPU regressed beyond noise, so the rule chose E. Reviewed as a trade-off (S is faster on every latency
+metric) and confirmed (CoS, 2026-10-30): S's gains were measured only at 124 cold scans/min, synthetic contention far
+above real search traffic, so they likely vanish at real load; warm and live paths were unchanged; and the second Worker's
+operational cost (a compute deploy phase, canary pinning across a binding, interface ordering between two Workers) is
+paid on every deploy. ephem-compute, its bindings, deploy target and package were deleted. **Re-run trigger:** if
+search traffic ever approaches contention, re-run the A/B at real load; commit 5edf1b7 holds both arms (guide "Compute
+split", "Re-running"). The position tail the split was built for did not appear in either arm in this run (it was 0.35–5 % in earlier
 runs), so it was not the lever; the latency the split bought came from compute's smaller bundle starting faster
 (fresh-isolate pre-router gap p50 ~89 vs ~119 ms), which is reachable inside one Worker too (a leaner bundle).
 
