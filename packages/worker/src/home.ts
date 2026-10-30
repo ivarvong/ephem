@@ -147,6 +147,39 @@ function overlaps(rects) {
   for (var i = 0; i < rects.length; i++) for (var j = i + 1; j < rects.length; j++) if ((rects[i].text || rects[j].text) && overlapArea(rects[i], rects[j]) > 0) bad.push(rects[i].id + " x " + rects[j].id);
   return bad;
 }
+// Does segment s = [x1, y1, x2, y2] touch rect r? (Liang-Barsky clipping.)
+function segHitsRect(s, r) {
+  var x1 = s[0], y1 = s[1], dx = s[2] - x1, dy = s[3] - y1, t0 = 0, t1 = 1;
+  var p = [-dx, dx, -dy, dy], q = [x1 - r.x, r.x + r.w - x1, y1 - r.y, r.y + r.h - y1];
+  for (var i = 0; i < 4; i++) {
+    if (p[i] === 0) { if (q[i] < 0) return false; continue; }
+    var t = q[i] / p[i];
+    if (p[i] < 0) { if (t > t1) return false; if (t > t0) t0 = t; } else { if (t < t0) return false; if (t < t1) t1 = t; }
+  }
+  return true;
+}
+// Altitude-ring labels ("30\\u00b0") are part of the layout too: each takes the first spot along its ring (left edge, right edge,
+// then stepping inward from both, above the line before below it) whose rect, grown by pad px, touches no path segment and no
+// obstacle rect. null when the whole ring is crossed: the label is dropped rather than drawn under a line.
+function ringLabelSpot(y, w, h, bounds, segs, obstacles, pad) {
+  pad = pad == null ? 3 : pad;
+  var xs = [], step = 24, mid = (bounds.x0 + bounds.x1) / 2;
+  for (var k = 0; ; k++) {
+    var l = bounds.x0 + 6 + k * step, r = bounds.x1 - 6 - w - k * step, any = false;
+    if (l + w <= mid + step) { xs.push(l); any = true; }
+    if (r >= mid - step) { xs.push(r); any = true; }
+    if (!any) break;
+  }
+  for (var i = 0; i < xs.length; i++) for (var side = 0; side < 2; side++) {
+    var rect = { x: xs[i], y: side ? y + 3 : y - h - 3, w: w, h: h };
+    if (rect.y < bounds.y0 || rect.y + h > bounds.y1) continue;
+    var grown = { x: rect.x - pad, y: rect.y - pad, w: w + 2 * pad, h: h + 2 * pad }, clear = true;
+    for (var j = 0; j < segs.length && clear; j++) if (segHitsRect(segs[j], grown)) clear = false;
+    for (var o = 0; o < obstacles.length && clear; o++) if (overlapArea(grown, obstacles[o]) > 0) clear = false;
+    if (clear) return rect;
+  }
+  return null;
+}
 `
 
 export const page = (v: Visitor) => `<!doctype html>
@@ -155,91 +188,118 @@ export const page = (v: Visitor) => `<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>ephem · the sky over ${v.city.replace(/[<>&"]/g, "")}</title>
 <meta name="description" content="Where the Sun and the Moon are right now, from JPL DE440, computed on Cloudflare's edge.">
-<meta name="theme-color" content="#070a14">
-<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<meta name="theme-color" content="#05070b">
 <style>
-:root{--bg:#070a14;--ink:#eef1f8;--muted:#a1a9bf;--faint:#687190;--line:rgba(255,255,255,.08);--panel:#0c111f;--sun:#ffc361;--moon:#d9e3ff;--accent:#9fb7ff;--warn:#ffb86b;
---display:"Newsreader",Georgia,serif;--body:"IBM Plex Sans",system-ui,sans-serif;--mono:"IBM Plex Mono",ui-monospace,monospace;color-scheme:dark}
+/* Mission-ops idiom: near-black, 1px hairlines, a strict grid, uppercase tracked labels, tabular mono readouts,
+   one accent (--accent) plus status colours (--ok, --caution, --alert). System fonts only: no web-font bytes. */
+:root{--bg:#05070b;--ink:#e9edf3;--muted:#8c95a7;--faint:#586174;--line:rgba(255,255,255,.09);--line2:rgba(255,255,255,.18);
+--accent:#7cc4ff;--ok:#3ddc97;--caution:#ffb547;--alert:#ff6b5e;--sun:#ffc361;--moon:#d9e3ff;--maxw:1120px;
+--sans:"Helvetica Neue",Helvetica,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+--mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;color-scheme:dark}
+@media (prefers-color-scheme:light){:root{--bg:#f3f4f6;--ink:#0c1016;--muted:#535c6c;--faint:#7c8595;--line:rgba(12,16,22,.11);--line2:rgba(12,16,22,.24);
+--accent:#0a63bd;--ok:#0b7f55;--caution:#9a5600;--alert:#c02d1d;--sun:#a86200;--moon:#3e4f82;color-scheme:light}}
 *{box-sizing:border-box}
-html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 var(--body);-webkit-font-smoothing:antialiased}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--sans);-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
-.num{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.01em}.tn{font-variant-numeric:tabular-nums}
-.gut{padding-left:max(20px,env(safe-area-inset-left));padding-right:max(20px,env(safe-area-inset-right))}
-.hud.gut{padding-left:max(20px,env(safe-area-inset-left),calc((100% - 1000px) / 2));padding-right:max(20px,env(safe-area-inset-right),calc((100% - 1000px) / 2))}
-.sky{position:relative;height:min(76svh,740px);min-height:460px;overflow:hidden;touch-action:pan-y;cursor:grab;user-select:none;-webkit-user-select:none}
+.num,.tn{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:0}
+.lbl{font:500 11px/1.3 var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.gut{padding-left:max(16px,env(safe-area-inset-left),calc((100% - var(--maxw)) / 2));padding-right:max(16px,env(safe-area-inset-right),calc((100% - var(--maxw)) / 2))}
+/* the sky is always a night instrument, whatever the page scheme */
+.sky{--ink:#eef1f6;--muted:#9aa3b5;--line2:rgba(255,255,255,.22);--ok:#3ddc97;--caution:#ffb547;--alert:#ff6b5e;color:var(--ink);background:#05070b;
+position:relative;height:min(76svh,740px);min-height:470px;overflow:hidden;touch-action:pan-y;cursor:grab;user-select:none;-webkit-user-select:none}
 .sky:active{cursor:grabbing}
 .sky canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
-.sky::before{content:"";position:absolute;left:0;right:0;top:0;height:150px;background:linear-gradient(rgba(4,6,13,.38),rgba(4,6,13,0));pointer-events:none;z-index:1}
-.hud{position:absolute;inset:0;z-index:2;pointer-events:none;display:flex;flex-direction:column;justify-content:space-between;padding-top:max(20px,env(safe-area-inset-top));padding-bottom:22px;text-shadow:0 1px 10px rgba(0,0,0,.4)}
+.sky::before{content:"";position:absolute;left:0;right:0;top:0;height:140px;background:linear-gradient(rgba(5,7,11,.45),rgba(5,7,11,0));pointer-events:none;z-index:1}
+.hud{position:absolute;inset:0;z-index:2;pointer-events:none;display:flex;flex-direction:column;justify-content:space-between;padding-top:max(16px,env(safe-area-inset-top));padding-bottom:18px}
 .top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
-.brand{font:500 12px/1 var(--body);letter-spacing:.08em;color:rgba(238,241,248,.6)}
-h1{font:400 clamp(30px,4.6vw,52px)/1.1 var(--display);margin:8px 0 0;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-h1.coords{font-size:clamp(21px,3.4vw,44px);font-variant-numeric:tabular-nums;margin-top:12px}
+.brand{display:flex;align-items:center;gap:14px;font:600 11px/1 var(--sans);letter-spacing:.22em;color:var(--ink)}
+.live{display:inline-flex;align-items:center;gap:6px;font:500 10px/1 var(--sans);letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+.live i{width:6px;height:6px;border-radius:50%;background:var(--muted)}
+.live.ok i{background:var(--ok)}.live.caution i{background:var(--caution)}.live.alert i{background:var(--alert)}.live.alert{color:var(--alert)}
+h1{font:500 clamp(30px,4.8vw,56px)/1.05 var(--sans);letter-spacing:-.025em;margin:12px 0 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+h1.coords{font-size:clamp(22px,3.4vw,44px);font-family:var(--mono);letter-spacing:-.02em;margin-top:14px}
 .now{text-align:right;flex:none}
-.clock{font:400 clamp(20px,2.4vw,28px)/1 var(--mono);font-variant-numeric:tabular-nums;margin-top:18px}
-.ctl{margin-top:10px;height:26px;font:12px/26px var(--body);color:rgba(238,241,248,.62)}
+.now .lbl{display:block;margin-top:2px}
+.clock{font:400 clamp(24px,2.6vw,32px)/1 var(--mono);font-variant-numeric:tabular-nums;margin-top:6px}
+.ctl{margin-top:4px;min-height:44px;display:flex;align-items:center;justify-content:flex-end;font:400 12px/1.2 var(--sans);color:var(--muted)}
 #hint{transition:opacity .6s}#hint.gone{opacity:0}
-.ctl button{pointer-events:auto;font:500 12px/1 var(--body);color:var(--ink);background:rgba(7,10,20,.35);border:1px solid rgba(255,255,255,.22);border-radius:999px;padding:6px 12px;cursor:pointer}
-.ctl button:hover{border-color:rgba(255,255,255,.5)}
-.bottom{max-width:44rem}
-.lede{font:400 clamp(21px,2.6vw,30px)/1.25 var(--display);margin:0;text-wrap:pretty}
-.next{margin:8px 0 0;font:15px/1.4 var(--body);color:rgba(238,241,248,.75)}
+.ctl button{pointer-events:auto;min-height:44px;font:500 11px/1 var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--ink);background:rgba(5,7,11,.4);border:1px solid var(--line2);border-radius:2px;padding:0 14px;cursor:pointer}
+.ctl button:hover{border-color:var(--ink)}
+.bottom{max-width:42rem}
+.lede{font:400 clamp(19px,2.3vw,26px)/1.3 var(--sans);letter-spacing:-.01em;margin:0;text-wrap:pretty}
+.next{margin:10px 0 0;font:14px/1.45 var(--sans);color:var(--muted);display:flex;gap:12px;align-items:baseline}
+.next .lbl{flex:none;color:var(--accent)}
 .next b{color:var(--ink);font-weight:500}
-main{max-width:1040px;margin:0 auto;display:grid;gap:56px;padding-top:28px;padding-bottom:56px}
-h2{font:400 24px/1.2 var(--display);margin:0 0 14px}
-.sub{color:var(--muted);margin:-8px 0 14px;font-size:14px}
-.bodies{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px;min-width:0}
-.card header{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:12px}
-.card h3{margin:0;font:500 15px/1.2 var(--body)}
-.card .state{color:var(--muted);font-size:14px;text-align:right}
+main{counter-reset:sec;padding-bottom:40px}
+.blk{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;padding:28px 0 32px;border-top:1px solid var(--line)}
+.blk:first-child{border-top:0}
+.blk>h2,.hood>summary{margin:0;font:500 11px/1.3 var(--sans);letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+.blk>h2::before,.hood>summary::before{counter-increment:sec;content:counter(sec,decimal-leading-zero);font-family:var(--mono);letter-spacing:0;color:var(--faint);margin-right:12px}
+.bodies{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
+.card{border:1px solid var(--line);border-radius:2px;min-width:0}
+.card header{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line)}
+.card h3{margin:0;font:600 12px/1.2 var(--sans);letter-spacing:.2em;text-transform:uppercase;display:flex;align-items:center;gap:10px}
+.card h3::before{content:"";width:8px;height:8px;border-radius:50%;background:currentColor}
 .sunc h3{color:var(--sun)}.moonc h3{color:var(--moon)}
-dl.nums{display:grid;grid-template-columns:auto 1fr;gap:6px 18px;margin:0;font-size:14px}
-dl.nums dt{color:var(--muted)}
-dl.nums dd{margin:0;white-space:nowrap;display:flex;gap:16px}
-.card .foot{margin:12px 0 0;color:var(--muted);font-size:13px}
+.card .state{font:500 10.5px/1.3 var(--sans);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);text-align:right}
+dl.cells{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);margin:0}
+dl.cells>div{padding:12px 16px 14px;min-width:0;border-top:1px solid var(--line)}
+dl.cells>div:nth-child(-n+2){border-top:0}
+dl.cells>div:nth-child(2n){border-left:1px solid var(--line)}
+dl.cells dt{font:500 10.5px/1.3 var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+dl.cells dd{margin:6px 0 0;font-size:16px;line-height:1.35;display:flex;flex-direction:column;white-space:nowrap}
+dl.cells dd span+span{color:var(--muted)}
+.card .foot{margin:0;padding:12px 16px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
+.big{font:400 22px/1.2 var(--sans);letter-spacing:-.01em;margin:0}
+.sub{color:var(--muted);margin:6px 0 16px;font-size:13px}
 .strip svg{display:block;width:100%;height:auto}
 .strip text{font-family:var(--mono);fill:var(--muted)}
-.evs{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:0 32px;margin-top:14px;font-size:14px}
-.evs>div{display:flex;justify-content:space-between;gap:12px;padding:5px 0;border-bottom:1px solid var(--line)}
+.strip .nowl{stroke:var(--ink)}
+.strip line.es{stroke:var(--sun)}.strip circle.es{fill:var(--sun)}.strip line.em{stroke:var(--moon)}.strip circle.em{fill:var(--moon)}
+.evs{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:0 32px;margin-top:16px;font-size:14px}
+.evs>div{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--line)}
 .evs .past{color:var(--faint)}
-.evs details.more{grid-column:1/-1;margin-top:8px}.evs details.more .evs{margin-top:4px}
-.evs .s::before,.evs .m::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:9px;vertical-align:2px}
+.evs details.more{grid-column:1/-1;margin-top:4px}.evs details.more .evs{margin-top:0}
+.evs .s::before,.evs .m::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:10px;vertical-align:1px}
 .evs .s::before{background:var(--sun)}.evs .m::before{background:var(--moon)}
 .row{display:flex;flex-wrap:wrap;gap:10px;margin-top:20px;align-items:center}
-.btn{font:500 14px/1 var(--body);color:var(--ink);background:transparent;border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:10px 16px;cursor:pointer;display:inline-block}
-.btn:hover{border-color:var(--accent);text-decoration:none}
+.btn{min-height:44px;display:inline-flex;align-items:center;font:500 11px/1 var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--ink);background:transparent;border:1px solid var(--line2);border-radius:2px;padding:0 16px;cursor:pointer}
+.btn:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
 .note{font-size:13px;color:var(--muted)}
-.wxc{display:grid;gap:14px}
-.wxtop{display:flex;align-items:center;gap:6px 18px;flex-wrap:wrap}
-.temp{font:400 40px/1 var(--display)}
-.wxtop .cond{font:500 16px/1.3 var(--body)}
-.wxtop .wind{color:var(--muted);font-size:14px}
-dl.wxs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px 18px;margin:0}
-dl.wxs div{min-width:0}
-dl.wxs dt{color:var(--muted);font-size:13px}
-dl.wxs dd{margin:2px 0 0;font-size:14px}
-.station{margin:0;color:var(--muted);font-size:13px}
+.wxc{display:grid;gap:16px}
+.wxtop{display:flex;align-items:center;gap:8px 20px;flex-wrap:wrap}
+.temp{font:300 44px/1 var(--sans);letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.wxtop .cond{font:500 16px/1.3 var(--sans)}
+.wxtop .wind{color:var(--muted);font:13px/1.4 var(--mono)}
+.wxc dl.cells{grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--line);border-radius:2px}
+.wxc dl.cells>div{border-top:0;border-left:1px solid var(--line)}
+.wxc dl.cells>div:first-child{border-left:0}
+.wxc dl.cells dd{font-size:14px;white-space:normal;display:block}
+.station{margin:0;color:var(--muted);font:12.5px/1.6 var(--mono)}
 .age{white-space:nowrap}
-.warn{color:var(--warn)}
-details summary{cursor:pointer;color:var(--accent);font:500 13px/1.6 var(--body)}
-details.raw pre{margin:8px 0 0;font:12.5px/1.6 var(--mono);color:#cfd6ea;white-space:pre-wrap;overflow-wrap:anywhere}
+.age::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ok);margin-right:7px;vertical-align:1px}
+.age.warn{color:var(--caution)}.age.warn::before{background:var(--caution)}
+details>summary{cursor:pointer;list-style:none;min-height:44px;display:flex;align-items:center;gap:10px;color:var(--accent);font:500 11px/1.3 var(--sans);letter-spacing:.14em;text-transform:uppercase}
+details>summary::-webkit-details-marker{display:none}
+details:not(.hood)>summary::before{content:"+";font:400 14px/1 var(--mono);width:10px}
+details:not(.hood)[open]>summary::before{content:"\\2212"}
+details.raw pre{margin:4px 0 0;padding:12px 14px;border-left:1px solid var(--line2);font:12px/1.65 var(--mono);color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere}
 pre .c{color:var(--faint)}
-.hood{border-top:1px solid var(--line);padding-top:18px}
-.hood>summary{font:400 20px/1.3 var(--display);color:var(--ink);list-style:none}
-.hood>summary::-webkit-details-marker{display:none}
-.hood>summary::after{content:"+";color:var(--faint);margin-left:10px;font-family:var(--body)}
+.hood{border-top:1px solid var(--line);padding:16px 0 28px}
+.hood>summary{justify-content:flex-start;gap:0}
+.hood>summary::after{content:"+";margin-left:auto;font:400 16px/1 var(--mono);color:var(--muted)}
 .hood[open]>summary::after{content:"\\2212"}
-.hood .in{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:32px;margin-top:18px}
-.hood h3{font:500 14px/1.3 var(--body);margin:0 0 6px}
-.hood p{color:var(--muted);font-size:14px;margin:0 0 12px}
-.hood pre{margin:0;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow-x:auto;font:12.5px/1.65 var(--mono);color:#cfd6ea}
-footer{font-size:12px;color:var(--faint);display:flex;flex-wrap:wrap;gap:4px 20px}
-:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.err{color:#ff8a80}
-@media (max-width:760px){.bodies,.hood .in{grid-template-columns:minmax(0,1fr)}dl.wxs{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}main{gap:48px}}
-@media (min-width:761px){.hud{padding-bottom:30px}.clock{margin-top:22px}}
+.hood .in{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:32px;margin-top:16px}
+.hood h3{font:500 11px/1.3 var(--sans);letter-spacing:.14em;text-transform:uppercase;margin:0 0 8px}
+.hood p{color:var(--muted);font-size:14px;margin:0 0 14px}
+.hood pre{margin:0;border:1px solid var(--line);border-radius:2px;padding:14px 16px;overflow-x:auto;font:12px/1.7 var(--mono);color:var(--ink)}
+footer.tel{border-top:1px solid var(--line);padding-top:14px;padding-bottom:max(14px,env(safe-area-inset-bottom));display:flex;flex-wrap:wrap;gap:6px 24px;font:11.5px/1.5 var(--mono);color:var(--muted)}
+footer.tel i{font:500 10px/1 var(--sans);font-style:normal;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin-right:8px}
+:focus-visible{outline:1px solid var(--accent);outline-offset:3px}
+.err{color:var(--alert)}
+@media (max-width:760px){.bodies,.hood .in{grid-template-columns:minmax(0,1fr)}.wxc dl.cells{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+.wxc dl.cells>div:nth-child(n+3){border-top:1px solid var(--line)}.wxc dl.cells>div:nth-child(3){border-left:0}}
+@media (min-width:900px){.blk{grid-template-columns:200px minmax(0,1fr);gap:32px}.blk>h2{padding-top:3px}.hud{padding-bottom:26px}.hud{padding-top:max(22px,env(safe-area-inset-top))}}
 </style>
 </head><body>
 <section class="sky" id="sky" aria-label="Live panorama of the sky">
@@ -247,34 +307,41 @@ footer{font-size:12px;color:var(--faint);display:flex;flex-wrap:wrap;gap:4px 20p
   <div class="hud gut">
     <div class="top" id="top">
       <div style="min-width:0">
-        <div class="brand">ephem</div>
+        <div class="brand">EPHEM<span class="live" id="live" role="status"><i></i><span id="liveT">Acquiring</span></span></div>
         <h1 id="place"></h1>
       </div>
       <div class="now">
+        <span class="lbl">Local time</span>
         <div class="clock" id="clock">--:--</div>
         <div class="ctl"><span id="hint">Drag to look around</span><button type="button" id="recenter" hidden>Recenter</button></div>
       </div>
     </div>
     <div class="bottom" id="bottom">
       <p class="lede" id="lede">Finding the Sun and the Moon…</p>
-      <p class="next" id="next">&nbsp;</p>
+      <p class="next"><span class="lbl">Next</span><span id="next">&nbsp;</span></p>
     </div>
   </div>
 </section>
 <main class="gut">
-  <section class="bodies" id="bodies" aria-label="Sun and Moon"></section>
-  <section class="day">
-    <h2 id="dayTitle">Today</h2>
-    <p class="sub">The sky's colour at the horizon, hour by hour.</p>
-    <div class="strip" id="strip"></div>
-    <div class="evs" id="evs"></div>
-    <div class="row">
-      <button class="btn" type="button" id="locate">Use my exact location</button>
-      <button class="btn" type="button" id="share">Copy link</button>
-      <span class="note" id="locnote"></span>
+  <section class="blk">
+    <h2>Ephemeris</h2>
+    <div class="bodies" id="bodies" aria-label="Sun and Moon"></div>
+  </section>
+  <section class="blk day">
+    <h2>Day</h2>
+    <div>
+      <p class="big" id="dayTitle">Today</p>
+      <p class="sub">The sky's colour at the horizon, hour by hour.</p>
+      <div class="strip" id="strip"></div>
+      <div class="evs" id="evs"></div>
+      <div class="row">
+        <button class="btn" type="button" id="locate">Use my exact location</button>
+        <button class="btn" type="button" id="share">Copy link</button>
+        <span class="note" id="locnote"></span>
+      </div>
     </div>
   </section>
-  <section class="wx" aria-live="polite">
+  <section class="blk wx" aria-live="polite">
     <h2>Weather</h2>
     <div class="wxc" id="wx"><span class="note">Finding the nearest station…</span></div>
   </section>
@@ -294,7 +361,7 @@ footer{font-size:12px;color:var(--faint);display:flex;flex-wrap:wrap;gap:4px 20p
       </div>
     </div>
   </details>
-  <footer id="foot"></footer>
+  <footer class="tel" id="foot"></footer>
 </main>
 <script>const LOC = ${json(v)};</script>
 <script>
@@ -388,8 +455,8 @@ function drawMoon(x, y, r, m) {
   var chi = (m.phase.brightLimbAngle - parallactic(altOf(m), m.azimuth, m.declination, loc.lat)) * D2R; // bright limb from the zenith, toward east
   var rot = Math.atan2(-Math.cos(chi), -Math.sin(chi));
   ctx.save(); ctx.translate(x, y);
-  var g = ctx.createRadialGradient(0, 0, r, 0, 0, r * 4.5); g.addColorStop(0, "rgba(217,227,255," + (0.10 + 0.22 * k) + ")"); g.addColorStop(1, "rgba(217,227,255,0)");
-  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, r * 4.5, 0, 2 * Math.PI); ctx.fill();
+  var g = ctx.createRadialGradient(0, 0, r, 0, 0, r * 3); g.addColorStop(0, "rgba(217,227,255," + (0.05 + 0.12 * k) + ")"); g.addColorStop(1, "rgba(217,227,255,0)");
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, r * 3, 0, 2 * Math.PI); ctx.fill();
   ctx.rotate(rot);
   ctx.beginPath(); ctx.arc(0, 0, r, 0, 2 * Math.PI); ctx.fillStyle = "rgba(60,70,100,.55)"; ctx.fill();
   ctx.beginPath(); ctx.arc(0, 0, r, -Math.PI / 2, Math.PI / 2, false);
@@ -398,17 +465,27 @@ function drawMoon(x, y, r, m) {
   ctx.restore();
 }
 function drawSun(x, y, r, alt) {
-  var g = ctx.createRadialGradient(x, y, r * 0.6, x, y, r * 6);
-  g.addColorStop(0, "rgba(255,214,140,.55)"); g.addColorStop(1, "rgba(255,214,140,0)");
-  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 6, 0, 2 * Math.PI); ctx.fill();
+  var g = ctx.createRadialGradient(x, y, r * 0.6, x, y, r * 4);
+  g.addColorStop(0, "rgba(255,214,140,.38)"); g.addColorStop(1, "rgba(255,214,140,0)");
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 4, 0, 2 * Math.PI); ctx.fill();
   ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.fillStyle = alt > 6 ? "#fff3d6" : "#ffc46b"; ctx.fill();
 }
-var FONT = "500 13px 'IBM Plex Sans', system-ui, sans-serif", SMALL = "400 11px 'IBM Plex Mono', ui-monospace, monospace";
-function textBox(text, font) { ctx.font = font; return { w: Math.ceil(ctx.measureText(text).width) + 2, h: font === SMALL ? 13 : 16 }; }
+var FONT = "600 11px 'Helvetica Neue', Helvetica, -apple-system, system-ui, sans-serif", SMALL = "400 10px ui-monospace, 'SF Mono', Menlo, monospace";
+function track(font) { if ("letterSpacing" in ctx) ctx.letterSpacing = font === FONT ? "1.6px" : "0.5px"; }
+function textBox(text, font) { ctx.font = font; track(font); return { w: Math.ceil(ctx.measureText(text).width) + 2, h: font === SMALL ? 13 : 16 }; }
 function drawText(text, r, font, color) { // r: top-left rect
-  ctx.font = font; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+  ctx.font = font; track(font); ctx.textAlign = "left"; ctx.textBaseline = "middle";
   ctx.save(); ctx.shadowColor = "rgba(4,6,13,.55)"; ctx.shadowBlur = 6;
   ctx.fillStyle = color; ctx.fillText(text, r.x + 1, r.y + r.h / 2); ctx.restore();
+}
+// An instrument reticle: a hairline ring RET px outside the disc, with four short ticks.
+var RET = 6;
+function reticle(x, y, r, color) {
+  var R = r + RET;
+  ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.globalAlpha = 0.55;
+  ctx.beginPath(); ctx.arc(x, y, R, 0, 2 * Math.PI); ctx.stroke();
+  [[0, -1], [1, 0], [0, 1], [-1, 0]].forEach(function (d) { ctx.beginPath(); ctx.moveTo(x + d[0] * R, y + d[1] * R); ctx.lineTo(x + d[0] * (R + 4), y + d[1] * (R + 4)); ctx.stroke(); });
+  ctx.restore();
 }
 function path(pts, key, color, g, nowMs, out) {
   ctx.save(); ctx.beginPath(); ctx.rect(0, g.top, W, g.hy - g.top); ctx.clip();
@@ -421,7 +498,7 @@ function path(pts, key, color, g, nowMs, out) {
       if (prev && Math.abs(x - prev[0]) < W / 2) { ctx.lineTo(x, y); out.push([prev[0], prev[1], x, y]); } else ctx.moveTo(x, y);
       prev = [x, y];
     });
-    ctx.strokeStyle = color; ctx.globalAlpha = pass ? 0.55 : 0.22; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.strokeStyle = color; ctx.globalAlpha = pass ? 0.6 : 0.22; ctx.lineWidth = 1.25; ctx.setLineDash(pass ? [] : [3, 4]); ctx.stroke(); ctx.setLineDash([]);
   }
   ctx.restore(); ctx.globalAlpha = 1;
 }
@@ -437,26 +514,27 @@ function draw() {
     var rg = ctx.createRadialGradient(gx, hy, 0, gx, hy, Math.max(W, H) * 0.55); rg.addColorStop(0, "rgba(255,170,90," + a + ")"); rg.addColorStop(1, "rgba(255,170,90,0)");
     ctx.fillStyle = rg; ctx.fillRect(0, 0, W, hy);
   }
-  // altitude rings: two faint lines, one small label each at the left edge
-  var fixed = [];
-  ctx.lineWidth = 1; ctx.setLineDash([2, 6]); ctx.strokeStyle = "rgba(255,255,255,.12)";
+  // the grid: altitude rings at 30 and 60 degrees and verticals at the eight compass points, all hairlines.
+  // Ring labels are placed further down, once the path lines are known, so that no line crosses them.
+  var fixed = [], rings = [];
+  ctx.lineWidth = 1; ctx.strokeStyle = "rgba(255,255,255,.08)";
   [30, 60].forEach(function (alt) {
-    var y = Y(alt, g); if (y < g.top + 8) return;
-    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
-    var t = alt + "\\u00b0", b = textBox(t, SMALL); fixed.push({ id: "alt" + alt, t: t, x: 14, y: y - b.h - 3, w: b.w, h: b.h, font: SMALL, color: "rgba(255,255,255,.4)", text: true });
+    var y = Math.round(Y(alt, g)) + 0.5; if (y < g.top + 8) return;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); rings.push({ alt: alt, y: y });
   });
-  ctx.setLineDash([]);
+  ctx.strokeStyle = "rgba(255,255,255,.045)";
+  for (var vz = 0; vz < 360; vz += 45) { var vx = Math.round(X(vz, g)) + 0.5; if (vx < 0 || vx > W) continue; ctx.beginPath(); ctx.moveTo(vx, g.top); ctx.lineTo(vx, hy); ctx.stroke(); }
   // ground and compass: ticks every 15°, names at the eight points
-  var gg = ctx.createLinearGradient(0, hy, 0, H); gg.addColorStop(0, "#0c1020"); gg.addColorStop(1, "#070a14");
+  var gg = ctx.createLinearGradient(0, hy, 0, H); gg.addColorStop(0, "#090c13"); gg.addColorStop(1, "#05070b");
   ctx.fillStyle = gg; ctx.fillRect(0, hy, W, H - hy);
-  ctx.strokeStyle = "rgba(255,255,255,.5)"; ctx.beginPath(); ctx.moveTo(0, hy + 0.5); ctx.lineTo(W, hy + 0.5); ctx.stroke();
+  ctx.strokeStyle = "rgba(255,255,255,.42)"; ctx.beginPath(); ctx.moveTo(0, hy + 0.5); ctx.lineTo(W, hy + 0.5); ctx.stroke();
   var ticks = [];
   for (var az = 0; az < 360; az += 15) {
     var x = X(az, g); if (x < -20 || x > W + 20) continue;
     var major = az % 45 === 0, len = major ? 8 : 4;
     ctx.strokeStyle = "rgba(255,255,255," + (major ? 0.55 : 0.22) + ")"; ctx.beginPath(); ctx.moveTo(x, hy); ctx.lineTo(x, hy + len); ctx.stroke();
     ticks.push({ id: "tick" + az, x: x - 1, y: hy, w: 2, h: len });
-    if (major && x - 14 > 0 && x + 14 < W) { var t2 = compass(az), b2 = textBox(t2, SMALL); fixed.push({ id: "cmp" + t2, t: t2, x: x - b2.w / 2, y: hy + 14, w: b2.w, h: b2.h, font: SMALL, color: "rgba(255,255,255,.72)", text: true }); }
+    if (major && x - 14 > 0 && x + 14 < W) { var t2 = compass(az), b2 = textBox(t2, SMALL); fixed.push({ id: "cmp" + t2, t: t2, x: x - b2.w / 2, y: hy + 14, w: b2.w, h: b2.h, font: SMALL, color: "rgba(255,255,255,.66)", text: true }); }
   }
   var segs = [];
   if (S.track.length) {
@@ -468,22 +546,31 @@ function draw() {
   if (p) {
     var r = Math.max(10, Math.min(16, W / 80));
     [["Sun", p.sun], ["Moon", p.moon]].forEach(function (o) {
-      var b = o[1], bx = X(b.azimuth, g), by = skyY(b, g.hy, g.k), box = textBox(o[0], FONT);
+      var b = o[1], name = o[0].toUpperCase(), bx = X(b.azimuth, g), by = skyY(b, g.hy, g.k), box = textBox(name, FONT), rr = r + RET + 4;
       if (isSet(b, g.k, r)) return; // fully set: the sentence says so
       if (bx < -r || bx > W + r) { // off to one side: a name and an arrow at that edge, at the body's height
-        var left = bx < 0, t = left ? "\\u2190 " + o[0] : o[0] + " \\u2192", eb = textBox(t, FONT);
+        var left = bx < 0, t = left ? "\\u2190 " + name : name + " \\u2192", eb = textBox(t, FONT);
         items.push({ id: o[0] + "-edge", t: t, x: left ? 12 : W - 12, y: Math.max(g.top + eb.h, Math.min(hy - eb.h, by)), w: eb.w, h: eb.h, edge: left ? "left" : "right", color: colors[o[0]] });
         return;
       }
       ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, hy); ctx.clip(); // set behind the horizon
       if (o[0] === "Sun") drawSun(bx, by, r, altOf(b)); else drawMoon(bx, by, r, b);
+      reticle(bx, by, r, colors[o[0]]);
       ctx.restore();
-      var top = by - r, bottom = Math.min(hy, by + r);
-      if (bottom > top) discs.push({ id: o[0] + "-disc", x: bx - r, y: top, w: 2 * r, h: bottom - top });
-      items.push({ id: o[0], t: o[0], x: bx, y: by, r: r, w: box.w, h: box.h, color: colors[o[0]] });
+      var top = by - rr, bottom = Math.min(hy, by + rr);
+      if (bottom > top) discs.push({ id: o[0] + "-disc", x: bx - rr, y: top, w: 2 * rr, h: bottom - top });
+      items.push({ id: o[0], t: name, x: bx, y: by, r: rr - 4, w: box.w, h: box.h, color: colors[o[0]] });
     });
     if (p.tweening) dirty = true;
   }
+  // ring labels: the first spot along each ring that no path line, disc or other ring label touches (dropped if none)
+  var ringRects = [], ringBounds = { x0: 8, y0: g.top, x1: W - 8, y1: hy - 3 };
+  rings.forEach(function (rg) {
+    var t = rg.alt + "\\u00b0", b = textBox(t, SMALL), spot = ringLabelSpot(rg.y, b.w, b.h, ringBounds, segs, discs.concat(ringRects), 3);
+    if (!spot) return;
+    var f = { id: "alt" + rg.alt, t: t, x: spot.x, y: spot.y, w: b.w, h: b.h, font: SMALL, color: "rgba(255,255,255,.5)", text: true };
+    ringRects.push(f); fixed.push(f);
+  });
   var band = { id: "ground", x: -1e4, y: hy - 2, w: 2e4, h: 1e4 };
   // Path lines near a label's anchor become small obstacles too, so a name sits beside its line rather than on it.
   var pathDots = [];
@@ -498,7 +585,9 @@ function draw() {
   shown.forEach(function (f) { drawText(f.t, f, f.font, f.color); });
   placed.forEach(function (pl, i) { drawText(items[i].t, pl, FONT, items[i].color); });
   drawn = discs.concat(ticks, shown, placed.map(function (pl) { return Object.assign({ text: true }, pl); }));
-  window.__sky = { rects: drawn, overlaps: overlaps(drawn), band: { top: g.top, hy: hy, bottom: g.bot } };
+  var ringShown = shown.filter(function (f) { return f.id.indexOf("alt") === 0; });
+  window.__sky = { rects: drawn, overlaps: overlaps(drawn), band: { top: g.top, hy: hy, bottom: g.bot }, segs: segs, rings: ringShown, ringLines: rings,
+    ringHits: ringShown.filter(function (f) { return segs.some(function (sg) { return segHitsRect(sg, f); }); }).map(function (f) { return f.id; }) };
 }
 function frame() { if (dirty) { dirty = false; draw(); } requestAnimationFrame(frame); }
 
@@ -520,16 +609,16 @@ function cardsHtml(p) {
     var a = altOf(b), rising = wrap360(b.azimuth) < 180;
     return (a >= 0 ? (rising ? "Rising" : "Setting") : (rising ? "Below the horizon" : "Set")) + ", " + dirWord(b.azimuth);
   }
-  function nums(b) {
+  function cell(label, value, title) { return '<div><dt' + (title ? ' title="' + title + '"' : "") + '>' + label + '</dt><dd class="num">' + value + '</dd></div>'; }
+  function nums(b, dist) {
     var m = azM(b.azimuth);
-    return '<dl class="nums"><dt>Azimuth</dt><dd class="num"><span>' + azT(b.azimuth) + '</span>' + (m ? '<span>' + m + '</span>' : "") + '</dd>' +
-      '<dt>Altitude</dt><dd class="num">' + d2(b.altitude) + '</dd><dt title="Altitude with atmospheric refraction">Apparent alt.</dt><dd class="num">' + (b.apparentAltitude == null ? "below horizon" : d2(b.apparentAltitude)) + '</dd></dl>';
+    return '<dl class="cells">' + cell("Azimuth", '<span>' + azT(b.azimuth) + '</span>' + (m ? '<span>' + m + '</span>' : "")) + cell("Altitude", d2(b.altitude)) +
+      cell("Apparent alt.", b.apparentAltitude == null ? "below horizon" : d2(b.apparentAltitude), "Altitude with atmospheric refraction") + cell("Distance", dist) + '</dl>';
   }
   var s = p.sun, m = p.moon, ph = m.phase;
-  return '<article class="card sunc"><header><h3>Sun</h3><span class="state">' + state(s) + '</span></header>' + nums(s) +
-    '<p class="foot"><span class="tn">' + (s.distanceKm / AU).toFixed(5) + '</span> au away</p></article>' +
-    '<article class="card moonc"><header><h3>Moon</h3><span class="state">' + state(m) + '</span></header>' + nums(m) +
-    '<p class="foot">' + ph.name.charAt(0).toUpperCase() + ph.name.slice(1) + ', <span class="tn">' + (ph.illuminatedFraction * 100).toFixed(1) + '%</span> lit, <span class="tn">' + Math.round(m.distanceKm).toLocaleString("en-US") + '</span> km away</p></article>';
+  return '<article class="card sunc"><header><h3>Sun</h3><span class="state">' + state(s) + '</span></header>' + nums(s, (s.distanceKm / AU).toFixed(5) + " au") + '</article>' +
+    '<article class="card moonc"><header><h3>Moon</h3><span class="state">' + state(m) + '</span></header>' + nums(m, Math.round(m.distanceKm).toLocaleString("en-US") + " km") +
+    '<p class="foot">' + ph.name.charAt(0).toUpperCase() + ph.name.slice(1) + ', <span class="tn">' + (ph.illuminatedFraction * 100).toFixed(1) + '%</span> lit</p></article>';
 }
 function setPos(p) {
   S.from = S.to ? interp() : null; S.to = p; S.tween0 = performance.now();
@@ -553,6 +642,8 @@ var lastNext = "";
 function tick() {
   var now = Date.now();
   $("clock").textContent = hm(now);
+  var age = S.posAt ? (now - S.posAt) / 1000 : null, st = S.posErr ? "alert" : age == null ? "" : age < 15 ? "ok" : "caution";
+  $("live").className = "live " + st; $("liveT").textContent = st === "alert" ? "No signal" : st === "ok" ? "Live" : st === "caution" ? "Delayed" : "Acquiring";
   var up = upcoming(now), html = lastNext;
   if (up.length) {
     var e = up[0], t = Date.parse(e.time);
@@ -574,15 +665,15 @@ function drawStrip() {
   var defs = el("defs", {}), lg = el("linearGradient", { id: "dayg", x1: "0", x2: "1", y1: "0", y2: "0" });
   S.track.forEach(function (p) { var f = (Date.parse(p.time.utc) - s) / span; if (f >= 0 && f <= 1) lg.appendChild(el("stop", { offset: f.toFixed(4), "stop-color": skyAt(altOf(p.sun))[1] })); });
   defs.appendChild(lg); svg.appendChild(defs);
-  svg.appendChild(el("rect", { x: 0, y: y0, width: w, height: bh, rx: 8, fill: S.track.length ? "url(#dayg)" : "#111628" }));
-  for (var hh = 0; hh <= 24; hh += w < 600 ? 6 : 3) { var x = Math.min(w, hh * 3600e3 / span * w); svg.appendChild(el("text", { x: x, y: y0 + bh + 20, "text-anchor": hh === 0 ? "start" : x >= w - 1 ? "end" : "middle", "font-size": 11 }, String(hh).padStart(2, "0") + ":00")); }
+  svg.appendChild(el("rect", { x: 0, y: y0, width: w, height: bh, rx: 2, fill: S.track.length ? "url(#dayg)" : "#111628" }));
+  for (var hh = 0; hh <= 24; hh += w < 600 ? 6 : 3) { var x = Math.min(w, hh * 3600e3 / span * w); svg.appendChild(el("text", { x: x, y: y0 + bh + 20, "text-anchor": hh === 0 ? "start" : x >= w - 1 ? "end" : "middle", "font-size": 10.5 }, String(hh).padStart(2, "0") + ":00")); }
   S.day.events.forEach(function (e) {
     if (!(e.kind === "rise" || e.kind === "set" || e.kind === "transit")) return;
-    var x = (Date.parse(e.time) - s) / span * w, col = e.body === "sun" ? "#ffc361" : "#d9e3ff";
-    svg.appendChild(el("line", { x1: x, x2: x, y1: y0 - 6, y2: y0 + bh, stroke: col, "stroke-width": 1.5, "stroke-opacity": 0.9 }));
-    svg.appendChild(el("circle", { cx: x, cy: y0 - 8, r: 2.5, fill: col }));
+    var x = (Date.parse(e.time) - s) / span * w, col = e.body === "sun" ? "#ffc361" : "#d9e3ff", cls = e.body === "sun" ? "es" : "em";
+    svg.appendChild(el("line", { x1: x, x2: x, y1: y0 - 6, y2: y0 + bh, stroke: col, "stroke-width": 1, "stroke-opacity": 0.9, class: cls }));
+    svg.appendChild(el("circle", { cx: x, cy: y0 - 8, r: 2.5, fill: col, class: cls }));
   });
-  stripSvg = { svg: svg, now: el("line", { y1: y0 - 3, y2: y0 + bh + 3, stroke: "#fff", "stroke-width": 2.5 }), s: s, span: span, w: w };
+  stripSvg = { svg: svg, now: el("line", { y1: y0 - 3, y2: y0 + bh + 3, stroke: "#fff", "stroke-width": 2, class: "nowl" }), s: s, span: span, w: w };
   svg.appendChild(stripSvg.now); box.appendChild(svg); drawStripNow();
 }
 function drawStripNow() { if (!stripSvg) return; var f = (Date.now() - stripSvg.s) / stripSvg.span; stripSvg.now.setAttribute("x1", f * stripSvg.w); stripSvg.now.setAttribute("x2", f * stripSvg.w); stripSvg.now.style.display = f >= 0 && f <= 1 ? "" : "none"; }
@@ -599,7 +690,10 @@ function drawEvents() {
 
 // ---------- loading ----------
 function err(e) { S.err = e.message || String(e); var s = document.createElement("span"); s.className = "err"; s.textContent = "The API answered with an error: " + S.err; $("foot").replaceChildren(s); }
-function loadPos() { return api("/v1/position", Object.assign(q(), { time: new Date().toISOString() })).then(setPos).catch(err); }
+function loadPos() {
+  return api("/v1/position", Object.assign(q(), { time: new Date().toISOString() })).then(function (p) { S.posAt = Date.now(); S.posErr = null; setPos(p); })
+    .catch(function (e) { S.posErr = e; err(e); });
+}
 function loadDay() {
   var today = localDate(Date.now());
   S.day = { date: today, events: [], start: new Date().toISOString(), end: new Date().toISOString(), loading: true };
@@ -638,9 +732,9 @@ function drawWx() {
   var vis = s.visibility.statuteMiles == null ? "\\u2014" : '<span class="tn">' + s.visibility.statuteMiles + (s.visibility.orMore ? "+" : "") + "</span> mi";
   box.innerHTML = '<div class="wxtop"><span class="temp tn">' + (s.temperatureC == null ? "\\u2014" : s.temperatureC.toFixed(1) + "\\u00b0C") + '</span>' +
     '<div><div class="cond">' + esc(condition(s)) + '</div><div class="wind tn">' + esc(windText(s.wind, decl)) + '</div></div></div>' +
-    '<dl class="wxs"><div><dt>Dew point</dt><dd>' + num(s.dewpointC, 1, "\\u00b0C") + '</dd></div><div><dt>Visibility</dt><dd>' + vis + '</dd></div>' +
-    '<div><dt>Pressure</dt><dd>' + (s.altimeterHpa != null ? num(s.altimeterHpa, 1, " hPa") : num(s.altimeterInHg, 2, " inHg")) + '</dd></div><div><dt>Clouds</dt><dd>' + clouds(s) + '</dd></div></dl>' +
-    '<p class="station">' + esc(s.stationId) + ', <span class="tn">' + s.distanceKm.toFixed(2) + '</span> km away at <span class="tn">' + azT(s.bearing.true) + ' \\u00b7 ' + s.bearing.magnetic.toFixed(2) + '\\u00b0 M</span>, <span class="age" id="wxage"></span></p>' +
+    '<dl class="cells"><div><dt>Dew point</dt><dd class="num">' + num(s.dewpointC, 1, "\\u00b0C") + '</dd></div><div><dt>Visibility</dt><dd class="num">' + vis + '</dd></div>' +
+    '<div><dt>Pressure</dt><dd class="num">' + (s.altimeterHpa != null ? num(s.altimeterHpa, 1, " hPa") : num(s.altimeterInHg, 2, " inHg")) + '</dd></div><div><dt>Clouds</dt><dd>' + clouds(s) + '</dd></div></dl>' +
+    '<p class="station">' + esc(s.stationId) + ' \\u00b7 ' + s.distanceKm.toFixed(2) + ' km \\u00b7 bearing ' + azT(s.bearing.true) + ' \\u00b7 ' + s.bearing.magnetic.toFixed(2) + '\\u00b0 M<br><span class="age" id="wxage"></span></p>' +
     '<details class="raw" id="rawd"' + (S.rawOpen ? " open" : "") + '><summary>Raw METAR</summary><pre>' + raws + '</pre></details>';
   $("rawd").addEventListener("toggle", function (e) { S.rawOpen = e.target.open; });
   wxAges();
@@ -651,7 +745,7 @@ function loadTrack() {
   for (var t = s; t <= e; t += G) jobs.push(api("/v1/position", Object.assign(q(), { time: new Date(t).toISOString() })));
   return Promise.all(jobs).then(function (rs) { S.track = rs; drawStrip(); dirty = true; });
 }
-function pad(k) { return (k + "                    ").slice(0, 18); }
+function pad(k) { return (k.toUpperCase() + "                    ").slice(0, 18); }
 function diag() {
   var out = [];
   if (S.last) {
@@ -670,8 +764,12 @@ function diag() {
     pad("declination") + (S.decl == null ? "\\u2014" : d2(Math.abs(S.decl)) + (S.decl < 0 ? " W" : " E") + " (WMM2025)"));
   $("diag").innerHTML = out.join("\\n");
   var prov = S.last && S.last.prov;
-  if (!S.err) $("foot").innerHTML = "<span>ephem " + esc((prov && prov.version) || "") + "</span><span>" + esc((prov && prov.ephemeris) || "JPL DE440") + "</span><span>" +
-    (loc.source === "cloudflare" ? "Location approximate, from Cloudflare" : loc.source === "device" ? "Location from your device" : loc.source === "query" ? "Location from the link" : "Default location") + "</span>";
+  // the telemetry bar: provenance stays on screen, the detail lives in Under the hood
+  function tel(k, v) { return "<span><i>" + k + "</i>" + v + "</span>"; }
+  var dg = prov && prov.diagnostics, c1 = dg && dg.cache;
+  if (!S.err) $("foot").innerHTML = tel("ephem", esc((prov && prov.version) || "")) + tel("Ephemeris", esc((prov && prov.ephemeris) || "JPL DE440")) +
+    (S.last ? tel("Round trip", S.last.ms.toFixed(1) + " ms") : "") + (c1 ? tel("Block cache", esc(["L1 " + c1.l1].concat(Object.keys(c1).filter(function (k) { return k.indexOf("blocks_") === 0; }).map(function (k) { return k.slice(7) + " " + c1[k]; })).join(" \\u00b7 "))) : "") + tel("Edge", esc(LOC.colo || "\\u2014")) +
+    tel("Location", loc.source === "cloudflare" ? "approximate, from Cloudflare" : loc.source === "device" ? "from your device" : loc.source === "query" ? "from the link" : "default");
 }
 function header() {
   $("place").textContent = loc.city;

@@ -61,8 +61,10 @@ interface Core {
   altOf(b: object): number; skyY(b: object, hy: number, k: number): number; isSet(b: object, k: number, r: number): boolean
   placeLabels(items: object[], obstacles: Rect[], bounds: { x0: number; y0: number; x1: number; y1: number }, soft?: Rect[]): Rect[]
   overlapArea(a: Rect, b: Rect): number
+  segHitsRect(s: number[], r: Rect): boolean
+  ringLabelSpot(y: number, w: number, h: number, bounds: { x0: number; y0: number; x1: number; y1: number }, segs: number[][], obstacles: Rect[], pad?: number): Rect | null
 }
-const core = new Function(CORE_JS + "; return { countdown, lede, condition, windText, placeLabels, overlapArea, altOf, skyY, isSet }")() as Core
+const core = new Function(CORE_JS + "; return { countdown, lede, condition, windText, placeLabels, overlapArea, altOf, skyY, isSet, segHitsRect, ringLabelSpot }")() as Core
 
 const moon = (alt: number, az: number) => ({ apparentAltitude: alt, azimuth: az, phase: { name: "waning gibbous", illuminatedFraction: 0.85 } })
 describe("home: apparentAltitude null below the horizon (API 2026-10-29)", () => {
@@ -185,5 +187,52 @@ describe("home: sky labels never collide", () => {
       else { obstacles.push(disc("Moon-disc", mx, my)); items.push({ id: "Moon", x: mx, y: my, r, w: 38, h: 16 }) }
       check(core.placeLabels(items, obstacles, bounds), obstacles)
     }), { numRuns: 400, seed: 20261029 })
+  })
+})
+
+// Altitude-ring labels used to sit at a fixed spot (x = 14, above the line) and were not part of the layout, so a path could
+// run straight through "30°" (Ivar's iPhone, Islip NY, 2026-10-29). Now each takes the first spot along its ring no path touches.
+describe("home: altitude-ring labels stay off the path lines", () => {
+  const W = 390, top = 88, hy = 470, bounds = { x0: 8, y0: top, x1: W - 8, y1: hy - 3 }, w = 22, h = 13, ring = 364.5
+  const grown = (r: Rect, pad = 3): Rect => ({ x: r.x - pad, y: r.y - pad, w: r.w + 2 * pad, h: r.h + 2 * pad })
+  it("segment/rect intersection", () => {
+    const r = { x: 10, y: 10, w: 10, h: 10 }
+    expect(core.segHitsRect([0, 0, 30, 30], r)).toBe(true)      // through it
+    expect(core.segHitsRect([12, 12, 14, 14], r)).toBe(true)    // inside it
+    expect(core.segHitsRect([0, 25, 30, 25], r)).toBe(false)    // passes below
+    expect(core.segHitsRect([0, 0, 9, 30], r)).toBe(false)      // passes to the left
+    expect(core.segHitsRect([15, 0, 15, 5], r)).toBe(false)     // stops short
+  })
+  it("the Islip case: the Moon's line crosses the left-edge spot, so the label moves and no segment touches it", () => {
+    const moon = [[0, 400, 20, 370], [20, 370, 40, 340], [40, 340, 60, 310]]   // rising through x 14..36 at the 30° ring
+    const old = { x: 14, y: ring - h - 3, w, h }
+    expect(moon.some(s => core.segHitsRect(s, old))).toBe(true)                // the old fixed spot collided
+    const spot = core.ringLabelSpot(ring, w, h, bounds, moon, [])!
+    expect(spot).not.toBeNull()
+    for (const s of moon) expect(core.segHitsRect(s, grown(spot))).toBe(false)
+  })
+  it("prefers the left edge when it is clear, and drops the label when the whole ring is crossed", () => {
+    expect(core.ringLabelSpot(ring, w, h, bounds, [], [])).toEqual({ x: 14, y: ring - h - 3, w, h })
+    const zigzag: number[][] = []
+    for (let x = 0; x < W; x += 6) zigzag.push([x, ring - 30, x + 3, ring + 30], [x + 3, ring + 30, x + 6, ring - 30])
+    expect(core.ringLabelSpot(ring, w, h, bounds, zigzag, [])).toBeNull()
+  })
+  it("any set of path lines and discs: a returned spot touches none of them and stays in the sky", () => {
+    // integers, not fc.double: double generation leans hard on the range ends, which almost never lands a line on a label
+    const seg = fc.tuple(fc.integer({ min: -20, max: W + 20 }), fc.integer({ min: top, max: hy }), fc.integer({ min: -60, max: 60 }), fc.integer({ min: -60, max: 60 }))
+      .map(([x, y, dx, dy]) => [x, y, x + dx, y + dy])
+    const disc = fc.tuple(fc.integer({ min: 0, max: W }), fc.integer({ min: top, max: hy })).map(([x, y]) => ({ x: x - 20, y: y - 20, w: 40, h: 40 }))
+    fc.assert(fc.property(fc.integer({ min: top + 20, max: hy - 20 }), fc.array(seg, { maxLength: 60 }), fc.array(disc, { maxLength: 2 }), (y, segs, discs) => {
+      const spot = core.ringLabelSpot(y, w, h, bounds, segs, discs)
+      if (!spot) return
+      for (const s of segs) expect(core.segHitsRect(s, grown(spot))).toBe(false)
+      for (const d of discs) expect(core.overlapArea(grown(spot), d)).toBe(0)
+      expect(spot.y).toBeGreaterThanOrEqual(top); expect(spot.y + h).toBeLessThanOrEqual(hy - 3)
+      expect(spot.x).toBeGreaterThanOrEqual(bounds.x0); expect(spot.x + w).toBeLessThanOrEqual(bounds.x1)
+    }), { numRuns: 400, seed: 20261029 })
+  })
+  it("the page loads no web fonts or external stylesheets (system stacks only)", () => {
+    const html = page(V)
+    expect(html).not.toMatch(/<link[^>]+stylesheet/); expect(html).not.toContain("fonts.googleapis")
   })
 })
