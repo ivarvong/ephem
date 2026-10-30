@@ -4,11 +4,11 @@ How to see what prod ephem is doing: traces, per-version CPU numbers, and CPU/he
 run against prod. **Keep this file current:** when a command, flag, span, attribute or gotcha changes, update it in the
 same change, and add the date to "Last verified".
 
-Last verified: 2026-10-29 (version 4e7c34ee; crossing span + MCP probe b49a8a02; MCP section 68c58ae5; Caching section c72a360c).
+Last verified: 2026-10-30 (version 4e7c34ee; crossing span + MCP probe b49a8a02; MCP section 68c58ae5; Caching section c72a360c; cold-split, LOAD=track and isolate warmth fbdb337e).
 
 ## The loop
 
-instrument → gate green → deploy (`cd packages/worker && cf deploy --message "…"`) → smoke → drive uncached load →
+instrument → gate green → commit → deploy (`scripts/deploy.sh main "…"`: gate in a clean worktree, deploy, smoke, MCP probe) → drive uncached load →
 **measure by exact version** (`cpu-by-version.py`, `trace.py`, `profile.sh`) → fix the biggest measured bucket → repeat.
 Every number you report carries its version id (and trace id or profile file). Log runs in
 `~/code/lab_notebook/ephem-deploy-2026-10-28.md`.
@@ -336,6 +336,17 @@ That's why `profile.sh` starts load 5 s before the capture and keeps it running 
 `(garbage collector)`, `(program)`, `(idle)`. Native builtins appear under odd names: `set platform` turned out to be
 `Object.defineProperty` setting `fn.name`.
 
+**Api profiles rarely land.** The capture samples one isolate near you. Cached-entrypoint MISSes (Api) run at tier
+colos (IAD, EWR, ATL, MIA, ORD for EWR traffic), spread over many isolates that each serve a handful of requests, so a
+capture usually gets a front-door isolate (e4d16979 under `LOAD=track`: 299 ms sampled, no `track` frames) and at best one
+Api isolate's few requests (fbdb337e: 20 ms sampled, `sky.trackRequest` 55%). For Api CPU, split invocation CPU by
+isolate warmth (`cold-split.py`) and profile the first requests of a fresh Node process for the shape (below).
+
+**Fresh-isolate analog in Node.** One Node process = one isolate. Profile exactly the first K requests after import
+with `node:inspector/promises` (`Profiler.setSamplingInterval` 50 µs, `Profiler.start` right before the first request,
+`Profiler.stop` right after); prod's fresh-isolate CPU ran ~4× the Node number (47 vs 12 ms, fbdb337e). A steady-state
+Node bench (hundreds of requests in one process) measures a fully optimized JIT that prod Api isolates almost never reach.
+
 **Load shape matters.** Two profiles are comparable only under the same load. For A/B numbers use `cpu-by-version.py`
 on the same `load.sh` workload, not totals from two profiles.
 
@@ -361,7 +372,9 @@ column.
 | 2026-10-29 | 80f5b087 | METAR baseline (Cache API L2): 7 344 /v1/weather in 21 min, l1 99.4% (wall p50/p99 1/9 ms), l1-stale 0.5% (9/324: the waitUntil refresh is billed to the triggering invocation), l2-fresh 3 (75/82, parse 45–48 ms cpu); 100% served without waiting on upstream. | baseline for the Workers Caching rewrite |
 | 2026-10-29 | 80f5b087 → c72a360c | Cache API → Workers Caching (uncached front door, cached Api / BlockStore / MetarFeed). 50 identical cold requests: 14–21 computes → 1 Api invocation. Warm deterministic repeats: server 4–5 ms. Misses cost more (cold blocks, tier colo): day miss server p50 13 → 190 ms; max-age=0 live routes +35 ms. | V2: live in front door, weather SWR, crossVersionCache |
 | 2026-10-30 | 84bb5548 → e4d16979 | Homepage fired 111 /v1 calls per load (106 timed /v1/position, one per 20-min grid point; they queued: p50 85–204 ms each for 27–34 ms of server work). Now one `/v1/track` (217 samples, 11.3 KB on the wire) + live position + today's day + weather (+ tomorrow's day only after today's last event). Track MISS Api CPU p50 12 / p90 60 / p99 109 ms (n=131), less than one /v1/day MISS (46/157); front-door live probe p50 33 ms during 120 cold track MISSes vs 42 alone. | paths drawn, 390×844 mobile, median: cold 761 → 438 ms, warm 96 → 73; Fast 3G + 4× CPU cold 3877 → 1620, warm 800 → 748 (scratchpad xhr/measure.mjs) |
-| 2026-10-29 | 4e7c34ee | `/v1/day` miss: the Effect `GET` span starts about 10 ms after the runtime `GET` (trace ef493004…). Not yet explained. | open |
+| 2026-10-29 | 4e7c34ee | `/v1/day` miss: the Effect `GET` span starts about 10 ms after the runtime `GET` (trace ef493004…). Not yet explained. | explained 2026-10-30 (fbdb337e row): isolate start-up of a fresh Api isolate |
+| 2026-10-30 | e4d16979 → fbdb337e | **/v1/track Api CPU "5–50× the 1.3 ms bench" is isolate warmth, not the math.** 242 cold-key MISSes (`LOAD=track`, 11:25:30–11:26:30Z): fresh isolates (empty L1; 37/38 of those are `isolate_computes = 1` on fbdb337e) n=42, CPU p50/p90 65/97 ms, 60% of all track CPU, and their Effect `GET` starts 123 ms (p50; p90 176) after the runtime `GET` (isolate start-up, wall; warm: 0); warm isolates p50 9. By isolate computes (fbdb337e, 11:37:55–11:38:40Z, n=240): 1 → p50 42, 2–5 → 11, 6–20 → 7, >20 → 5 ms; Node reaches 0.13 ms only after ~200 requests. Biggest fresh-isolate bucket in Node: the EGM96 grid decode, 6.5 of 18–19 ms (all 260 k nodes, one stream, for 4 nodes). Now 46 bands of 8 rows decoded on demand (≤ 2 per lookup; 2.26 M lookups bit-identical; +8 KB gzip). Blocks: 1 per homepage track, `HIT` 3–8 ms or L1; not a bucket. | fresh-isolate CPU p50/p90 65/97 → 47/84 ms (n 42 → 39, 11:36:55–11:37:40Z); Node first track 18–19 → 12 ms; warm unchanged (9 → 7–10) |
+| 2026-10-30 | e4d16979, fbdb337e | Cold e2e of a homepage track (curl from EWR, new connection, unique lat/lon, joined by cf-ray; scratchpad `track-prof/e2e-*.joined.json`). Fresh Api isolate, median (n=12 / 3): total 295 / 264 ms = TCP+TLS 39 / 42 + client↔edge 37 / 39 + front door 3 / 3 + loopback 206 / 159 [isolate start-up 108 / 95 + Api CPU 60 / 44 + blocks 4 / 5 + cache/tier round trip 25 / 14]. Warm Api isolate (n=18 / 25): 133 / 122 ms, loopback 36 / 31 (CPU 12 / 8, tier 24 / 22). | next: isolate start-up (~100 ms wall per fresh Api isolate; 1 MB bundle, local `cf workers check` 27 ms active) |
 
 ## Gotchas
 
@@ -369,6 +382,7 @@ column.
   2 min of 500s). Every tracing call is now wrapped so it can't fail a request; see `safe()` in `src/trace.ts`.
 - `wrangler.config.ts` (used by cf) spells build options in camelCase (`keepNames`); `keep_names` is rejected.
   `wrangler deploy --dry-run` reads `wrangler.jsonc` instead, so verify bundle changes with `cf deploy --dry-run`.
+- `cold-split.py` / `cpu-by-version.py` right after a load run undercount (196 of 240 Api rows at +60 s, 240 at +5 min): ingest lags; wait a few minutes before the final numbers.
 - Use unique windows or places for load; otherwise Workers Caching answers (`x-ephem-cache: HIT`, no Api invocation at
   all) and you measure the cache, not the code.
 - Workers Caching keys the Api by path + query (sorted by the front door) + `cf.cacheKey`; the host is not in the key, and
