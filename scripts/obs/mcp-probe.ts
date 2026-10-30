@@ -13,9 +13,10 @@ const ARGS = {
   day_events: { lat: 40.7127 + Math.random() / 100, lon: -74.0059, date: day, tz: "America/New_York", height: 320, heightRef: "msl", temperature: -5, pressure: 1025, limb: "upper" },
   crossing: { lat: 40.7484, lon: -73.9857, body: "sun", altitude: -0.927, direction: "set", date: day, tz: "America/New_York", height: 320, heightRef: "msl" },
   alignment: { body: "moon", targetLat: 40.68925, targetLon: -74.0445, targetHeight: 63.4, observerHeight: -30.9, start: "2026-10-28T23:45:00Z", end: "2026-10-29T02:00:00Z", stepSeconds: 1800 },
+  sun_moon_track: { lat: 40.7127, lon: -74.0059, height: -22.6, start: "2026-10-28T00:00:00Z", end: "2026-10-29T00:00:00Z", stepSeconds: 1200 },
   weather_nearest: { lat: 40.7, lon: -74, n: 3 },
 } as const
-const REST_PATH: Record<string, string> = { sun_moon_position: "/v1/position", day_events: "/v1/day", crossing: "/v1/crossing", alignment: "/v1/alignment", weather_nearest: "/v1/weather" }
+const REST_PATH: Record<string, string> = { sun_moon_position: "/v1/position", day_events: "/v1/day", crossing: "/v1/crossing", alignment: "/v1/alignment", sun_moon_track: "/v1/track", weather_nearest: "/v1/weather" }
 
 type Row = { step: string; expect: string; got: string; ok: boolean; ms: number; ray: string }
 const rows: Row[] = []
@@ -36,7 +37,7 @@ const legacy = (step: string, method: string, params?: Record<string, unknown>) 
 const check = (step: string, expect: string, r: { status: number; ms: number; ray: string }, ok: boolean, got: string) => rows.push({ step, expect, got: `${r.status} ${got}`, ok, ms: r.ms, ray: r.ray })
 
 /** Inputs-only part of a response: provenance has cache tiers and timings; weather ages move with the clock. */
-const comparable = (tool: string, x: any) => tool === "weather_nearest" ? JSON.stringify({ s: x?.stations?.map((s: any) => s.raw), o: x?.observer })
+const comparable = (tool: string, x: any) => tool === "weather_nearest" ? JSON.stringify({ s: x?.stations?.map((s: any) => s.raw), o: { ...x?.observer, magneticDeclination: x?.observer?.magneticDeclination?.toFixed(4) } })   // full-precision declination moves ~1e-12° between calls
   : JSON.stringify(x, (k, v) => (k === "provenance" ? undefined : v))
 async function restOf(tool: string) {
   const q = new URLSearchParams(Object.entries(ARGS[tool as keyof typeof ARGS]).map(([k, v]) => [k, String(v)]))
@@ -62,7 +63,7 @@ const notif = await send({ jsonrpc: "2.0", method: "notifications/initialized" }
 check("legacy.notifications/initialized", "202, empty", notif, notif.status === 202 && notif.text === "", `body=${JSON.stringify(notif.text)}`)
 const ltl = await legacy("legacy.tools/list", "tools/list")
 const names: string[] = ltl.json?.result?.tools?.map((t: any) => t.name) ?? []
-check("legacy.tools/list", "5 tools with schemas", ltl, names.length === 5 && ltl.json.result.tools.every((t: any) => t.inputSchema?.type === "object" && t.outputSchema?.type === "object"), names.join(","))
+check("legacy.tools/list", "6 tools with schemas", ltl, names.length === 6 && ltl.json.result.tools.every((t: any) => t.inputSchema?.type === "object" && t.outputSchema?.type === "object"), names.join(","))
 for (const t of names) await toolCall("legacy", t)
 const ping = await legacy("legacy.ping", "ping")
 check("legacy.ping", "result {}", ping, ping.status === 200 && JSON.stringify(ping.json?.result) === "{}", JSON.stringify(ping.json?.result))

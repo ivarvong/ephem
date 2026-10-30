@@ -372,7 +372,7 @@ var D2R = Math.PI / 180, AU = 149597870.7;
 var reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
 var loc = { lat: LOC.lat, lon: LOC.lon, place: LOC.place, city: LOC.city, tz: LOC.tz, source: LOC.source, acc: null };
 var $ = function (id) { return document.getElementById(id); };
-var S = { decl: null, wx: null, wxAt: 0, rawOpen: false, from: null, to: null, tween0: 0, day: null, tomorrow: null, track: [], center: null, userPanned: false, last: null, err: null };
+var S = { decl: null, wx: null, wxAt: 0, rawOpen: false, from: null, to: null, tween0: 0, day: null, tomorrow: null, tomorrowFor: null, track: [], trackDay: null, center: null, userPanned: false, last: null, err: null };
 
 // ---------- API ----------
 function api(path, q, quiet) {
@@ -492,7 +492,7 @@ function path(pts, key, color, g, nowMs, out) {
   for (var pass = 0; pass < 2; pass++) { // pass 0: the past 12 h, faint; pass 1: the next 12 h
     ctx.beginPath(); var prev = null;
     pts.forEach(function (p) {
-      var t = p.time ? Date.parse(p.time.utc) : nowMs;
+      var t = p.t != null ? p.t : nowMs;
       if (pass === 0 ? t > nowMs : t < nowMs) { return; }
       var b = p[key], x = X(b.azimuth, g), y = Y(Math.max(-2, altOf(b)), g);
       if (prev && Math.abs(x - prev[0]) < W / 2) { ctx.lineTo(x, y); out.push([prev[0], prev[1], x, y]); } else ctx.moveTo(x, y);
@@ -538,8 +538,8 @@ function draw() {
   }
   var segs = [];
   if (S.track.length) {
-    var win = S.track.filter(function (x) { return Math.abs(Date.parse(x.time.utc) - nowMs) <= 12 * 3600e3; });
-    if (p) { var at = win.findIndex(function (x) { return Date.parse(x.time.utc) > nowMs; }); win.splice(at < 0 ? win.length : at, 0, p); }
+    var win = S.track.filter(function (x) { return Math.abs(x.t - nowMs) <= 12 * 3600e3; });
+    if (p) { var at = win.findIndex(function (x) { return x.t > nowMs; }); win.splice(at < 0 ? win.length : at, 0, p); }
     path(win, "sun", "#ffc361", g, nowMs, segs); path(win, "moon", "#d9e3ff", g, nowMs, segs);
   }
   var discs = [], items = [], colors = { Sun: "rgba(255,226,170,.96)", Moon: "rgba(232,238,255,.94)" };
@@ -648,9 +648,12 @@ function tick() {
   if (up.length) {
     var e = up[0], t = Date.parse(e.time);
     html = '<b>' + evName(e) + '</b> ' + (localDate(t) !== localDate(now) ? "tomorrow " : "") + 'at <span class="tn">' + hm(t) + '</span>, <span class="tn" style="white-space:nowrap">' + countdown(t - now) + '</span>';
-  } else if (S.day && !S.day.loading) html = "No rise, set or twilight in the next two days.";
+  } else if (S.day && !S.day.loading && S.tomorrowFor === S.day.date) {
+    if (S.tomorrow) html = "No rise, set or twilight in the next two days.";
+  } else if (S.day && !S.day.loading) loadTomorrow();   // today has nothing left: only now is tomorrow's /v1/day needed
   if (html !== lastNext) { lastNext = html; $("next").innerHTML = html; }
   if (S.day && localDate(now) !== S.day.date) loadDay();
+  if (S.trackDay != null && Math.floor(now / 864e5) !== S.trackDay) loadTrack();   // a new UTC day: the next track window
   drawStripNow();
   wxAges();
 }
@@ -663,7 +666,7 @@ function drawStrip() {
   var w = Math.max(300, Math.round(box.clientWidth || 1000)), h = 84, y0 = 16, bh = 36, s = Date.parse(S.day.start), span = Date.parse(S.day.end) - s;
   var svg = el("svg", { viewBox: "0 0 " + w + " " + h, role: "img", "aria-label": "Sky colour and events through the day" });
   var defs = el("defs", {}), lg = el("linearGradient", { id: "dayg", x1: "0", x2: "1", y1: "0", y2: "0" });
-  S.track.forEach(function (p) { var f = (Date.parse(p.time.utc) - s) / span; if (f >= 0 && f <= 1) lg.appendChild(el("stop", { offset: f.toFixed(4), "stop-color": skyAt(altOf(p.sun))[1] })); });
+  S.track.forEach(function (p) { var f = (p.t - s) / span; if (f >= 0 && f <= 1) lg.appendChild(el("stop", { offset: f.toFixed(4), "stop-color": skyAt(altOf(p.sun))[1] })); });
   defs.appendChild(lg); svg.appendChild(defs);
   svg.appendChild(el("rect", { x: 0, y: y0, width: w, height: bh, rx: 2, fill: S.track.length ? "url(#dayg)" : "#111628" }));
   for (var hh = 0; hh <= 24; hh += w < 600 ? 6 : 3) { var x = Math.min(w, hh * 3600e3 / span * w); svg.appendChild(el("text", { x: x, y: y0 + bh + 20, "text-anchor": hh === 0 ? "start" : x >= w - 1 ? "end" : "middle", "font-size": 10.5 }, String(hh).padStart(2, "0") + ":00")); }
@@ -690,23 +693,33 @@ function drawEvents() {
 
 // ---------- loading ----------
 function err(e) { S.err = e.message || String(e); var s = document.createElement("span"); s.className = "err"; s.textContent = "The API answered with an error: " + S.err; $("foot").replaceChildren(s); }
+// The live answer: no time parameter, so the front door computes it (never forwarded, never cached; a timed URL would add an
+// Api hop and a single-use immutable cache entry every 5 s).
 function loadPos() {
-  return api("/v1/position", Object.assign(q(), { time: new Date().toISOString() })).then(function (p) { S.posAt = Date.now(); S.posErr = null; setPos(p); })
+  return api("/v1/position", q()).then(function (p) { S.posAt = Date.now(); S.posErr = null; setPos(p); })
     .catch(function (e) { S.posErr = e; err(e); });
 }
 function loadDay() {
   var today = localDate(Date.now());
-  S.day = { date: today, events: [], start: new Date().toISOString(), end: new Date().toISOString(), loading: true };
-  return Promise.all([api("/v1/day", Object.assign(q(), { date: today, tz: loc.tz })), api("/v1/day", Object.assign(q(), { date: nextDate(today), tz: loc.tz }))])
-    .then(function (r) { S.day = r[0]; S.tomorrow = r[1]; drawEvents(); drawStrip(); tick(); return loadTrack(); }).catch(err);
+  S.day = { date: today, events: [], start: new Date().toISOString(), end: new Date().toISOString(), loading: true }; S.tomorrow = null; S.tomorrowFor = null;
+  return api("/v1/day", Object.assign(q(), { date: today, tz: loc.tz }))
+    .then(function (r) { S.day = r; drawEvents(); drawStrip(); tick(); }).catch(err);
 }
+// Tomorrow's events matter only once today's have all passed (the Next line); fetched then, once per day.
+function loadTomorrow() {
+  var d = S.day; S.tomorrowFor = d.date;
+  return api("/v1/day", Object.assign(q(), { date: nextDate(d.date), tz: loc.tz }), true).then(function (b) { if (S.day === d) { S.tomorrow = b; tick(); } }).catch(function () {});
+}
+// Declination comes with the weather answer (observer.magneticDeclination, the same WMM2025 value); /v1/magnetic only if weather fails.
+function setDecl(x) { S.decl = x; if (S.to) $("bodies").innerHTML = cardsHtml(S.to); diag(); }
 function loadMag() {
   return api("/v1/magnetic", q(), true).then(function (b) { S.decl = b.magnetic.declination; if (S.to) $("bodies").innerHTML = cardsHtml(S.to); if (S.wx) drawWx(); diag(); })
     .catch(function () { S.decl = null; });
 }
 function loadWx() {
-  return api("/v1/weather", Object.assign(q(), { n: 3 }), true).then(function (b) { S.wx = b; S.wxAt = Date.now(); drawWx(); diag(); })
-    .catch(function (e) { $("wx").innerHTML = '<span class="err">Weather unavailable: ' + esc(e.message || e) + '</span>'; });
+  return api("/v1/weather", Object.assign(q(), { n: 3 }), true).then(function (b) {
+    S.wx = b; S.wxAt = Date.now(); if (S.decl !== b.observer.magneticDeclination) setDecl(b.observer.magneticDeclination); drawWx(); diag();
+  }).catch(function (e) { $("wx").innerHTML = '<span class="err">Weather unavailable: ' + esc(e.message || e) + '</span>'; if (S.decl == null) loadMag(); });
 }
 function num(x, digits, unit) { return x == null ? "\\u2014" : '<span class="tn">' + x.toFixed(digits) + '</span>' + unit; }
 function clouds(s) {
@@ -739,11 +752,21 @@ function drawWx() {
   $("rawd").addEventListener("toggle", function (e) { S.rawOpen = e.target.open; });
   wxAges();
 }
+// One /v1/track answer, 20-minute UTC grid (217 samples), over [D - 24 h, D + 48 h] for D = this UTC midnight: that covers now +- 12 h
+// (the paths) and the local day in any zone from UTC-12 to UTC+14 (the strip; a local day can start up to 24 h before D, e.g.
+// New York at 23:30 EDT is already D), and the URL is the same for everyone here all UTC day, so it is one immutable, shared
+// cache entry. Fetched at once, in parallel with the rest; again when the UTC date changes.
 function loadTrack() {
-  // Samples cover the local day (for the strip) and now ± 12 h (for the paths), on a 20-minute grid aligned to UTC.
-  var G = 1200e3, now = Date.now(), s = Math.floor(Math.min(Date.parse(S.day.start), now - 12 * 3600e3) / G) * G, e = Math.ceil(Math.max(Date.parse(S.day.end), now + 12 * 3600e3) / G) * G, jobs = [];
-  for (var t = s; t <= e; t += G) jobs.push(api("/v1/position", Object.assign(q(), { time: new Date(t).toISOString() })));
-  return Promise.all(jobs).then(function (rs) { S.track = rs; drawStrip(); dirty = true; });
+  var D = Math.floor(Date.now() / 864e5), t0 = (D - 1) * 864e5, iso = function (ms) { return new Date(ms).toISOString().slice(0, 19) + "Z"; };
+  S.trackDay = D;
+  return api("/v1/track", Object.assign(q(), { start: iso(t0), end: iso(t0 + 72 * 3600e3) }), true).then(function (r) {
+    if (S.trackDay !== D) return;
+    var out = [], step = r.stepSeconds * 1000, s0 = Date.parse(r.start);
+    function b(x, i) { return { azimuth: x.azimuth[i], altitude: x.altitude[i], apparentAltitude: x.apparentAltitude[i] }; }
+    for (var i = 0; i < r.count; i++) out.push({ t: s0 + i * step, sun: b(r.sun, i), moon: b(r.moon, i) });
+    S.track = out; drawStrip(); dirty = true;
+    if (window.performance && performance.mark) performance.mark("ephem:track");
+  }).catch(err);
 }
 function pad(k) { return (k.toUpperCase() + "                    ").slice(0, 18); }
 function diag() {
@@ -776,11 +799,12 @@ function header() {
   $("place").classList.toggle("coords", /^[0-9.]+\u00b0 [NS], [0-9.]+\u00b0 [EW]$/.test(loc.city)); // a bare coordinate title: smaller, so it fits on one line at 390 px
   document.title = "ephem \\u00b7 the sky over " + loc.city;
   var b = location.origin;
-  $("curl").textContent = "curl '" + b + "/v1/position?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "&time=" + new Date().toISOString().slice(0, 19) + "Z'\\n\\n" +
+  $("curl").textContent = "curl '" + b + "/v1/position?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "'\\n\\n" +
+    "curl '" + b + "/v1/track?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "&start=" + new Date((Math.floor(Date.now() / 864e5) - 1) * 864e5).toISOString().slice(0, 19) + "Z&end=" + new Date((Math.floor(Date.now() / 864e5) + 2) * 864e5).toISOString().slice(0, 19) + "Z'\\n\\n" +
     "curl '" + b + "/v1/day?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "&date=" + localDate(Date.now()) + "&tz=" + loc.tz + "'\\n\\n" +
     "curl '" + b + "/v1/weather?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "&n=3'";
 }
-function reloadAll() { S.track = []; S.from = null; S.decl = null; header(); diag(); return Promise.all([loadMag(), loadPos(), loadDay(), loadWx()]); }
+function reloadAll() { S.track = []; S.from = null; S.decl = null; header(); diag(); return Promise.all([loadTrack(), loadPos(), loadDay(), loadWx()]); }
 
 $("locate").addEventListener("click", function () {
   if (!navigator.geolocation) { $("locnote").textContent = "This browser has no location API."; return; }
@@ -803,7 +827,6 @@ resize(); header(); requestAnimationFrame(frame);
 reloadAll();
 setInterval(function () { if (!document.hidden) loadPos(); }, 5000);
 setInterval(tick, 1000); tick();
-setInterval(function () { if (!document.hidden && S.day && !S.day.loading) loadTrack(); }, 3600e3);
 setInterval(function () { if (!document.hidden) loadWx(); }, 60e3);
 })();
 </script>

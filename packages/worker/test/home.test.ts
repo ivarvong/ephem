@@ -85,7 +85,8 @@ describe("home: apparentAltitude null below the horizon (API 2026-10-29)", () =>
     const html = page(V)
     expect(html).toContain('"below horizon"')
     const uses = html.match(/[a-z]\.apparentAltitude\b(?! == null)/g) ?? []
-    expect(uses.length).toBeLessThanOrEqual(3)   // altOf itself, the null-checked readout value, the null-checked aria value
+    expect(uses.length).toBeLessThanOrEqual(4)   // altOf itself, the null-checked readout value, the null-checked aria value, the /v1/track sample copy (null kept)
+    expect(html).toMatch(/apparentAltitude: x\.apparentAltitude\[i\]/)
   })
 })
 
@@ -230,6 +231,12 @@ describe("home: altitude-ring labels stay off the path lines", () => {
       expect(spot.y).toBeGreaterThanOrEqual(top); expect(spot.y + h).toBeLessThanOrEqual(hy - 3)
       expect(spot.x).toBeGreaterThanOrEqual(bounds.x0); expect(spot.x + w).toBeLessThanOrEqual(bounds.x1)
     }), { numRuns: 400, seed: 20261029 })
+  })
+  it("first load is four API calls: one /v1/track (not a /v1/position per grid point), live position, today, weather", () => {
+    const html = page(V), calls = [...html.matchAll(/api\("(\/v1\/[a-z]+)"/g)].map(m => m[1])
+    expect(calls.toSorted()).toEqual(["/v1/day", "/v1/day", "/v1/magnetic", "/v1/position", "/v1/track", "/v1/weather"])   // tomorrow's day and magnetic are conditional
+    expect(html).not.toMatch(/jobs\.push|time: new Date/)                                  // no per-sample fetch loop, no timed live poll
+    expect(html).toMatch(/reloadAll\(\) \{[^\n]*loadTrack\(\), loadPos\(\), loadDay\(\), loadWx\(\)\]/)
   })
   it("the page loads no web fonts or external stylesheets (system stacks only)", () => {
     const html = page(V)

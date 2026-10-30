@@ -7,6 +7,7 @@ import { GEOID } from "./geoid.ts"
 import { position, RATE_STEP_S } from "./position.ts"
 import { type HorizonProfile, DAY_THRESHOLDS, MAX_CROSSING_WINDOW_MS, crossing, day, localMidnight, nextDate, parseProfile } from "./day.ts"
 import { isoMs } from "./time.ts"
+import { track } from "./track.ts"
 
 export interface SkyObserverInput { readonly lat: number; readonly lon: number; readonly height?: number | undefined; readonly heightRef?: HeightRef | undefined }
 const geoOf = (o: SkyObserverInput) => {
@@ -44,6 +45,25 @@ export const positionRequest = (src: BlockSource, q: PositionRequest) => {
     conventions: {
       refraction: { model: REFRACTION_MODEL, temperatureC: T, pressureHpa: P, validFrom: Math.max(hz.altitude, REFRACTION_FLOOR), validTo: 90, uncertainty: REFRACTION_UNCERTAINTY },
       horizon: horizonOut(hz), geoid: geoidOut, rates: RATES,
+    },
+  }
+}
+
+// ─────────────── /v1/track ───────────────
+export interface TrackRequest extends SkyObserverInput {
+  readonly startMs: number; readonly endMs: number; readonly stepSeconds: number
+  readonly temperature?: number | undefined; readonly pressure?: number | undefined; readonly horizon?: HorizonSpec | undefined; readonly dut1?: number | undefined
+}
+/** The window is validated by the caller (track.ts trackWindowError). */
+export const trackRequest = (src: BlockSource, q: TrackRequest) => {
+  const { h, geo } = geoOf(q), T = q.temperature ?? T_DEFAULT, P = q.pressure ?? P_DEFAULT
+  const hz = horizonOf(q.horizon, h.heightMsl)
+  const r = track(src, { startMs: q.startMs, endMs: q.endMs, stepMs: q.stepSeconds * 1000, geo, temperature: T, pressure: P, horizon: hz.altitude, dut1: q.dut1 })
+  return {
+    start: isoMs(q.startMs), end: isoMs(q.endMs), stepSeconds: q.stepSeconds, count: r.count, observer: observerOut(q, h), sun: r.sun, moon: r.moon,
+    conventions: {
+      refraction: { model: REFRACTION_MODEL, temperatureC: T, pressureHpa: P, validFrom: Math.max(hz.altitude, REFRACTION_FLOOR), validTo: 90, uncertainty: REFRACTION_UNCERTAINTY },
+      horizon: horizonOut(hz), geoid: geoidOut,
     },
   }
 }

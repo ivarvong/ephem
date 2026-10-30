@@ -244,7 +244,8 @@ below the target's top, i.e. behind it; compare with `angularRadius` for partial
 ## 11. The contract (`@ephem/api`)
 
 `EphemApi = HttpApi.make("ephem").add(sky, meta)` with `GET /v1/position`, `GET /v1/day`, `GET /v1/alignment`,
-`GET /v1/crossing`, `GET /healthz`, plus `/openapi.json` generated from the same value and `/docs` (Scalar from jsDelivr, pointed at it). Query parameters decode through
+`GET /v1/crossing`, `GET /v1/track` (Sun/Moon azimuth, true and apparent altitude on a UTC grid, columnar; each sample equals
+`/v1/position` at that instant; ≤ 8 days and ≤ 1 441 samples, step 60–3600 s, start/end on the step's grid), `GET /healthz`, plus `/openapi.json` generated from the same value and `/docs` (Scalar from jsDelivr, pointed at it). Query parameters decode through
 `FiniteFromString` with range checks; `UtcString` and `DateString` are regex-checked. `CONVENTIONS` in the same file is
 the human-readable definition of every quantity and is reproduced in this document's §§4–10.
 

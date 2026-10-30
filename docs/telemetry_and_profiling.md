@@ -82,7 +82,7 @@ the entrypoints whose `exports` entry enables it (`cloudflare.config.ts`), drive
 
 ```
 eyeball ─▶ default (cache OFF: always runs → every request has its trace, Basin row, request.cf; `/` and `/mcp` live here)
-             ├─ GET /v1/day, /v1/alignment, /v1/crossing, /v1/position|magnetic with time
+             ├─ GET /v1/day, /v1/alignment, /v1/track, /v1/crossing, /v1/position|magnetic with time
              │     ─▶ loopback.ts api: Api.fetch(path + sorted query, { cf: { cacheKey: "/v<CACHE_VERSION>" + path + query } })
              │        Api (cache ON) ─▶ blocks: loopback.ts block  GET /block/v<N>/<sha16>/<i>  (BlockStore, cache ON) ─▶ R2 range read
              │                      └▶ weather: loopback.ts feed  GET /feed/v<N>/metars.cache.csv.gz (MetarFeed, cache ON) ─▶ aviationweather.gov
@@ -97,7 +97,7 @@ records the Api's `cf-cache-status` as `ephem.api_cache` (span) / `api_cache` (B
 
 | Route | Api (what Workers Caching stores) | Outward (browsers) | Why |
 | --- | --- | --- | --- |
-| `/v1/day`, `/v1/alignment`, `/v1/crossing` (window or date), `/v1/position` + `time`, `/v1/magnetic` + `time` | `public, max-age=31536000, immutable` | same | pure function of the query; CACHE_VERSION is in the key and is bumped when answers change |
+| `/v1/day`, `/v1/alignment`, `/v1/track`, `/v1/crossing` (window or date), `/v1/position` + `time`, `/v1/magnetic` + `time` | `public, max-age=31536000, immutable` | same | pure function of the query; CACHE_VERSION is in the key and is bumped when answers change |
 | `/v1/weather` | computed in the front door (feed via MetarFeed loopback); `API_WEATHER` = `public, max-age=0, stale-while-revalidate=300, stale-if-error=3600` only if called directly | `private, max-age=30` | keys almost never repeat, and forwarding paid the tier-colo round trip (see "Why forwarded weather is slower") |
 | `/v1/position`, `/v1/magnetic` without `time` | not forwarded (`API_LIVE` = `public, max-age=0` if called directly) | `no-store` / `public, max-age=3600` | max-age=0 forwarding measured +35 ms server p50 with no sequential hits (below) |
 | any non-200 from the Api, or no Cache-Control | `no-store` | `no-store` | errors are never cached (a router 404 was heuristically cached for 3 min on fd72f501) |
@@ -118,7 +118,7 @@ bump"), so cached answers, blocks and the feed survive deploys, and the only par
 - `src/loopback.ts` is the only code that fetches our entrypoints; `test/loopback.test.ts` scans `src/` and fails on any
   other read of a binding off `ctx.exports`.
 - `test/golden.test.ts` hashes the bodies (minus provenance / diagnostics) of a fixed set of deterministic requests (day,
-  position + time, alignment, crossing, magnetic + time) into `test/golden/answers.json` with the CACHE_VERSION they were
+  position + time, alignment, track, crossing, magnetic + time) into `test/golden/answers.json` with the CACHE_VERSION they were
   recorded at. Answers changed and CACHE_VERSION did not → "answers changed: bump CACHE_VERSION and re-record". After a
   bump: `npm run golden:record` (one command) and commit both. Two agents changing answers at once: whoever commits second
   rebases, bumps and re-records.

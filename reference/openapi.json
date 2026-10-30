@@ -3,7 +3,7 @@
  "info": {
   "title": "Api",
   "version": "0.0.1",
-  "description": "Sun and Moon positions, day events, crossings and alignments from JPL DE440. Every response carries provenance (implementation, ephemeris, DE440 blocks read, compute time, cache tiers) and, for /v1/position, /v1/day and /v1/crossing, a conventions block with every threshold, horizon, refraction input and geoid value used.\n\nChanges on 2026-10-29 (API correctness pass):\n1. /v1/day rise and set now depend on height. An explicit `height` is metres above the WGS-84 ellipsoid (unchanged meaning), and the sea-horizon dip is taken from the height above mean sea level (EGM96). Example: in New York `height=0` is ≈ 33 m above sea level, so sunrise is ≈ 1 min earlier and sunset ≈ 1 min later than before. Pass `heightRef=msl` for a height above sea level (iOS `altitude`, maps); omit `height` to stand at sea level, which gives the previous times (Sun within 1 ms).\n2. `apparentAltitude` in /v1/position is now `number | null`: refraction is applied down to the observer's horizon (default the sea horizon, −dip) and the value is null below it or below −1.6963°. It used to repeat the true altitude below −1°. One refraction model now serves every endpoint (34′ at the horizon), so apparent altitudes are 1.3 % of the refraction lower than Skyfield's Bennett (0.45′ at 0°, 0.07′ at 10°), and /v1/crossing at apparent 0° (upper limb) equals /v1/day's sunrise.\n3. Unknown query parameters are rejected with 400 InvalidRequest (kind UnknownParameter, with the allowed list). They used to be ignored.\n4. New: /v1/crossing; on /v1/day `temperature`, `pressure`, `horizon` (sea | geometric | degrees), `horizonProfile`, `limb`; `heightRef` everywhere; `altitudeRate` and `azimuthRate` (°/min) in positions; observer heightMsl and geoidUndulation."
+  "description": "Sun and Moon positions, day events, crossings and alignments from JPL DE440. Every response carries provenance (implementation, ephemeris, DE440 blocks read, compute time, cache tiers) and, for /v1/position, /v1/day and /v1/crossing, a conventions block with every threshold, horizon, refraction input and geoid value used.\n\nChanges on 2026-10-29 (API correctness pass):\n1. /v1/day rise and set now depend on height. An explicit `height` is metres above the WGS-84 ellipsoid (unchanged meaning), and the sea-horizon dip is taken from the height above mean sea level (EGM96). Example: in New York `height=0` is ≈ 33 m above sea level, so sunrise is ≈ 1 min earlier and sunset ≈ 1 min later than before. Pass `heightRef=msl` for a height above sea level (iOS `altitude`, maps); omit `height` to stand at sea level, which gives the previous times (Sun within 1 ms).\n2. `apparentAltitude` in /v1/position is now `number | null`: refraction is applied down to the observer's horizon (default the sea horizon, −dip) and the value is null below it or below −1.6963°. It used to repeat the true altitude below −1°. One refraction model now serves every endpoint (34′ at the horizon), so apparent altitudes are 1.3 % of the refraction lower than Skyfield's Bennett (0.45′ at 0°, 0.07′ at 10°), and /v1/crossing at apparent 0° (upper limb) equals /v1/day's sunrise.\n3. Unknown query parameters are rejected with 400 InvalidRequest (kind UnknownParameter, with the allowed list). They used to be ignored.\n4. New: /v1/crossing; on /v1/day `temperature`, `pressure`, `horizon` (sea | geometric | degrees), `horizonProfile`, `limb`; `heightRef` everywhere; `altitudeRate` and `azimuthRate` (°/min) in positions; observer heightMsl and geoidUndulation.\n5. New (2026-10-29): /v1/track, the sampled Sun and Moon azimuth / altitude / apparent altitude over a UTC grid in one immutable answer (what the homepage draws its paths from)."
  },
  "paths": {
   "/v1/position": {
@@ -2045,6 +2045,513 @@
     }
    }
   },
+  "/v1/track": {
+   "get": {
+    "tags": [
+     "sky"
+    ],
+    "operationId": "sky.track",
+    "parameters": [
+     {
+      "name": "lat",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "lon",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "height",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "heightRef",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "ellipsoid",
+        "msl"
+       ]
+      },
+      "required": false
+     },
+     {
+      "name": "start",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "end",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "stepSeconds",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "temperature",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "pressure",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "horizon",
+      "in": "query",
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string",
+         "enum": [
+          "sea",
+          "geometric"
+         ]
+        },
+        {
+         "type": "string"
+        }
+       ]
+      },
+      "required": false
+     },
+     {
+      "name": "dut1",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     }
+    ],
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "Success",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "start": {
+           "type": "string"
+          },
+          "end": {
+           "type": "string"
+          },
+          "stepSeconds": {
+           "type": "integer",
+           "minimum": -9007199254740991,
+           "maximum": 9007199254740991
+          },
+          "count": {
+           "type": "integer",
+           "minimum": -9007199254740991,
+           "maximum": 9007199254740991,
+           "description": "Samples: sample i is at start + i·stepSeconds; (end − start)/stepSeconds + 1."
+          },
+          "observer": {
+           "type": "object",
+           "properties": {
+            "lat": {
+             "type": "number",
+             "minimum": -90,
+             "maximum": 90
+            },
+            "lon": {
+             "type": "number",
+             "minimum": -180,
+             "maximum": 180
+            },
+            "height": {
+             "type": "number",
+             "description": "Metres above the WGS-84 ellipsoid (same as heightEllipsoid; kept for compatibility)."
+            },
+            "heightEllipsoid": {
+             "type": "number"
+            },
+            "heightMsl": {
+             "type": "number",
+             "description": "Metres above the EGM96 geoid (≈ mean sea level)."
+            },
+            "geoidUndulation": {
+             "type": "number",
+             "description": "EGM96 N, metres: heightEllipsoid = heightMsl + geoidUndulation."
+            },
+            "heightRef": {
+             "type": "string",
+             "enum": [
+              "ellipsoid",
+              "msl",
+              "default"
+             ],
+             "description": "What the request's height was measured from; default = no height given, the observer is on the geoid."
+            }
+           },
+           "required": [
+            "lat",
+            "lon",
+            "height",
+            "heightEllipsoid",
+            "heightMsl",
+            "geoidUndulation",
+            "heightRef"
+           ],
+           "additionalProperties": false
+          },
+          "sun": {
+           "type": "object",
+           "properties": {
+            "azimuth": {
+             "type": "array",
+             "items": {
+              "type": "number"
+             },
+             "description": "Degrees from north through east, [0, 360), one per sample."
+            },
+            "altitude": {
+             "type": "array",
+             "items": {
+              "type": "number"
+             },
+             "description": "True (vacuum) altitude, degrees."
+            },
+            "apparentAltitude": {
+             "type": "array",
+             "items": {
+              "anyOf": [
+               {
+                "type": "number"
+               },
+               {
+                "type": "null"
+               }
+              ]
+             },
+             "description": "Refracted altitude, degrees; null below the observer's horizon or the refraction model's floor, exactly as /v1/position."
+            }
+           },
+           "required": [
+            "azimuth",
+            "altitude",
+            "apparentAltitude"
+           ],
+           "additionalProperties": false
+          },
+          "moon": {
+           "type": "object",
+           "properties": {
+            "azimuth": {
+             "type": "array",
+             "items": {
+              "type": "number"
+             },
+             "description": "Degrees from north through east, [0, 360), one per sample."
+            },
+            "altitude": {
+             "type": "array",
+             "items": {
+              "type": "number"
+             },
+             "description": "True (vacuum) altitude, degrees."
+            },
+            "apparentAltitude": {
+             "type": "array",
+             "items": {
+              "anyOf": [
+               {
+                "type": "number"
+               },
+               {
+                "type": "null"
+               }
+              ]
+             },
+             "description": "Refracted altitude, degrees; null below the observer's horizon or the refraction model's floor, exactly as /v1/position."
+            }
+           },
+           "required": [
+            "azimuth",
+            "altitude",
+            "apparentAltitude"
+           ],
+           "additionalProperties": false
+          },
+          "conventions": {
+           "type": "object",
+           "properties": {
+            "refraction": {
+             "type": "object",
+             "properties": {
+              "model": {
+               "type": "string"
+              },
+              "temperatureC": {
+               "type": "number"
+              },
+              "pressureHpa": {
+               "type": "number"
+              },
+              "validFrom": {
+               "type": "number",
+               "description": "Lowest apparent altitude that gets a value: max(horizon, the model floor −1.6963°). Below it apparentAltitude is null."
+              },
+              "validTo": {
+               "type": "number"
+              },
+              "uncertainty": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "model",
+              "temperatureC",
+              "pressureHpa",
+              "validFrom",
+              "validTo",
+              "uncertainty"
+             ],
+             "additionalProperties": false
+            },
+            "horizon": {
+             "type": "object",
+             "properties": {
+              "kind": {
+               "type": "string",
+               "enum": [
+                "sea",
+                "geometric",
+                "custom",
+                "profile"
+               ]
+              },
+              "altitude": {
+               "anyOf": [
+                {
+                 "type": "number"
+                },
+                {
+                 "type": "null"
+                }
+               ],
+               "description": "Apparent altitude of the horizon, degrees (null for a profile)."
+              },
+              "dip": {
+               "anyOf": [
+                {
+                 "type": "number"
+                },
+                {
+                 "type": "null"
+                }
+               ],
+               "description": "Sea-horizon dip, degrees: √(1 − k)·acos(R/(R + heightMsl)), k = terrestrialRefractionK, R = 6 371 008.8 m."
+              },
+              "terrestrialRefractionK": {
+               "type": "number"
+              },
+              "profile": {
+               "anyOf": [
+                {
+                 "type": "array",
+                 "items": {
+                  "type": "object",
+                  "properties": {
+                   "azimuth": {
+                    "type": "number"
+                   },
+                   "elevation": {
+                    "type": "number"
+                   }
+                  },
+                  "required": [
+                   "azimuth",
+                   "elevation"
+                  ],
+                  "additionalProperties": false
+                 }
+                },
+                {
+                 "type": "null"
+                }
+               ]
+              }
+             },
+             "required": [
+              "kind",
+              "altitude",
+              "dip",
+              "terrestrialRefractionK",
+              "profile"
+             ],
+             "additionalProperties": false
+            },
+            "geoid": {
+             "type": "object",
+             "properties": {
+              "model": {
+               "type": "string",
+               "enum": [
+                "EGM96"
+               ]
+              },
+              "source": {
+               "type": "string"
+              },
+              "interpolationErrorM": {
+               "type": "object",
+               "properties": {
+                "rms": {
+                 "type": "number"
+                },
+                "p99": {
+                 "type": "number"
+                },
+                "max": {
+                 "type": "number"
+                }
+               },
+               "required": [
+                "rms",
+                "p99",
+                "max"
+               ],
+               "additionalProperties": false
+              }
+             },
+             "required": [
+              "model",
+              "source",
+              "interpolationErrorM"
+             ],
+             "additionalProperties": false
+            }
+           },
+           "required": [
+            "refraction",
+            "horizon",
+            "geoid"
+           ],
+           "additionalProperties": false
+          },
+          "provenance": {
+           "type": "object",
+           "properties": {
+            "implementation": {
+             "type": "string"
+            },
+            "version": {
+             "type": "string"
+            },
+            "ephemeris": {
+             "type": "string"
+            },
+            "diagnostics": {
+             "type": "object",
+             "properties": {
+              "blocks": {
+               "type": "array",
+               "items": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+               }
+              },
+              "computeMs": {
+               "type": "number"
+              },
+              "cache": {
+               "type": "object",
+               "additionalProperties": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+               }
+              }
+             },
+             "required": [
+              "blocks",
+              "computeMs"
+             ],
+             "additionalProperties": false
+            }
+           },
+           "required": [
+            "implementation",
+            "version",
+            "ephemeris"
+           ],
+           "additionalProperties": false
+          }
+         },
+         "required": [
+          "start",
+          "end",
+          "stepSeconds",
+          "count",
+          "observer",
+          "sun",
+          "moon",
+          "conventions",
+          "provenance"
+         ],
+         "additionalProperties": false
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "OutOfRange | InvalidInput",
+      "content": {
+       "application/json": {
+        "schema": {
+         "anyOf": [
+          {
+           "$ref": "#/components/schemas/OutOfRangeEncoded"
+          },
+          {
+           "$ref": "#/components/schemas/InvalidInputEncoded"
+          }
+         ]
+        }
+       }
+      }
+     }
+    }
+   }
+  },
   "/v1/magnetic": {
    "get": {
     "tags": [
@@ -2253,7 +2760,7 @@
             },
             "magneticDeclination": {
              "type": "number",
-             "description": "WMM2025 at the observer, sea level, now; east positive."
+             "description": "WMM2025 at the observer, height 0, now; east positive. Full precision (was rounded to 0.01° before 2026-10-29): the same value /v1/magnetic gives for lat/lon now."
             }
            },
            "required": [

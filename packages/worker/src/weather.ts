@@ -63,7 +63,7 @@ export const weatherLive = (feed: Feed) => Layer.succeed(Weather, {
     const lm = httpDate(f.snap.lastModified)
     return {
       time: iso(now),
-      observer: { lat: q.lat, lon: q.lon, magneticDeclination: r2(decl) },
+      observer: { lat: q.lat, lon: q.lon, magneticDeclination: decl },   // full precision: the homepage takes its magnetic bearings from it (no /v1/magnetic call)
       stations: near.map(x => station(x.station, x.distanceKm, x.bearing, decl, now)),
       feed: {
         source: FEED_URL, fetchedAt: iso(f.snap.fetchedAt), ageSeconds: Math.round(f.dataAgeMs / 1000),

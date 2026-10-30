@@ -19,7 +19,10 @@ const Sky = HttpApiBuilder.group(EphemApi, "sky", h => h
   .handle("day", ({ query }) => Effect.succeed({ date: query.date, tz: query.tz, start: "2026-10-28T04:00:00Z", end: "2026-10-29T04:00:00Z", observer: obs(query), events: [], conventions: dayConv, provenance: prov }))
   .handle("crossing", ({ query }) => Effect.succeed({ body: query.body, start: "2026-10-28T04:00:00Z", end: "2026-10-29T04:00:00Z", observer: obs(query), crossings: [],
     conventions: { definition: "", limb: "center" as const, altitudeType: "true" as const, trueLimbAltitude: 0, refraction: null, horizon: null, geoid }, provenance: prov }))
-  .handle("alignment", ({ query }) => Effect.succeed({ body: query.body, track: [], provenance: prov })))
+  .handle("alignment", ({ query }) => Effect.succeed({ body: query.body, track: [], provenance: prov }))
+  .handle("track", ({ query }) => Effect.succeed({ start: query.start, end: query.end, stepSeconds: query.stepSeconds ?? 1200, count: 1, observer: obs(query),
+    sun: { azimuth: [1], altitude: [2], apparentAltitude: [null] }, moon: { azimuth: [3], altitude: [4], apparentAltitude: [4.2] },
+    conventions: { refraction: posConv.refraction, horizon, geoid }, provenance: prov })))
 const Earth = HttpApiBuilder.group(EphemApi, "earth", h => h
   .handle("magnetic", ({ query }) => Effect.succeed({ time: "2026-10-28T11:51:00Z", observer: { lat: query.lat, lon: query.lon, height: 0 },
     magnetic: { model: "WMM2025" as const, declination: -12.5, inclination: 66, horizontalIntensityNt: 2e4, totalIntensityNt: 5e4, decimalYear: 2026.8, inValidityWindow: true } }))
@@ -47,8 +50,16 @@ describe("contract", () => {
     expect((await get("/v1/weather?lat=40.7&lon=-74&n=11")).status).toBe(400)
     expect((await get("/v1/weather?lat=40.7&lon=-74&n=1.5")).status).toBe(400)
   })
+  it("track: start/end are UTC instants, stepSeconds an integer 60..3600, apparentAltitude may be null", async () => {
+    const r = await get("/v1/track?lat=40.7&lon=-74&start=2026-10-28T12:00:00Z&end=2026-10-28T12:00:00Z&stepSeconds=600")
+    expect(r.status).toBe(200); expect(((await r.json()) as any)).toMatchObject({ stepSeconds: 600, sun: { apparentAltitude: [null] } })
+    for (const bad of ["stepSeconds=59", "stepSeconds=3601", "stepSeconds=90.5"])
+      expect((await get(`/v1/track?lat=40.7&lon=-74&start=2026-10-28T12:00:00Z&end=2026-10-28T13:00:00Z&${bad}`)).status, bad).toBe(400)
+    expect((await get("/v1/track?lat=40.7&lon=-74&start=2026-10-28 12:00&end=2026-10-28T13:00:00Z")).status).toBe(400)
+    expect((await get("/v1/track?lat=40.7&lon=-74&start=2026-10-28T12:00:00Z")).status).toBe(400)
+  })
   it("serves OpenAPI", async () => {
     const spec = OpenApi.fromApi(EphemApi) as any
-    expect(Object.keys(spec.paths)).toEqual(expect.arrayContaining(["/v1/position", "/v1/day", "/v1/alignment", "/v1/weather", "/v1/magnetic"]))
+    expect(Object.keys(spec.paths)).toEqual(expect.arrayContaining(["/v1/position", "/v1/day", "/v1/alignment", "/v1/track", "/v1/weather", "/v1/magnetic"]))
   })
 })

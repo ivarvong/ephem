@@ -25,6 +25,7 @@ export const CONVENTIONS = {
   crossing: "/v1/crossing: every instant in the window when the chosen limb (default centre) reaches `altitude`, true (default) or apparent (the same refraction model as /v1/position and /v1/day), or meets a horizonProfile; rise = upward.",
   rates: "altitudeRate, azimuthRate: degrees per minute, symmetric difference over ±10 s.",
   unknownParameters: "Every endpoint rejects query parameters it does not define with 400 InvalidRequest, listing the allowed ones.",
+  track: "/v1/track: the Sun's and Moon's azimuth, true altitude and apparent altitude at every point of a UTC grid (start, end on multiples of stepSeconds since 1970-01-01T00:00Z), columnar; each sample equals /v1/position's values at that instant bit for bit. Bounded: stepSeconds 60–3600, at most 8 days and 1 441 samples.",
   passes: "With observerLat/Lon: instants when the body's azimuth equals the azimuth to the target (±180° wraps excluded); altitudeOffset tells whether it is above (+) or behind (−) the target top.",
 } as const
 
@@ -240,6 +241,28 @@ export const AlignmentResponse = S.Struct({
   provenance: Provenance,
 })
 
+// ─────────────────────────────── /v1/track ───────────────────────────────
+export const TrackQuery = {
+  ...skyObserverQuery,
+  start: UtcString, end: UtcString,   // both on the UTC grid of stepSeconds (multiples of it since 1970-01-01T00:00Z), end ≥ start, ≤ 8 days
+  stepSeconds: S.optionalKey(S.FiniteFromString.pipe(S.decodeTo(S.Int.check(S.isBetween({ minimum: 60, maximum: 3600 }))))),   // default 1200; at most 1441 samples
+  temperature: optNum(Temperature), pressure: optNum(Pressure), horizon: S.optionalKey(HorizonParam), dut1: optNum(Dut1),
+}
+export const BodyTrack = S.Struct({
+  azimuth: S.Array(Degrees).annotate(d0("Degrees from north through east, [0, 360), one per sample.")),
+  altitude: S.Array(Degrees).annotate(d0("True (vacuum) altitude, degrees.")),
+  apparentAltitude: S.Array(S.NullOr(Degrees)).annotate(d0("Refracted altitude, degrees; null below the observer's horizon or the refraction model's floor, exactly as /v1/position.")),
+})
+export const TrackConventions = S.Struct({ refraction: RefractionConventions, horizon: HorizonConventions, geoid: GeoidConventions })
+export const TrackResponse = S.Struct({
+  start: UtcString, end: UtcString,
+  stepSeconds: S.Int, count: S.Int.annotate(d0("Samples: sample i is at start + i·stepSeconds; (end − start)/stepSeconds + 1.")),
+  observer: SkyObserver,
+  sun: BodyTrack, moon: BodyTrack,
+  conventions: TrackConventions,
+  provenance: Provenance,
+})
+
 // ─────────────────────────────── /v1/magnetic, /v1/weather ───────────────────────────────
 const d = (description: string) => ({ description })
 export const MagneticQuery = {
@@ -299,7 +322,7 @@ export const Feed = S.Struct({
 })
 export const WeatherResponse = S.Struct({
   time: UtcString,
-  observer: S.Struct({ lat: Lat, lon: Lon, magneticDeclination: Degrees.annotate(d("WMM2025 at the observer, sea level, now; east positive.")) }),
+  observer: S.Struct({ lat: Lat, lon: Lon, magneticDeclination: Degrees.annotate(d("WMM2025 at the observer, height 0, now; east positive. Full precision (was rounded to 0.01° before 2026-10-29): the same value /v1/magnetic gives for lat/lon now.")) }),
   stations: S.Array(Station),   // nearest first
   feed: Feed,
 })
@@ -315,6 +338,7 @@ export const SkyGroup = HttpApiGroup.make("sky").add(
   HttpApiEndpoint.get("day", "/v1/day", { query: DayQuery, success: DayResponse, error: [OutOfRange, InvalidInput] }),
   HttpApiEndpoint.get("crossing", "/v1/crossing", { query: CrossingQuery, success: CrossingResponse, error: [OutOfRange, InvalidInput] }),
   HttpApiEndpoint.get("alignment", "/v1/alignment", { query: AlignmentQuery, success: AlignmentResponse, error: [OutOfRange, InvalidInput] }),
+  HttpApiEndpoint.get("track", "/v1/track", { query: TrackQuery, success: TrackResponse, error: [OutOfRange, InvalidInput] }),
 )
 export const EarthGroup = HttpApiGroup.make("earth").add(
   HttpApiEndpoint.get("magnetic", "/v1/magnetic", { query: MagneticQuery, success: MagneticResponse, error: [OutOfRange, InvalidInput] }),
@@ -331,6 +355,7 @@ export const API_DESCRIPTION = [
   "2. `apparentAltitude` in /v1/position is now `number | null`: refraction is applied down to the observer's horizon (default the sea horizon, −dip) and the value is null below it or below −1.6963°. It used to repeat the true altitude below −1°. One refraction model now serves every endpoint (34′ at the horizon), so apparent altitudes are 1.3 % of the refraction lower than Skyfield's Bennett (0.45′ at 0°, 0.07′ at 10°), and /v1/crossing at apparent 0° (upper limb) equals /v1/day's sunrise.",
   "3. Unknown query parameters are rejected with 400 InvalidRequest (kind UnknownParameter, with the allowed list). They used to be ignored.",
   "4. New: /v1/crossing; on /v1/day `temperature`, `pressure`, `horizon` (sea | geometric | degrees), `horizonProfile`, `limb`; `heightRef` everywhere; `altitudeRate` and `azimuthRate` (°/min) in positions; observer heightMsl and geoidUndulation.",
+  "5. New (2026-10-29): /v1/track, the sampled Sun and Moon azimuth / altitude / apparent altitude over a UTC grid in one immutable answer (what the homepage draws its paths from).",
 ].join("\n")
 
 /** Unknown query parameters are an error, not silently ignored (a dropped `temperature` changes nothing and says nothing). */
@@ -340,13 +365,14 @@ export const EphemApi = HttpApi.make("ephem").add(SkyGroup, EarthGroup, MetaGrou
 /** The allowed query parameters per path, from the endpoint schemas (for error messages). */
 export const QUERY_PARAMS: Readonly<Record<string, ReadonlyArray<string>>> = {
   "/v1/position": Object.keys(PositionQuery), "/v1/day": Object.keys(DayQuery), "/v1/crossing": Object.keys(CrossingQuery),
-  "/v1/alignment": Object.keys(AlignmentQuery), "/v1/magnetic": Object.keys(MagneticQuery), "/v1/weather": Object.keys(WeatherQuery), "/healthz": [],
+  "/v1/alignment": Object.keys(AlignmentQuery), "/v1/track": Object.keys(TrackQuery), "/v1/magnetic": Object.keys(MagneticQuery), "/v1/weather": Object.keys(WeatherQuery), "/healthz": [],
 }
 
 export type PositionResponse = typeof PositionResponse.Type
 export type DayResponse = typeof DayResponse.Type
 export type CrossingResponse = typeof CrossingResponse.Type
 export type AlignmentResponse = typeof AlignmentResponse.Type
+export type TrackResponse = typeof TrackResponse.Type
 export type BodyPosition = typeof BodyPosition.Type
 export type WeatherResponse = typeof WeatherResponse.Type
 export type MagneticResponse = typeof MagneticResponse.Type

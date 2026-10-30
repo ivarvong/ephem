@@ -2,7 +2,7 @@
 import { Clock, Effect, Layer } from "effect"
 import { HttpApiBuilder } from "effect/http-api"
 import { EphemApi, InvalidInput, OutOfRange } from "@ephem/api"
-import { SUPPORTED, alignment, blocksFor, crossingRequest, crossingWindow, dayRequest, instant, instrumented, isValidZone, localMidnight, nextDate, positionRequest } from "@ephem/core"
+import { SUPPORTED, TRACK_DEFAULT_STEP_S, alignment, blocksFor, crossingRequest, crossingWindow, dayRequest, instant, instrumented, isValidZone, localMidnight, nextDate, positionRequest, trackRequest, trackWindowError } from "@ephem/core"
 import { Blocks, blocksCache } from "./blocks.ts"
 import { EarthLive } from "./weather.ts"
 
@@ -80,7 +80,16 @@ export const SkyLive = HttpApiBuilder.group(EphemApi, "sky", h => h
       o => ({ "ephem.instants": Math.floor((end - start) / 1000 / step) + 1, "ephem.track_points": o.track.length, "ephem.iterations": o.track.reduce((s, p) => s + p.iterations, 0), "ephem.passes": o.fromObserver?.passes.length }))
     const track = out.track.map(({ iterations: _i, ...p }) => p)
     return { body: out.body, track, ...(out.fromObserver ? { fromObserver: out.fromObserver } : {}), provenance }
-  }).pipe(Effect.withSpan("alignment"))))
+  }).pipe(Effect.withSpan("alignment")))
+  .handle("track", ({ query: q }) => Effect.gen(function* () {
+    const start = yield* parseUtc(q.start), end = yield* parseUtc(q.end), step = q.stepSeconds ?? TRACK_DEFAULT_STEP_S
+    const bad = trackWindowError(start, end, step)
+    if (bad) return yield* new InvalidInput({ message: bad })
+    const { out, provenance } = yield* compute("track", blocksFor(jd(start), jd(end)), src =>
+      trackRequest(src, { lat: q.lat, lon: q.lon, height: q.height, heightRef: q.heightRef, startMs: start, endMs: end, stepSeconds: step,
+        temperature: q.temperature, pressure: q.pressure, horizon: q.horizon, dut1: q.dut1 }), o => ({ "ephem.instants": o.count }))
+    return { ...out, provenance }
+  }).pipe(Effect.withSpan("track"))))
 
 export const MetaLive = HttpApiBuilder.group(EphemApi, "meta", h =>
   h.handle("health", () => Effect.succeed({ ok: true as const, implementation: PROV.implementation, version: VERSION })))

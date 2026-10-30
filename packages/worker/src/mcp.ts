@@ -14,7 +14,7 @@
 import { Data, Effect, Schema as S } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import {
-  AlignmentQuery, AlignmentResponse, CrossingQuery, CrossingResponse, DayQuery, DayResponse, PositionQuery, PositionResponse, WeatherQuery, WeatherResponse,
+  AlignmentQuery, AlignmentResponse, CrossingQuery, CrossingResponse, DayQuery, DayResponse, PositionQuery, PositionResponse, TrackQuery, TrackResponse, WeatherQuery, WeatherResponse,
 } from "@ephem/api"
 import { VERSION } from "./handlers.ts"
 
@@ -101,6 +101,13 @@ export const TOOLS: ReadonlyArray<ToolDef> = [
   { name: "weather_nearest", title: "Nearest METAR weather", path: "/v1/weather", query: WeatherQuery, success: WeatherResponse, openWorld: true,
     docs: { lat: POS_DOCS.lat, lon: POS_DOCS.lon, n: "How many stations, nearest first (1–10). Default 1." },
     description: "The nearest METAR stations to a point (aviationweather.gov feed, cached up to 60 s fresh), decoded, with distance and true/magnetic bearing. Same as GET /v1/weather." },
+  { name: "sun_moon_track", title: "Sun and Moon paths across the sky", path: "/v1/track", query: TrackQuery, success: TrackResponse,
+    docs: { lat: POS_DOCS.lat, lon: POS_DOCS.lon, height: POS_DOCS.height, heightRef: POS_DOCS.heightRef,
+      start: "First sample, UTC ISO-8601 with Z, on the stepSeconds grid (a multiple of stepSeconds since 1970-01-01T00:00Z; e.g. a whole hour for 1200 s).",
+      end: "Last sample, UTC ISO-8601 with Z, on the same grid, not before start; at most 8 days after it.",
+      stepSeconds: "Sampling step, integer seconds 60–3600, at most 1441 samples. Default 1200 (20 min).",
+      temperature: POS_DOCS.temperature, pressure: POS_DOCS.pressure, horizon: POS_DOCS.horizon, dut1: POS_DOCS.dut1 },
+    description: "The Sun's and Moon's azimuth, true altitude and apparent (refracted) altitude at every step of a UTC window, as parallel arrays; each sample equals sun_moon_position at that instant. For plotting paths or finding when a body is up. Same as GET /v1/track." },
 ]
 
 const jsonSchema = (schema: S.Top) => {

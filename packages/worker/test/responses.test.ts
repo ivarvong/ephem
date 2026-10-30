@@ -17,7 +17,7 @@ const u = (p: string) => new URL("http://x" + p)
 
 describe("Cache-Control policy", () => {
   it("deterministic: day, alignment, and position / magnetic with an explicit time", () => {
-    for (const p of [DAY, ALIGN, POS_T, "/v1/magnetic?lat=1&lon=1&time=2026-10-28T00:00:00Z", "/v1/crossing?body=sun&altitude=0&lat=1&lon=1&date=2026-10-28&tz=UTC"]) expect(deterministic(u(p))).toBe(true)
+    for (const p of [DAY, ALIGN, POS_T, "/v1/track?lat=1&lon=1&start=2026-10-28T00:00:00Z&end=2026-10-29T00:00:00Z", "/v1/magnetic?lat=1&lon=1&time=2026-10-28T00:00:00Z", "/v1/crossing?body=sun&altitude=0&lat=1&lon=1&date=2026-10-28&tz=UTC"]) expect(deterministic(u(p))).toBe(true)
     for (const p of [POS_NOW, "/v1/magnetic?lat=1&lon=1", "/v1/weather?lat=1&lon=1", "/v1/health"]) expect(deterministic(u(p))).toBe(false)
   })
   it("internal (Api entrypoint, what Workers Caching stores)", () => {

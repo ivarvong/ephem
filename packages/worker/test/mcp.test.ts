@@ -32,7 +32,8 @@ const POS = { lat: 40.7127, lon: -74.0059, height: -22.6, time: "2026-10-28T11:5
 const DAY = { lat: 40.7127, lon: -74.0059, height: -22.6, date: "2026-10-28", tz: "America/New_York" }
 const ALIGN = { body: "moon", targetLat: 40.68925, targetLon: -74.0445, targetHeight: 63.4, observerHeight: -30.9, start: "2026-10-28T23:45:00Z", end: "2026-10-29T02:00:00Z", stepSeconds: 1800, maxDistanceKm: 20, observerLat: 40.6892, observerLon: -74.076 }
 const WX = { lat: 40.7, lon: -74, n: 3 }
-const REST: Record<string, [string, Record<string, unknown>]> = { sun_moon_position: ["/v1/position", POS], day_events: ["/v1/day", DAY], alignment: ["/v1/alignment", ALIGN], weather_nearest: ["/v1/weather", WX] }
+const TRACK = { lat: 40.7127, lon: -74.0059, height: -22.6, start: "2026-10-28T00:00:00Z", end: "2026-10-28T06:00:00Z", stepSeconds: 1800 }
+const REST: Record<string, [string, Record<string, unknown>]> = { sun_moon_position: ["/v1/position", POS], day_events: ["/v1/day", DAY], alignment: ["/v1/alignment", ALIGN], sun_moon_track: ["/v1/track", TRACK], weather_nearest: ["/v1/weather", WX] }
 
 /** Modern (2026-07-28) request: _meta plus the mirrored headers. */
 const modern = (method: string, params: Record<string, unknown> = {}, id: number | string = 1, extra: Record<string, string> = {}) => post({
@@ -49,7 +50,8 @@ async function post(body: unknown, headers: Record<string, string> = {}) {
 const restGet = async (path: string, q: Record<string, unknown>) => (await handler(new Request(`http://x${path}?${new URLSearchParams(Object.entries(q).map(([k, v]) => [k, String(v)]))}`))).json()
 const strip = (x: any) => { const { provenance: _p, ...rest } = x; return rest }
 /** The JSON that is a pure function of the inputs: provenance carries cache tiers / timings; weather has ages vs now. */
-const comparable = (tool: string, x: any) => tool === "weather_nearest" ? { stations: x.stations.map((s: any) => s.raw), observer: x.observer } : strip(x)
+// weather: observer.magneticDeclination is full precision at "now", so two calls ms apart differ at ~1e-12°: compare it at 4 dp
+const comparable = (tool: string, x: any) => tool === "weather_nearest" ? { stations: x.stations.map((s: any) => s.raw), observer: { ...x.observer, magneticDeclination: x.observer.magneticDeclination.toFixed(4) } } : strip(x)
 
 describe("MCP handshake and discovery", () => {
   it("legacy initialize negotiates the client's version (or the newest legacy one), no session id", async () => {
@@ -69,7 +71,7 @@ describe("MCP handshake and discovery", () => {
   })
   it("tools/list: deterministic, schemas generated from the REST contract, every property documented", async () => {
     const r = await modern("tools/list"), tools = r.body.result.tools
-    expect(tools.map((t: any) => t.name)).toEqual(["sun_moon_position", "day_events", "crossing", "alignment", "weather_nearest"])
+    expect(tools.map((t: any) => t.name)).toEqual(["sun_moon_position", "day_events", "crossing", "alignment", "weather_nearest", "sun_moon_track"])
     expect((await legacy("tools/list")).body.result.tools).toEqual(tools)
     const pos = tools[0]
     expect(pos.inputSchema).toMatchObject({ type: "object", required: ["lat", "lon"], additionalProperties: false,
@@ -79,6 +81,7 @@ describe("MCP handshake and discovery", () => {
     expect(tools[2].inputSchema.properties.limb.enum).toEqual(["upper", "center", "lower"])
     expect(tools[3].inputSchema.properties.body.enum).toEqual(["sun", "moon"])
     expect(tools[4].inputSchema.properties.n.type).toBe("integer")
+    expect(tools[5].inputSchema).toMatchObject({ required: ["lat", "lon", "start", "end"], properties: { stepSeconds: { type: "integer", minimum: 60, maximum: 3600 } } })
     for (const t of tools) for (const [k, v] of Object.entries<any>(t.inputSchema.properties)) expect(v.description, `${t.name}.${k}`).toBeTruthy()
     for (const t of TOOLS) expect(Object.keys(t.docs).toSorted()).toEqual(Object.keys(t.query).toSorted())   // docs cannot drift from the query either
     expect((await legacy("tools/list", undefined, 1, "2025-03-26")).body.result.tools[0].outputSchema).toBeUndefined()

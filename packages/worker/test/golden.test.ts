@@ -24,6 +24,8 @@ export const GOLDEN: Record<string, string> = {
   "alignment.moon.liberty": "/v1/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&observerHeight=-30.9&start=2026-10-28T23:45:00Z&end=2026-10-29T02:00:00Z&stepSeconds=1800&maxDistanceKm=20&observerLat=40.6892&observerLon=-74.076",
   "crossing.sun.civil": "/v1/crossing?body=sun&altitude=-6&lat=40.7&lon=-74&date=2026-10-28&tz=America/New_York",
   "crossing.moon.apparent": "/v1/crossing?body=moon&altitude=0&altitudeType=apparent&lat=51.5&lon=-0.12&start=2026-10-27T00:00:00Z&end=2026-10-30T00:00:00Z",
+  "track.nyc": "/v1/track?lat=40.7127&lon=-74.0059&height=-22.6&start=2026-10-27T12:00:00Z&end=2026-10-29T12:00:00Z",
+  "track.tromso.step": "/v1/track?lat=69.6492&lon=18.9553&start=2026-11-15T00:00:00Z&end=2026-11-16T00:00:00Z&stepSeconds=600&temperature=-15&pressure=1020&horizon=geometric",
   "magnetic.nyc": "/v1/magnetic?lat=40.7&lon=-74&time=2026-10-29T12:00:00Z",
 }
 

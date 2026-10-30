@@ -119,8 +119,33 @@ describe("worker handler", () => {
     const a = await get("/v1/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&observerHeight=-30.9&start=2026-10-28T23:45:00Z&end=2026-10-29T02:00:00Z&stepSeconds=1800&maxDistanceKm=20&observerLat=40.6892&observerLon=-74.0760")
     expect(a.status).toBe(200); expect(a.body.track.length).toBe(5); expect(a.body.track[0]).not.toHaveProperty("iterations")
   })
+  it("track: one answer for the whole grid, each sample bit-identical to /v1/position at that instant", async () => {
+    const t = await get("/v1/track?lat=40.7127&lon=-74.0059&height=-22.6&start=2026-10-28T00:00:00Z&end=2026-10-30T00:00:00Z")
+    expect(t.status).toBe(200); expect(t.body).toMatchObject({ start: "2026-10-28T00:00:00.000Z", end: "2026-10-30T00:00:00.000Z", stepSeconds: 1200, count: 145 })
+    for (const b of ["sun", "moon"]) for (const f of ["azimuth", "altitude", "apparentAltitude"]) expect(t.body[b][f].length).toBe(145)
+    expect(t.body.sun.apparentAltitude).toContain(null)   // night: below the sea horizon
+    for (const i of [0, 31, 72, 144]) {
+      const p = await get(`/v1/position?lat=40.7127&lon=-74.0059&height=-22.6&time=${new Date(Date.parse(t.body.start) + i * 1200e3).toISOString()}`)
+      for (const b of ["sun", "moon"]) for (const f of ["azimuth", "altitude", "apparentAltitude"]) expect(t.body[b][f][i], `${b}.${f}[${i}]`).toBe(p.body[b][f])
+    }
+    expect(t.body.observer).toEqual((await get("/v1/position?lat=40.7127&lon=-74.0059&height=-22.6&time=2026-10-28T00:00:00Z")).body.observer)
+    expect(t.body.provenance.diagnostics.blocks.length).toBeGreaterThan(0)
+  })
+  it("track is bounded and grid-aligned (stable cache keys, no CPU bombs)", async () => {
+    const base = "/v1/track?lat=40.7&lon=-74"
+    const off = await get(`${base}&start=2026-10-28T00:10:00Z&end=2026-10-28T06:00:00Z`)   // not on the 20 min grid
+    expect(off.status).toBe(422); expect(off.body.message).toMatch(/start=2026-10-28T00:00:00Z, end=2026-10-28T06:00:00Z/)
+    expect((await get(`${base}&start=2026-10-28T00:00:00Z&end=2026-10-27T00:00:00Z`)).status).toBe(422)                     // end before start
+    expect((await get(`${base}&start=2026-10-20T00:00:00Z&end=2026-10-29T00:00:00Z`)).body.message).toMatch(/at most 8 days/)
+    expect((await get(`${base}&start=2026-10-28T00:00:00Z&end=2026-10-29T00:01:00Z&stepSeconds=60`)).body.message).toMatch(/at most 1441 samples/)
+    expect((await get(`${base}&start=2026-10-28T00:00:00Z&end=2026-10-29T00:00:00Z&stepSeconds=60`)).body.count).toBe(1441)    // the bound itself is fine
+    expect((await get(`${base}&start=2026-10-28T00:00:00Z&end=2026-10-28T01:00:00Z&stepSeconds=59`)).status).toBe(400)
+    expect((await get(`${base}&start=1960-01-01T00:00:00Z&end=1960-01-02T00:00:00Z`)).status).toBe(422)
+    expect((await get(`${base}&start=2026-10-28T00:00:00Z&end=2026-10-28T01:00:00Z&time=x`)).status).toBe(400)                // unknown parameter
+  })
   it("serves OpenAPI and docs", async () => {
     expect((await get("/openapi.json")).body.paths["/v1/alignment"]).toBeDefined()
+    expect((await get("/openapi.json")).body.paths["/v1/track"]).toBeDefined()
     const docs = await handler(new Request("http://x/docs")); expect(docs.status).toBe(200); expect(docs.headers.get("content-type")).toMatch(/html/); expect(await docs.text()).toContain("/openapi.json")
   })
 })

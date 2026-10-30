@@ -41,6 +41,7 @@ for p in "/" "/docs" "/openapi.json" "/v1/position?lat=40.7&lon=-74" "/v1/positi
          "/v1/day?lat=40.7&lon=-74&date=2026-10-29&tz=America/New_York" "/v1/magnetic?lat=40.7&lon=-74" \
          "/v1/crossing?lat=40.7&lon=-74&body=sun&altitude=-0.8333&direction=set&date=2026-10-29&tz=America/New_York" \
          "/v1/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&start=2026-10-29T02:00:00Z&end=2026-10-29T03:00:00Z" \
+         "/v1/track?lat=40.7&lon=-74&start=2026-10-29T00:00:00Z&end=2026-10-30T00:00:00Z" \
          "/v1/weather?lat=40.7&lon=-74"; do
   c=$(curl -s -o /dev/null -w "%{http_code}" "$B$p"); echo "$c $p"; [ "$c" = 200 ] || fail=1
 done
