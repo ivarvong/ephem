@@ -41,7 +41,8 @@ describe("tail rows", () => {
       expect(routeOf(`https://ephem.ivar.workers.dev${p}?lat=1`), p).toBe(p)
     for (const p of ROUTES) expect(routeOf(`http://api.internal${p}`), p).toBe(p)
     expect(routeOf("https://x/block/v1/abc/3")).toBe("other")
-    expect(routeCounts([toRow(item()), toRow(item()), toRow(item({ entrypoint: "Api" }))])).toEqual({ "default /v1/alignment": 2, "Api /v1/alignment": 1 })
+    expect(routeCounts([toRow(item()), toRow(item()), toRow(item({ entrypoint: "Api" }))])).toEqual(["default /v1/alignment 2", "Api /v1/alignment 1"])
+    expect(routeCounts([toRow(item({ entrypoint: undefined, event: { request: { url: "https://x/llms.txt" } } }))])).toEqual(["- /llms.txt 1"])
   })
   it("shapeOf reports key names only", () => {
     const s = shapeOf(item()); expect(s.item).toContain("outcome"); expect(JSON.stringify(s)).not.toContain("ephem.ivar.workers.dev")
@@ -56,7 +57,7 @@ describe("tail rows", () => {
       await Promise.all(waits)
     } finally { console.error = orig; console.log = origLog }
     expect(sent).toHaveLength(1); expect(sent[0]).toHaveLength(2)
-    expect(logs.map(l => JSON.parse(l)).filter(l => l.tail_batch).map(l => l.tail_batch)).toEqual([{ rows: 2, routes: { "default /v1/alignment": 2 } }, { rows: 1, routes: { "default /v1/alignment": 1 } }])
+    expect(logs.map(l => JSON.parse(l)).filter(l => l.tail_batch).map(l => l.tail_batch)).toEqual([{ rows: 2, routes: ["default /v1/alignment 2"] }, { rows: 1, routes: ["default /v1/alignment 1"] }])
     expect(errs).toHaveLength(1); expect(JSON.parse(errs[0]!).basin_send_failed).toMatchObject({ stream: "ephem_invocations", rows: 1 })
   })
 })

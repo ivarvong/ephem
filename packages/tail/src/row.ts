@@ -53,11 +53,13 @@ export const toRow = (t: TailItemLike, now = Date.now()): InvocationRow => {
   return row as unknown as InvocationRow
 }
 
-/** `${entrypoint} ${route}` → count, for the per-batch `tail_batch` log line. */
-export const routeCounts = (rows: ReadonlyArray<InvocationRow>): Record<string, number> => {
-  const c: Record<string, number> = {}
-  for (const r of rows) { const k = `${r.entrypoint ?? "-"} ${r.route ?? "-"}`; c[k] = (c[k] ?? 0) + 1 }
-  return c
+/** ["<entrypoint> <route> <count>", …] for the per-batch `tail_batch` log line. Strings, not an object: Workers Observability
+ *  splits object keys on "." (a "/llms.txt" key came back as {"/llms": {"txt": 1}}). A missing entrypoint (the default
+ *  handler's TailItem has none) is "-". */
+export const routeCounts = (rows: ReadonlyArray<InvocationRow>): string[] => {
+  const c = new Map<string, number>()
+  for (const r of rows) { const k = `${r.entrypoint ?? "-"} ${r.route ?? "-"}`; c.set(k, (c.get(k) ?? 0) + 1) }
+  return [...c].map(([k, n]) => `${k} ${n}`)
 }
 
 /** Key names (never values) of a TailItem, logged once per isolate so the doc records what the runtime actually sends. */
