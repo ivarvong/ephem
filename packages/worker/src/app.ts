@@ -9,6 +9,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder"
 import * as HttpApiError from "effect/http-api/HttpApiError"
 import { EphemApi, QUERY_PARAMS } from "@ephem/api"
 import { HandlersLive } from "./handlers.ts"
+import { SearchLive } from "./search.ts"
 import type { Blocks } from "./blocks.ts"
 import { GeoidInstalled, type Geoid } from "./geoid.ts"
 import { TracerLive } from "./trace.ts"
@@ -61,7 +62,7 @@ export const makeApp = (blocks: Layer.Layer<Blocks>, edge: Role = { role: "local
     Gateway,
     Mcp,
     TracerLive,
-  ).pipe(Layer.provide(ExplainSchemaErrors.layer), Layer.provide(HandlersLive), Layer.provide(weather), Layer.provide(blocks), Layer.provide(geoid), Layer.provide(Layer.succeed(Edge, edge)))
+  ).pipe(Layer.provide(ExplainSchemaErrors.layer), Layer.provide(Layer.mergeAll(HandlersLive, SearchLive)), Layer.provide(weather), Layer.provide(blocks), Layer.provide(geoid), Layer.provide(Layer.succeed(Edge, edge)))
 
 export const makeHandler = (blocks: Layer.Layer<Blocks>, edge?: Role, weather?: Layer.Layer<Weather>, geoid?: Layer.Layer<Geoid>) => {
   const { handler } = HttpRouter.toWebHandler(makeApp(blocks, edge, weather, geoid) as Layer.Layer<never, never, HttpRouter.HttpRouter>, { disableLogger: true })

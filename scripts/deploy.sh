@@ -72,6 +72,10 @@ done
 curl -s "$B/docs" | grep -q 'href="/openapi.json"' && echo "ok  /docs links /openapi.json (no JS)" || { echo "FAIL /docs has no /openapi.json link"; fail=1; }
 curl -s "$B/llms.txt" | grep -q "$B/mcp" && echo "ok  /llms.txt names the MCP endpoint" || { echo "FAIL /llms.txt"; fail=1; }
 c=$(curl -s -o /dev/null -w "%{http_code}" "$B/v1/day?lat=40.7&lon=-74&date=2026-10-29&tz=America/New_York&bogus=1"); echo "$c unknown-param (want 400)"; [ "$c" = 400 ] || fail=1
+# POST /v1/alignment/search: the customer's Nov 16 2026 pass over a bbox of Brooklyn Bridge Park (fans out to a cached window GET)
+S=$(curl -s -w "\n%{http_code}" -X POST -H 'content-type: application/json' "$B/v1/alignment/search" \
+  -d '{"body":"moon","target":{"lat":40.68925,"lon":-74.0445,"height":70,"heightRef":"msl"},"region":[-73.9995,40.7,-73.993,40.706],"observerHeight":5,"heightRef":"msl","start":"2026-11-16T00:00:00Z","end":"2026-11-18T00:00:00Z"}')
+c=$(echo "$S" | tail -1); echo "$S" | head -1 | grep -q '"enter":{"time":"2026-11-17T03:4' || c="$c (no Nov 17 03:4x entry)"; echo "$c POST /v1/alignment/search"; [ "$c" = 200 ] || fail=1
 cd "$WT" && node --experimental-strip-types scripts/obs/mcp-probe.ts "$B" | tail -1
 [ $fail = 0 ] || { echo "SMOKE FAILED: roll back with cf (cf cli search \"rollback worker deployment\")" >&2; exit 1; }
 git -C "$ROOT" tag -f "deployed/$(date -u +%Y%m%dT%H%M%SZ)" "$SHA" >/dev/null

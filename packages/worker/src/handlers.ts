@@ -10,15 +10,15 @@ import { Geoid, geoidCache } from "./geoid.ts"
 import { EarthLive } from "./weather.ts"
 
 export const VERSION = "0.1.0"
-const PROV = { implementation: "@ephem/worker", version: VERSION, ephemeris: "JPL DE440 (linux_p1550p2650.440)" }
+export const PROV = { implementation: "@ephem/worker", version: VERSION, ephemeris: "JPL DE440 (linux_p1550p2650.440)" }
 
-const parseUtc = (s: string) => Effect.gen(function* () {
+export const parseUtc = (s: string) => Effect.gen(function* () {
   const ms = Date.parse(s)
   if (!Number.isFinite(ms)) return yield* new InvalidInput({ message: `not a UTC instant: ${s}` })
   if (ms < SUPPORTED.fromMs || ms >= SUPPORTED.toMs) return yield* new OutOfRange({ message: `${s} is outside 1972-01-01 … 2149-12-31 UTC` })
   return ms
 })
-const jd = (ms: number) => instant(ms).jdTDB
+export const jd = (ms: number) => instant(ms).jdTDB
 
 type Attrs = Record<string, string | number | boolean | undefined>
 const prefix = (p: string, o: object): Attrs => Object.fromEntries(Object.entries(o).map(([k, v]) => [p + k, v]))
@@ -31,13 +31,13 @@ const geoidAt = (lat: number) => Effect.gen(function* () {
   yield* Effect.annotateCurrentSpan({ ...s, "ephem.geoid_cache": geoidCache(s) })
 }).pipe(Effect.withSpan("geoid.load"))
 /** Every geoid band a latitude range touches (alignment: standing points within maxDistanceKm of the target), plus `extra`. */
-const geoidAcross = ([lo, hi]: [number, number], ...extra: number[]) => {
+export const geoidAcross = ([lo, hi]: [number, number], ...extra: number[]) => {
   const lats = [lo, hi, ...extra]; for (let x = lo + 1; x < hi; x += 1) lats.push(x)   // bands are 4° tall: 1° steps miss none
   return Effect.all(lats.map(geoidAt), { concurrency: "unbounded", discard: true })
 }
 /** Run a pure computation over prefetched blocks (and whatever `pre` loads concurrently: the observer's geoid bands),
  *  timing it and attaching diagnostics; spans carry cache tiers and work counts. */
-const compute = <A, E = never, R = never>(name: string, blocks: ReadonlyArray<number>, f: (src: Parameters<typeof instrumented>[0]) => A, attrs: (out: A) => Attrs = () => ({}),
+export const compute = <A, E = never, R = never>(name: string, blocks: ReadonlyArray<number>, f: (src: Parameters<typeof instrumented>[0]) => A, attrs: (out: A) => Attrs = () => ({}),
   pre: Effect.Effect<void, E, R> = Effect.void as Effect.Effect<void, E, R>) => Effect.gen(function* () {
   const { load } = yield* Blocks
   const blocksLoad = load(blocks).pipe(

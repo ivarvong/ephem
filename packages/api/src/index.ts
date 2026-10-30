@@ -31,6 +31,7 @@ export const CONVENTIONS = {
   unknownParameters: "Every endpoint rejects query parameters it does not define with 400 InvalidRequest, listing the allowed ones.",
   track: "/v1/track: the Sun's and Moon's azimuth, true altitude and apparent altitude at every point of a UTC grid (start, end on multiples of stepSeconds since 1970-01-01T00:00Z), columnar; each sample equals /v1/position's values at that instant bit for bit. Bounded: stepSeconds 60–3600, at most 8 days and 1 441 samples.",
   sightline: "/v1/sightline: the sight line's height above sea level against ground distance from an eye to a target (straight chord between WGS-84 ECEF points, so Earth's curvature is included; and the refracted ray with k = 0.13, which runs k·s₁·s₂/(2R) higher), plus each obstacle point's clearance. Terrestrial refraction is modelled as that constant coefficient only.",
+  search: "POST /v1/alignment/search (JSON body): every pass in [start, end) (≤ 400 days) when the alignment standing point lies inside a region (GeoJSON Polygon / MultiPolygon with holes, or bbox [w, s, e, n]); segments with exact entry / exit (solved on the track to 1 mm), the Moon's az / alt / illuminated fraction and the Sun's altitude per pass; filters minIlluminated, maxSunAltitude; include sun, phase; aim. Candidates come from the target's elevation and bearing band over the whole region (no representative elevation), scanned with proven rate bounds. Computed per 30-day window (GET /v1/alignment/search/window, immutable), so overlapping scans hit the cache.",
   passes: "With observerLat/Lon: instants when the body's azimuth equals the azimuth to the target (±180° wraps excluded); altitudeOffset tells whether it is above (+) or behind (−) the target top.",
 } as const
 
@@ -419,6 +420,119 @@ export const WeatherResponse = S.Struct({
   feed: Feed,
 })
 
+// ─────────────────────────────── /v1/alignment/search ───────────────────────────────
+// One call for "every pass, in a date range, when the alignment standing point is inside a region". The front door
+// (POST) validates and canonicalises the request, then fans out to one cached, immutable GET per 30-day window on a fixed
+// UTC grid (/v1/alignment/search/window), so repeated and overlapping scans hit Workers Caching; filters run after the cache.
+const GeoPosition = S.Array(S.Finite).check(S.isMinLength(2)).annotate(d0("[lon, lat] in degrees (a third element, altitude, is ignored)."))
+const BboxMember = S.optionalKey(S.Array(S.Finite))
+export const GeoJsonPolygon = S.Struct({ type: S.Literal("Polygon"), coordinates: S.Array(S.Array(GeoPosition)), bbox: BboxMember })
+export const GeoJsonMultiPolygon = S.Struct({ type: S.Literal("MultiPolygon"), coordinates: S.Array(S.Array(S.Array(GeoPosition))), bbox: BboxMember })
+export const GeoJsonFeature = S.Struct({
+  type: S.Literal("Feature"), geometry: S.Union([GeoJsonPolygon, GeoJsonMultiPolygon]),
+  properties: S.optionalKey(S.NullOr(S.Unknown)), id: S.optionalKey(S.Union([S.String, S.Finite])), bbox: BboxMember,
+})
+export const Bbox = S.Tuple([Lon, Lat, Lon, Lat]).annotate(d0("[west, south, east, north], degrees (RFC 7946 bbox order); no antimeridian crossing."))
+export const SearchRegion = S.Union([GeoJsonPolygon, GeoJsonMultiPolygon, GeoJsonFeature, Bbox]).annotate(d0(
+  "Where you can stand: a GeoJSON Polygon or MultiPolygon (holes allowed; a Feature wrapping one is accepted) or a bbox. Edges are straight lines in (lon, lat) (RFC 7946 §3.1.1); insideness is even-odd per polygon. At most 1 000 vertices and 100 rings, ≤ 50 km across, ≤ 100 km from the target and not containing it. Coordinates are quantised to 1e-7° (≤ 1.1 cm)."))
+const Fraction = S.Finite.check(S.isBetween({ minimum: 0, maximum: 1 }))
+export const SearchInclude = S.Literals(["sun", "phase"])
+export const SearchPayload = S.Struct({
+  body: S.Literals(["sun", "moon"]),
+  target: S.Struct({
+    lat: Lat, lon: Lon,
+    height: Height.annotate(d0("Height of the point to frame (e.g. the figure's middle), metres; see heightRef.")),
+    heightRef: S.optionalKey(HeightRef.annotate(d0("What target.height is measured from: ellipsoid (default) or msl (EGM96)."))),
+  }),
+  region: SearchRegion,
+  observerHeight: S.optionalKey(Height.annotate(d0("Eye height, metres; see heightRef. Default: the eye on the geoid (heightMsl 0)."))),
+  heightRef: S.optionalKey(HeightRef.annotate(d0("What observerHeight is measured from: ellipsoid (default) or msl, in which case the eye is observerHeight + N(P) at every standing point P."))),
+  start: UtcString, end: UtcString.annotate(d0("Passes whose first entry lies in [start, end); at most 400 days.")),
+  temperature: S.optionalKey(Temperature), pressure: S.optionalKey(Pressure), dut1: S.optionalKey(Dut1),
+  aim: S.optionalKey(AimParam.annotate(d0("Which point of the disc sits on the target (as /v1/alignment): center (default), upper, lower, litCentroid (Moon)."))),
+  include: S.optionalKey(S.Array(SearchInclude).annotate(d0("Extra context per pass: sun (azimuth, true and apparent altitude) and/or phase (the Moon's full phase block)."))),
+  minIlluminated: S.optionalKey(Fraction.annotate(d0("Keep passes whose Moon illuminated fraction (at the pass time) is at least this, 0–1."))),
+  maxSunAltitude: S.optionalKey(S.Finite.check(S.isBetween({ minimum: -90, maximum: 90 })).annotate(d0("Keep passes whose Sun centre true altitude (at the pass time, from the standing point) is at most this, degrees; e.g. −4 for a dark sky."))),
+})
+export const SearchWindowQuery = {
+  body: S.Literals(["sun", "moon"]),
+  targetLat: num(Lat), targetLon: num(Lon), targetHeight: num(Height), targetHeightRef: S.optionalKey(HeightRef),
+  observerHeight: optNum(Height), heightRef: S.optionalKey(HeightRef),
+  region: S.String.check(S.isPattern(/^r1\.[A-Za-z0-9_-]+$/)).annotate(d0("The region in the canonical r1 encoding (the POST response's region.encoding).")),
+  start: UtcString.annotate(d0("Window start: a multiple of 30 days since 1970-01-01T00:00Z; the window is [start, start + 30 d).")),
+  temperature: optNum(Temperature), pressure: optNum(Pressure), dut1: optNum(Dut1),
+  aim: S.optionalKey(AimParam),
+}
+export const SearchCrossing = S.Struct({ time: UtcString, lat: Lat, lon: Lon })
+export const SearchSegment = S.Struct({
+  enter: SearchCrossing.annotate(d0("Where and when the standing point crosses into the region (a point on a region edge).")),
+  exit: SearchCrossing,
+})
+export const SearchPass = S.Struct({
+  time: UtcString.annotate(d0("Midpoint of the pass's first entry and last exit; standingPoint, moon, sunAlt, sun and phase are at this instant.")),
+  segments: S.Array(SearchSegment).annotate(d0("Each in-region interval of the ground track, in time order (piers and inlets split a pass).")),
+  standingPoint: S.Struct({ lat: Lat, lon: Lon, distanceKm: S.Finite, azimuth: Degrees, apparentAltitude: Degrees }).annotate(d0("The alignment standing point at `time` (may lie between segments, outside the region).")),
+  moon: S.Struct({
+    az: Degrees.annotate(d0("The Moon's azimuth from the standing point, degrees true.")),
+    alt: S.NullOr(Degrees).annotate(d0("The Moon's apparent (refracted) altitude from the standing point, degrees.")),
+    illuminated: S.Finite.annotate(d0("Illuminated fraction, 0–1 (geocentric, as /v1/position).")),
+    angularRadius: Degrees,
+  }),
+  sunAlt: Degrees.annotate(d0("The Sun centre's true altitude from the standing point, degrees (twilight convention: −6/−12/−18).")),
+  sun: S.optionalKey(S.Struct({ azimuth: Degrees, altitude: Degrees, apparentAltitude: S.NullOr(Degrees) })),
+  phase: S.optionalKey(MoonPhase),
+})
+export const SearchGeometry = S.Struct({
+  reference: S.Struct({ lat: Lat, lon: Lon }).annotate(d0("The region's bbox centre, where the scan looks at the body.")),
+  distanceM: S.Struct({ min: S.Finite, max: S.Finite }).annotate(d0("Nearest and farthest region points from the target, metres (exact WGS-84 geodesics).")),
+  elevation: S.Struct({ min: Degrees, max: Degrees }).annotate(d0("The target's apparent elevation over the whole region at the eye height, degrees: the band the body's apparent altitude must be in.")),
+  azimuth: S.Struct({ min: Degrees, max: Degrees }).annotate(d0("Forward azimuths from the region to the target, degrees true.")),
+  band: S.Struct({ trueAltitudeMin: Degrees, trueAltitudeMax: Degrees, azimuthMin: Degrees, azimuthMax: Degrees }).annotate(d0("The same band for the body seen from the reference point, as true altitude, margins included.")),
+  margins: S.Struct({ altitude: Degrees, azimuth: Degrees }),
+  maxDistanceKm: S.Finite, referenceSpreadM: S.Finite,
+})
+export const SearchCounters = S.Record(S.String, S.Finite).annotate(d0("Work counts: scanEvaluations, spans, spanSeconds, trackEvaluations, crossings, refineEvaluations, segments, anomalies (0 unless an invariant failed), maxSagittaM."))
+export const SearchRegionInfo = S.Struct({
+  encoding: S.String.annotate(d0("Canonical r1 encoding: the cache key part for the region (window GETs carry it).")),
+  polygons: S.Int, rings: S.Int, vertices: S.Int,
+  bbox: S.Tuple([Lon, Lat, Lon, Lat]),
+  geoidUndulation: S.Struct({ min: S.Finite, max: S.Finite }).annotate(d0("EGM96 N over the region's vertices, metres.")),
+})
+export const SearchConventions = S.Struct({
+  definition: S.String, region: S.String, segments: S.String, passes: S.String, candidates: S.String, windows: S.String, filters: S.String,
+  azimuth: S.String, terrestrialRefraction: S.String, heights: S.String,
+  observerHeightRef: S.Literals(["ellipsoid", "msl", "default"]), targetHeightRef: HeightRef,
+  terrestrialRefractionK: S.Finite,
+  refraction: S.Struct({ model: S.String, temperatureC: S.Finite, pressureHpa: S.Finite }),
+  geoid: GeoidConventions,
+  aim: S.optionalKey(S.Struct({ point: AimParam, definition: S.String })),
+})
+const SearchObserver = S.Struct({
+  observerHeight: S.Finite.annotate(d0("As given (0 with heightRef msl when omitted: the eye on the geoid).")),
+  heightRef: S.Literals(["ellipsoid", "msl", "default"]),
+})
+export const SearchWindowResponse = S.Struct({
+  body: S.Literals(["sun", "moon"]), start: UtcString, end: UtcString,
+  target: SkyObserver, observer: SearchObserver, region: SearchRegionInfo,
+  passes: S.Array(SearchPass).annotate(d0("Passes whose first entry lies in [start, end), every field (sun and phase included).")),
+  geometry: SearchGeometry, counters: SearchCounters,
+  conventions: SearchConventions,
+  provenance: Provenance,
+})
+export const SearchResponse = S.Struct({
+  body: S.Literals(["sun", "moon"]), start: UtcString, end: UtcString,
+  target: SkyObserver, observer: SearchObserver, region: SearchRegionInfo,
+  passes: S.Array(SearchPass).annotate(d0("Passes whose first entry lies in [start, end) and that pass the filters, in time order.")),
+  search: S.Struct({
+    geometry: SearchGeometry,
+    windows: S.Array(S.Struct({ start: UtcString, end: UtcString, passes: S.Int, cache: S.String.annotate(d0("Workers Caching status of this window's GET (HIT, MISS, …; LOCAL when computed in-process).")) })),
+    passesBeforeFilters: S.Int,
+    counters: SearchCounters.annotate(d0("Summed over the windows computed for this answer (cache hits report the counts of the run that filled them).")),
+  }),
+  conventions: SearchConventions,
+  provenance: Provenance,
+})
+
 // ─────────────────────────────── errors ───────────────────────────────
 export class OutOfRange extends S.TaggedError<OutOfRange>()("OutOfRange", { message: S.String }, { httpApiStatus: 422 }) {}
 export class InvalidInput extends S.TaggedError<InvalidInput>()("InvalidInput", { message: S.String }, { httpApiStatus: 422 }) {}
@@ -434,6 +548,12 @@ export const SkyGroup = HttpApiGroup.make("sky").add(
   HttpApiEndpoint.get("alignment", "/v1/alignment", { query: AlignmentQuery, success: AlignmentResponse, error: [OutOfRange, InvalidInput, GeoidUnavailable] }),
   HttpApiEndpoint.get("sightline", "/v1/sightline", { query: SightlineQuery, success: SightlineResponse, error: [InvalidInput, GeoidUnavailable] }),
   HttpApiEndpoint.get("track", "/v1/track", { query: TrackQuery, success: TrackResponse, error: [OutOfRange, InvalidInput, GeoidUnavailable] }),
+)
+/** Unknown body fields are rejected like unknown query parameters. */
+export const SearchGroup = HttpApiGroup.make("search").add(
+  HttpApiEndpoint.post("search", "/v1/alignment/search", { payload: SearchPayload, success: SearchResponse, error: [OutOfRange, InvalidInput, GeoidUnavailable] })
+    .annotate(HttpApi.PayloadParseOptions, { onExcessProperty: "error" }),
+  HttpApiEndpoint.get("searchWindow", "/v1/alignment/search/window", { query: SearchWindowQuery, success: SearchWindowResponse, error: [OutOfRange, InvalidInput, GeoidUnavailable] }),
 )
 export const EarthGroup = HttpApiGroup.make("earth").add(
   HttpApiEndpoint.get("magnetic", "/v1/magnetic", { query: MagneticQuery, success: MagneticResponse, error: [OutOfRange, InvalidInput] }),
@@ -457,16 +577,17 @@ export const API_DESCRIPTION = [
   "7. `include=sun,phase` on /v1/alignment (per track point and pass) and /v1/crossing (per crossing): the Sun's azimuth, true and apparent altitude seen from that point, and the Moon's phase.",
   "8. `aim=center|upper|lower|litCentroid` on /v1/alignment and /v1/crossing (litCentroid: the Moon's lit-area centroid, (4r/3π)(1 − cos i) towards the bright limb), with aimOffset/aimAngle per point; /v1/position moon.brightLimbAngleFromVertical (clockwise from the local vertical, topocentric). BEHAVIOUR CHANGE: none for existing queries (aim defaults to center).",
   "9. New: /v1/sightline (the sight line's height above sea level against distance, with Earth curvature and k = 0.13 refraction, and obstacle clearances). /docs is plain HTML (no JavaScript needed); /llms.txt; the Scalar reference moved to /docs/interactive.",
+  "10. New: POST /v1/alignment/search — every pass in [start, end) (≤ 400 days) during which the alignment standing point lies inside a standing region (GeoJSON Polygon / MultiPolygon with holes, or a bbox), with exact entry and exit points (solved on the track to 1 mm, not sampled), the Moon's azimuth / altitude / illumination and the Sun's altitude per pass, optional filters (minIlluminated, maxSunAltitude) and include=sun,phase. Candidates come from the target's elevation band over the whole region, not one representative elevation. Computed per 30-day window (GET /v1/alignment/search/window, immutable and cached), so overlapping scans share work.",
 ].join("\n")
 
 /** Unknown query parameters are an error, not silently ignored (a dropped `temperature` changes nothing and says nothing). */
-export const EphemApi = HttpApi.make("ephem").add(SkyGroup, EarthGroup, MetaGroup)
+export const EphemApi = HttpApi.make("ephem").add(SkyGroup, SearchGroup, EarthGroup, MetaGroup)
   .annotate(HttpApi.QueryParseOptions, { onExcessProperty: "error" })
   .annotate(OpenApi.Description, API_DESCRIPTION)
 /** The allowed query parameters per path, from the endpoint schemas (for error messages). */
 export const QUERY_PARAMS: Readonly<Record<string, ReadonlyArray<string>>> = {
   "/v1/position": Object.keys(PositionQuery), "/v1/day": Object.keys(DayQuery), "/v1/crossing": Object.keys(CrossingQuery),
-  "/v1/alignment": Object.keys(AlignmentQuery), "/v1/sightline": Object.keys(SightlineQuery), "/v1/track": Object.keys(TrackQuery), "/v1/magnetic": Object.keys(MagneticQuery), "/v1/weather": Object.keys(WeatherQuery), "/healthz": [],
+  "/v1/alignment": Object.keys(AlignmentQuery), "/v1/sightline": Object.keys(SightlineQuery), "/v1/alignment/search/window": Object.keys(SearchWindowQuery), "/v1/track": Object.keys(TrackQuery), "/v1/magnetic": Object.keys(MagneticQuery), "/v1/weather": Object.keys(WeatherQuery), "/healthz": [],
 }
 
 export type PositionResponse = typeof PositionResponse.Type
@@ -474,6 +595,9 @@ export type DayResponse = typeof DayResponse.Type
 export type CrossingResponse = typeof CrossingResponse.Type
 export type AlignmentResponse = typeof AlignmentResponse.Type
 export type SightlineResponse = typeof SightlineResponse.Type
+export type SearchResponse = typeof SearchResponse.Type
+export type SearchWindowResponse = typeof SearchWindowResponse.Type
+export type SearchPayload = typeof SearchPayload.Type
 export type TrackResponse = typeof TrackResponse.Type
 export type BodyPosition = typeof BodyPosition.Type
 export type WeatherResponse = typeof WeatherResponse.Type

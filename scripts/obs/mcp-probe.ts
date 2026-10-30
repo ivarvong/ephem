@@ -15,9 +15,11 @@ const ARGS = {
   alignment: { body: "moon", targetLat: 40.68925, targetLon: -74.0445, targetHeight: 70, targetHeightRef: "msl", observerHeight: 5, heightRef: "msl", start: "2026-11-17T03:44:30Z", end: "2026-11-17T03:46:00Z", stepSeconds: 30, maxDistanceKm: 8, aim: "litCentroid", include: "sun,phase" },
   sight_line: { observerLat: 40.6935, observerLon: -74.0017, observerHeight: 5, heightRef: "msl", targetLat: 40.68925, targetLon: -74.0445, targetHeight: 70, targetHeightRef: "msl", samples: 11, obstacles: "40.6894:-74.0166:25" },
   sun_moon_track: { lat: 40.7127, lon: -74.0059, height: -22.6, start: "2026-10-28T00:00:00Z", end: "2026-10-29T00:00:00Z", stepSeconds: 1200 },
+  alignment_search: { body: "moon", target: { lat: 40.68925, lon: -74.0445, height: 70, heightRef: "msl" }, region: [-73.9995, 40.7, -73.993, 40.706], observerHeight: 5, heightRef: "msl", start: "2026-11-16T00:00:00Z", end: "2026-11-18T00:00:00Z", include: ["phase"] },
   weather_nearest: { lat: 40.7, lon: -74, n: 3 },
 } as const
-const REST_PATH: Record<string, string> = { sun_moon_position: "/v1/position", day_events: "/v1/day", crossing: "/v1/crossing", alignment: "/v1/alignment", sight_line: "/v1/sightline", sun_moon_track: "/v1/track", weather_nearest: "/v1/weather" }
+const REST_PATH: Record<string, string> = { sun_moon_position: "/v1/position", day_events: "/v1/day", crossing: "/v1/crossing", alignment: "/v1/alignment", sight_line: "/v1/sightline", sun_moon_track: "/v1/track", weather_nearest: "/v1/weather", alignment_search: "/v1/alignment/search" }
+const POST_TOOLS = new Set(["alignment_search"])   // JSON body, not a query
 
 type Row = { step: string; expect: string; got: string; ok: boolean; ms: number; ray: string }
 const rows: Row[] = []
@@ -42,7 +44,9 @@ const comparable = (tool: string, x: any) => tool === "weather_nearest" ? JSON.s
   : JSON.stringify(x, (k, v) => (k === "provenance" ? undefined : v))
 async function restOf(tool: string) {
   const q = new URLSearchParams(Object.entries(ARGS[tool as keyof typeof ARGS]).map(([k, v]) => [k, String(v)]))
-  const t0 = performance.now(), r = await fetch(`${base}${REST_PATH[tool]}?${q}`)
+  const t0 = performance.now(), r = POST_TOOLS.has(tool)
+    ? await fetch(`${base}${REST_PATH[tool]}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(ARGS[tool as keyof typeof ARGS]) })
+    : await fetch(`${base}${REST_PATH[tool]}?${q}`)
   return { status: r.status, json: await r.json(), ms: performance.now() - t0 }
 }
 async function toolCall(era: "legacy" | "modern", tool: string) {
@@ -64,7 +68,7 @@ const notif = await send({ jsonrpc: "2.0", method: "notifications/initialized" }
 check("legacy.notifications/initialized", "202, empty", notif, notif.status === 202 && notif.text === "", `body=${JSON.stringify(notif.text)}`)
 const ltl = await legacy("legacy.tools/list", "tools/list")
 const names: string[] = ltl.json?.result?.tools?.map((t: any) => t.name) ?? []
-check("legacy.tools/list", "7 tools with schemas", ltl, names.length === 7 && ltl.json.result.tools.every((t: any) => t.inputSchema?.type === "object" && t.outputSchema?.type === "object"), names.join(","))
+check("legacy.tools/list", "8 tools with schemas", ltl, names.length === 8 && ltl.json.result.tools.every((t: any) => t.inputSchema?.type === "object" && t.outputSchema?.type === "object"), names.join(","))
 for (const t of names) await toolCall("legacy", t)
 const ping = await legacy("legacy.ping", "ping")
 check("legacy.ping", "result {}", ping, ping.status === 200 && JSON.stringify(ping.json?.result) === "{}", JSON.stringify(ping.json?.result))

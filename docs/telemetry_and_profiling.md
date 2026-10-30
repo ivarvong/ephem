@@ -25,7 +25,7 @@ Every number you report carries its version id (and trace id or profile file). L
 | `python3 scripts/obs/cold-split.py --from ISO --to ISO [--route track] [--json out.json]` | Api CPU by isolate warmth: each Api invocation of the route joined to its handler span's `ephem.isolate_computes` (1 = the isolate's first computation), p50/p90/p99 and CPU sum per bucket, and the runtime-GET → Effect-GET gap (isolate start-up before the router). Versions before the attribute fall back to "L1 empty" as the cold proxy. |
 | `python3 scripts/obs/metar-cache.py [--minutes 30] [--version 80f5b087] [--slice 2]` | METAR feed cache: per (version, tier) request count, share, wall and CPU p50/p99, parses, data age; upstream calls (MetarFeed's `{"evt":"metar.upstream"}`) by status, conditional, and per minute. Joins each `{"evt":"metar"}` log line to its invocation on `$metadata.requestId`. |
 | `python3 scripts/obs/cache-probe.py [base] --mode repeat\|unique\|burst [--keys 10] [--repeats 5] [--burst 50] [--routes day,…]` | Client-side cross-check of Workers Caching: per request `x-ephem-cache` (the Api's cf-cache-status relayed by the front door), client and server-timing latency; p50/p99 by (route, status). `burst` fires N concurrent identical cold requests (collapsing test); count Api invocations for that key with a `starts_with` filter on `$workers.event.request.url = https://api.internal/<path>?<sorted query>`. |
-| `node --experimental-strip-types scripts/obs/mcp-probe.ts [base]` | Full MCP client session against `/mcp` (legacy handshake + modern 2026-07-28 flow + error cases); every tool call (7 tools, incl. `crossing` and `sight_line`; the alignment call uses heightRef/targetHeightRef=msl, aim=litCentroid, include=sun,phase) is checked equal to its REST endpoint, plus the REST 400 UnknownParameter and a null `apparentAltitude` case. Pass/fail table with latency and cf-ray. Run after every deploy. |
+| `node --experimental-strip-types scripts/obs/mcp-probe.ts [base]` | Full MCP client session against `/mcp` (legacy handshake + modern 2026-07-28 flow + error cases); every tool call (8 tools, incl. `crossing` and `sight_line`; the alignment call uses heightRef/targetHeightRef=msl, aim=litCentroid, include=sun,phase) is checked equal to its REST endpoint (the POST tool `alignment_search` against its REST POST), plus the REST 400 UnknownParameter and a null `apparentAltitude` case. Pass/fail table with latency and cf-ray. Run after every deploy. |
 | `python3 scripts/obs/trace.py --jsonrpc-id <id>` | The trace of one MCP message (the probe's ids are `<run>-<step>`). |
 | `python3 scripts/obs/symbolize.py in.pb [out.pb]` | Replaces minified function names in a prod pprof with names read from the source (see "Source maps"). |
 
@@ -218,6 +218,35 @@ handler ─ geoid.load (concurrent with blocks.load) ─ L1 (isolate Map, ≤ 46
   as core's band source; `packages/worker/test/geoid.test.ts` injects the band fetch (fake R2, failing loopback, wrong
   bytes, concurrent dedupe).
 
+## Alignment search (`POST /v1/alignment/search`, src/search.ts)
+
+One POST in the front door → one `GET /v1/alignment/search/window` per 30-day window on the fixed UTC grid, all in parallel
+through `loopback.ts api` (cached, immutable, cross-version like every Api answer) → merge, filter, include. The front door
+does no astronomy; all CPU is in the window invocations (Api entrypoint, tier colo). Design and proofs: DESIGN.md §10.x.
+
+**Spans**
+
+| Span | Where | Attributes |
+| --- | --- | --- |
+| `search` | front door (POST handler) | `ephem.windows`, `ephem.windows_cache` (`HIT:12,MISS:2`; `LOCAL:n` in-process), `ephem.passes` (after filters), `ephem.passes_total`, `ephem.segments`, `ephem.region_vertices`, `ephem.span_days`, `ephem.search.anomalies` |
+| `search.window.fetch` | front door, one per window | `ephem.window` (start), `ephem.api_cache` (the window's cf-cache-status), `http.status_code`, `ephem.api_key` (first 200 chars) |
+| `search.window` | Api invocation (a MISS) | as every handler span: `blocks`, `reads`, `l1`, `ephem.isolate_computes`; plus `geoid.load` children |
+| `compute.search` | Api invocation | `ephem.passes`, `ephem.region_vertices`, `ephem.search.<counter>`: `scanEvaluations`, `spans`, `spanSeconds`, `trackEvaluations`, `crossings`, `refineEvaluations`, `segments`, `anomalies` (must be 0), `maxSagittaM` |
+
+The response repeats the counters (`search.counters`, summed over windows; a HIT returns the counts of the run that filled
+it) and `search.windows[].cache`, so a client sees which windows computed.
+
+**Measure** (by exact version; windows are Api invocations on path `/v1/alignment/search/window`, the POST is the front door):
+
+```sh
+python3 scripts/obs/cpu-by-version.py --minutes 20 --path /v1/alignment/search/window --entrypoint Api   # per-window CPU / wall
+python3 scripts/obs/cpu-by-version.py --minutes 20 --path /v1/alignment/search                           # the front door's merge
+python3 scripts/obs/trace.py --latest /v1/alignment/search                                              # fan-out tree
+```
+
+A cold scan needs keys nobody has cached: vary the target height or region by a centimetre (the region is quantised to
+1e-7°, so move a vertex by ≥ 2e-7°). A repeat of the same body is all HITs and computes nothing.
+
 ## MCP (`/mcp`, src/mcp.ts)
 
 Unauthenticated, stateless MCP over Streamable HTTP, written in Effect (no SDK). Dual-era: modern **2026-07-28**
@@ -226,7 +255,7 @@ Unauthenticated, stateless MCP over Streamable HTTP, written in Effect (no SDK).
 **2025-11-25 / 2025-06-18 / 2025-03-26** (`initialize` negotiates; `ping`; notifications → 202; no `Mcp-Session-Id` is
 minted; a request without `MCP-Protocol-Version` is 2025-03-26, the only version where batches are accepted). GET/DELETE
 → 405. Origin: absent (non-browser) or any https origin passes; plain http only from loopback or the same host; `null`,
-`file:`, extension and malformed origins → 403. Tools (`sun_moon_position`, `day_events`, `crossing`, `alignment`, `sight_line`, `sun_moon_track`, `weather_nearest`)
+`file:`, extension and malformed origins → 403. Tools (`sun_moon_position`, `day_events`, `crossing`, `alignment`, `sight_line`, `sun_moon_track`, `weather_nearest`, and `alignment_search`, whose arguments are the POST body)
 decode arguments with the Type side of the REST query schema, encode them back to a query string with the same schema and
 run the router's own `/v1/*` route in-process, so `inputSchema` / `outputSchema` are generated from `@ephem/api` and the
 math is the REST code path (including the forward to the cached Api entrypoint).
@@ -234,7 +263,7 @@ math is the REST code path (including the forward to the cached Api entrypoint).
 Verify after every deploy:
 
 ```sh
-node --experimental-strip-types scripts/obs/mcp-probe.ts https://ephem.ivar.workers.dev   # 28 checks, exit 1 on any FAIL
+node --experimental-strip-types scripts/obs/mcp-probe.ts https://ephem.ivar.workers.dev   # 37 checks, exit 1 on any FAIL
 python3 scripts/obs/trace.py --jsonrpc-id <run>-legacy.call.day_events                    # span tree of one tool call
 npx -y @modelcontextprotocol/inspector@2.13.0 --cli https://ephem.ivar.workers.dev/mcp --transport http --method tools/list
 ```

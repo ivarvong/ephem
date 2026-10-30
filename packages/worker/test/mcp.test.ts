@@ -71,7 +71,7 @@ describe("MCP handshake and discovery", () => {
   })
   it("tools/list: deterministic, schemas generated from the REST contract, every property documented", async () => {
     const r = await modern("tools/list"), tools = r.body.result.tools
-    expect(tools.map((t: any) => t.name)).toEqual(["sun_moon_position", "day_events", "crossing", "alignment", "weather_nearest", "sun_moon_track", "sight_line"])
+    expect(tools.map((t: any) => t.name)).toEqual(["sun_moon_position", "day_events", "crossing", "alignment", "weather_nearest", "sun_moon_track", "sight_line", "alignment_search"])
     expect((await legacy("tools/list")).body.result.tools).toEqual(tools)
     const pos = tools[0]
     expect(pos.inputSchema).toMatchObject({ type: "object", required: ["lat", "lon"], additionalProperties: false,
@@ -83,7 +83,8 @@ describe("MCP handshake and discovery", () => {
     expect(tools[4].inputSchema.properties.n.type).toBe("integer")
     expect(tools[5].inputSchema).toMatchObject({ required: ["lat", "lon", "start", "end"], properties: { stepSeconds: { type: "integer", minimum: 60, maximum: 3600 } } })
     for (const t of tools) for (const [k, v] of Object.entries<any>(t.inputSchema.properties)) expect(v.description, `${t.name}.${k}`).toBeTruthy()
-    for (const t of TOOLS) expect(Object.keys(t.docs).toSorted()).toEqual(Object.keys(t.query).toSorted())   // docs cannot drift from the query either
+    expect(tools[7].inputSchema).toMatchObject({ type: "object", required: ["body", "target", "region", "start", "end"], additionalProperties: false })
+    for (const t of TOOLS) expect(Object.keys(t.docs).toSorted()).toEqual(Object.keys(t.payload ? (t.payload as any).fields : t.query).toSorted())   // docs cannot drift from the query either
     expect((await legacy("tools/list", undefined, 1, "2025-03-26")).body.result.tools[0].outputSchema).toBeUndefined()
   })
 })
@@ -98,6 +99,17 @@ describe("tools/call equals the REST endpoint", () => {
     const old = await legacy("tools/call", { name: tool, arguments: args })
     expect(comparable(tool, old.body.result.structuredContent)).toEqual(comparable(tool, sc))
   })
+  it("alignment_search (a POST): the tool's answer is the REST POST's", async () => {
+    const park = JSON.parse(readFileSync(`${FIX}/regions/brooklyn-bridge-park.geojson`, "utf8"))
+    const args = { body: "moon", target: { lat: 40.68925, lon: -74.0445, height: 70, heightRef: "msl" }, region: park, observerHeight: 5, heightRef: "msl", start: "2026-11-16T00:00:00Z", end: "2026-11-18T00:00:00Z", include: ["phase"] }
+    const r = await modern("tools/call", { name: "alignment_search", arguments: args })
+    expect(r.body.result.isError).toBe(false)
+    const rest = await (await handler(new Request("http://x/v1/alignment/search", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(args) }))).json()
+    expect(comparable("alignment_search", r.body.result.structuredContent)).toEqual(comparable("alignment_search", rest))
+    expect(r.body.result.structuredContent.passes[0].segments[0].enter.time).toMatch(/^2026-11-17T03:45:19\./)
+    const bad = await modern("tools/call", { name: "alignment_search", arguments: { ...args, region: [-74.05, 40.68, -74.04, 40.70] } })
+    expect(bad.body.result.isError).toBe(true); expect(bad.body.result.content[0].text).toMatch(/inside the region/)
+  }, 30_000)
   it("position without time is now", async () => {
     const t0 = Date.now(), r = await modern("tools/call", { name: "sun_moon_position", arguments: { lat: 0, lon: 0 } })
     expect(Date.parse(r.body.result.structuredContent.time.utc)).toBeGreaterThanOrEqual(t0 - 1)

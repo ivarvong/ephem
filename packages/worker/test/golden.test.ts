@@ -10,6 +10,7 @@ import { makeHandler } from "../src/app.ts"
 import { direct, makeBlocks } from "../src/blocks.ts"
 import { deterministic } from "../src/responses.ts"
 import { CACHE_VERSION } from "../src/cache-version.ts"
+import { encodeRegion, parseRegion } from "@ephem/core"
 
 const FILE = resolve(__dirname, "golden/answers.json")
 const FIX = resolve(__dirname, "../../core/test/fixtures/blocks")   // committed DE440 blocks (5441–5444 cover Sep–Dec 2026)
@@ -28,6 +29,7 @@ export const GOLDEN: Record<string, string> = {
   "track.tromso.step": "/v1/track?lat=69.6492&lon=18.9553&start=2026-11-15T00:00:00Z&end=2026-11-16T00:00:00Z&stepSeconds=600&temperature=-15&pressure=1020&horizon=geometric",
   "sightline.pier6": "/v1/sightline?observerLat=40.6935&observerLon=-74.0017&observerHeight=5&heightRef=msl&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&samples=21&obstacles=40.6894:-74.0166:25",
   "magnetic.nyc": "/v1/magnetic?lat=40.7&lon=-74&time=2026-10-29T12:00:00Z",
+  "search.window.liberty": `/v1/alignment/search/window?body=moon&dut1=0&heightRef=msl&observerHeight=5&pressure=1010&region=${encodeRegion((parseRegion([-73.999, 40.7, -73.993, 40.706]) as { ok: never }).ok)}&start=2026-11-03T00:00:00.000Z&targetHeight=70&targetHeightRef=msl&targetLat=40.68925&targetLon=-74.0445&temperature=10`,
 }
 
 const strip = (x: unknown): unknown => Array.isArray(x) ? x.map(strip) : x && typeof x === "object"
@@ -51,7 +53,10 @@ describe("golden answers", () => {
       return
     }
     const saved = JSON.parse(readFileSync(FILE, "utf8")) as { cacheVersion: number; answers: Record<string, string> }
-    const changed = Object.keys({ ...now, ...saved.answers }).filter(k => now[k] !== saved.answers[k])
+    // A request new to the list has no cached answers to go stale (its route or key was never served): record it, no bump.
+    const added = Object.keys(now).filter(k => !(k in saved.answers))
+    if (added.length) throw new Error(`new golden requests: record them (npm run golden:record). New: ${added.join(", ")}`)
+    const changed = Object.keys(saved.answers).filter(k => now[k] !== saved.answers[k])
     if (saved.cacheVersion === CACHE_VERSION && changed.length)
       throw new Error(`answers changed: bump CACHE_VERSION and re-record (npm run golden:record). Changed: ${changed.join(", ")}`)
     if (saved.cacheVersion !== CACHE_VERSION)

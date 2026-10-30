@@ -302,11 +302,66 @@ stated in conventions. Obstacles are projected on the line (along, cross-track: 
 approximate at tens of km), clearance = line − obstacle, `blocks` = refracted clearance < 0. Evidence: PROJ (EPSG
 4978→4979) + GeographicLib on a 3.6 km and a 152 km line: heightEllipsoid ≤ 1.5e-7 m, distance ≤ 2.6e-7 m; midpoint drop
 = s₁s₂/2R to ±5 cm (N varies); Pier 6 → statue figure crosses Governors Island at ~28 m MSL (customer: 22–28 m).
+### 10.x Alignment search over a region (`region.ts`, `search.ts`, `search-request.ts`; 2026-10-30)
+
+`POST /v1/alignment/search` answers "every pass in [start, end) when the alignment standing point P(t) lies inside a
+standing region", in one call. It replaces the customer's crossing → alignment → polygon clip → position pipeline (~150
+calls, ~39 s per 12-month scan). P(t) is `standingPoint` (above, same solver, heights, `aim`), so nothing new is modelled.
+
+**Region.** GeoJSON Polygon / MultiPolygon with holes (or a Feature with one) or a bbox. Edges are straight in (lon, lat)
+(RFC 7946 §3.1.1); inside = even-odd per polygon. Canonical form: coordinates quantised to 1e-7° (≤ 1.1 cm), closing and
+repeated vertices dropped, rings re-oriented (right-hand rule) and started at their smallest vertex, holes and polygons
+sorted; `r1.` + base64url of zigzag-delta varints (the 424-node park: 3.2 KB). Decoding re-canonicalises and must give
+the same string, so a cache key names exactly one region. Clipping works in an affine image of (lon, lat), which keeps the
+RFC 7946 lines straight, so insideness and crossings are exact; its metre scale is used only for tolerances. Bounds: ≤ 1 000
+vertices, ≤ 100 rings, ≤ 50 km across, ≤ 100 km from the target, target outside the region and above the eye (the solver
+brackets P assuming the target is above the eye: /v1/alignment has no standing point for a lower target).
+
+**No representative elevation; complete by construction.** P inside ⇒ (a) the body's apparent altitude at P = the target's
+apparent elevation from P ∈ [e(farthest), e(nearest)] (exact WGS-84 elevations at the region's nearest edge point and
+farthest vertex; with the target above the eye elevation falls with distance) and (b) its azimuth ∈ the region's range of
+bearings to the target (extremes at vertices). Seen from one reference point R (bbox centre) the body differs by at most the
+tilt of the vertical s/R_min (R_min = 6 335 439 m), parallax s/356 400 km and meridian convergence; with `aim` ≠ center the
+aim point is ≤ one disc radius (< 0.3°) off the centre. Those are the margins (park: altitude 0.0104°, azimuth 0.0184°).
+The scan then uses two Lipschitz bounds: true altitude changes < 16°/h, azimuth < 16.1°/h ÷ cos(altitude). Where the
+altitude is d from the band no in-band instant lies within d/(16°/h), so the scan jumps that far; near the band it steps
+60 s and keeps each step [t₀, t₁] with d(t₀) + d(t₁) ≤ L·(t₁ − t₀) for both altitude and azimuth. Every instant with P inside
+lies in a kept span, and span ends are outside (counted as `anomalies` if ever not; 0 everywhere so far).
+
+**Exact entries and exits.** Along a span P(t) is sampled with chords ≤ 50 m (from the measured speed), bisected where a
+sample sits > 4 cm off its neighbours' chord (park: max 0.6 mm). For each chord that crosses an edge, the signed distance of
+P(t) from the edge's line is solved with Illinois' method on the true track (each evaluation a full standing-point solve)
+to 1 mm (≈ 0.1 ms at 12 m/s). Between consecutive crossings the state is even-odd inside/outside; segments < 1 ms are
+dropped, touching ones merged. Segments < 1 h apart form a pass; a pass belongs to the window holding its first entry.
+
+**Windows and caching** (Workers Caching stores GET/HEAD only, so a POST is never cached). The front door validates and
+canonicalises the POST, then fans out one `GET /v1/alignment/search/window` per 30-day window on a fixed UTC grid
+(multiples of 30 d since 1970-01-01), every parameter explicit, so equal searches share keys. Each window is immutable,
+computed in its own Api invocation in parallel, scans 6 h before and 2 h after itself so passes on its edges are whole and
+owned once (tested: splitting a range inside a pass gives the same passes). A rolling "next 12 months" scan a day later
+shares 13 of 14 windows; filters (`minIlluminated`, `maxSunAltitude`) and `include=sun,phase` run after the cache. The
+front door does no astronomy. Rejected alternative: a GET form of the whole search keyed by region hash, which only hits
+on exact repeats and puts a whole year's CPU in one invocation.
+
+**Evidence** (scratchpad `search/`, Node, DE440 local):
+
+| Check | Result |
+| --- | --- |
+| Customer's scan: Liberty 40.68925, −74.04450, 70 m MSL; Brooklyn Bridge Park (OSM way 56469108, 424 refs); eye 5 m MSL; 2026-10-30 → 2027-10-30 | **64 passes, 125 segments** (customer: 64 / 125); 66 spans, 16 649 scan + 4 376 track + 559 refine solves, 164 ms Node |
+| Nov 16 pass entry | **2026-11-17T03:45:19.646Z at 40.703292, −73.996305** (customer: 03:45:19 at 40.70329, −73.99630) |
+| Brute force: solver every 1 s whenever the Moon is within [−1.5°, +3°] at the park centre (band 0.24–0.68°), no azimuth filter, 12 months | 1 165 039 solves, 1 047 in-park instants, **0 outside a returned segment**, all 125 segments sampled |
+| Brute force on other geometries (`search.test.ts`, 30 days): Sun over a 2–9 km fan, 55° of bearings; Moon, 300 m tower 1–3 km away, MultiPolygon with a hole | 0 missed |
+| Entries/exits on an edge, and P(entry time) = the entry point | ≤ 1 cm, ≤ 2 cm (ms rounding of the time) |
+| aim=litCentroid, Nov 16 (47 % lit) | entry 36.3 s earlier (customer: 40 s; §10 aim: 36.8 s on the track) |
+
+The remaining differences from the customer's numbers are inputs, not geometry: they used one hand-copied N = −32.81 m for
+both ends (EGM96 here: −32.90 m at the statue, −32.81 m at the park), 5 s sampling plus client-side bisection, and the same
+OSM outline (piers and inlets split passes identically: 125 segments both ways).
 
 ## 11. The contract (`@ephem/api`)
 
 `EphemApi = HttpApi.make("ephem").add(sky, meta)` with `GET /v1/position`, `GET /v1/day`, `GET /v1/alignment`,
-`GET /v1/crossing`, `GET /v1/track` (Sun/Moon azimuth, true and apparent altitude on a UTC grid, columnar; each sample equals
+`GET /v1/crossing`, `POST /v1/alignment/search` + `GET /v1/alignment/search/window` (§10.x), `GET /v1/track` (Sun/Moon azimuth, true and apparent altitude on a UTC grid, columnar; each sample equals
 `/v1/position` at that instant; ≤ 8 days and ≤ 1 441 samples, step 60–3600 s, start/end on the step's grid), `GET /healthz`, plus `/openapi.json` generated from the same value, `/docs` (plain HTML, no JS: endpoints, parameters from `QUERY_PARAMS`, conventions from `CONVENTIONS`, links to the spec, `/llms.txt`, `/mcp` and `/docs/interactive`, the Scalar page; 2026-10-30) and `/llms.txt` (the same, as text for agents). Query parameters decode through
 `FiniteFromString` with range checks; `UtcString` and `DateString` are regex-checked. `CONVENTIONS` in the same file is
 the human-readable definition of every quantity and is reproduced in this document's §§4–10.

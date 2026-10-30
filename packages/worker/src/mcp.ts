@@ -18,7 +18,7 @@ import * as HttpRouter from "effect/http/HttpRouter"
 import * as HttpServerRequest from "effect/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/http/HttpServerResponse"
 import {
-  AlignmentQuery, AlignmentResponse, SightlineQuery, SightlineResponse, CrossingQuery, CrossingResponse, DayQuery, DayResponse, PositionQuery, PositionResponse, TrackQuery, TrackResponse, WeatherQuery, WeatherResponse,
+  AlignmentQuery, AlignmentResponse, SightlineQuery, SightlineResponse, SearchPayload, SearchResponse, CrossingQuery, CrossingResponse, DayQuery, DayResponse, PositionQuery, PositionResponse, TrackQuery, TrackResponse, WeatherQuery, WeatherResponse,
 } from "@ephem/api"
 import { VERSION } from "./handlers.ts"
 
@@ -67,6 +67,8 @@ const issue = (e: S.SchemaError) => e.message
 interface ToolDef {
   readonly name: string; readonly title: string; readonly description: string; readonly path: string
   readonly query: S.Struct.Fields; readonly success: S.Top; readonly docs: Readonly<Record<string, string>>; readonly openWorld?: boolean
+  /** A POST endpoint: arguments are its JSON body (decoded with the Type side, encoded with the schema), `query` is unused. */
+  readonly payload?: S.Top
 }
 const POS_DOCS = {
   lat: "Observer latitude, degrees north (WGS-84).", lon: "Observer longitude, degrees east (WGS-84).",
@@ -129,14 +131,27 @@ export const TOOLS: ReadonlyArray<ToolDef> = [
       obstacles: "Optional obstacle points 'lat:lon:heightMsl,…' (up to 100; heights above sea level): the clearance of the line over each.",
     },
     description: "The height above sea level of the sight line from an eye to a target against ground distance (Earth curvature included; straight and with terrestrial refraction k = 0.13), and the clearance over given obstacle points (negative = the obstacle hides the target). Same as GET /v1/sightline." },
+  { name: "alignment_search", title: "Every alignment pass over a standing region", path: "/v1/alignment/search", query: {}, payload: SearchPayload, success: SearchResponse,
+    docs: {
+      body: "sun or moon.", target: "The point to frame: { lat, lon, height, heightRef? } (heightRef ellipsoid (default) or msl).",
+      region: "Where you can stand: a GeoJSON Polygon or MultiPolygon (holes allowed; or a Feature with one), or a bbox [west, south, east, north]. ≤ 1 000 vertices, ≤ 50 km across, ≤ 100 km from the target.",
+      observerHeight: "Eye height in metres (see heightRef). Default: the eye at sea level.", heightRef: "ellipsoid (default) or msl for observerHeight.",
+      start: "Search start, UTC ISO-8601 with Z.", end: "Search end, UTC ISO-8601 with Z; at most 400 days after start.",
+      temperature: POS_DOCS.temperature, pressure: POS_DOCS.pressure, dut1: POS_DOCS.dut1,
+      aim: "Which point of the disc sits on the target: center (default), upper, lower, litCentroid (Moon's lit-area centroid).",
+      include: "Extra per-pass context: [\"sun\"] (azimuth, true/apparent altitude), [\"phase\"] (the Moon's phase block), or both.",
+      minIlluminated: "Keep passes with at least this Moon illuminated fraction (0–1).", maxSunAltitude: "Keep passes with the Sun's true altitude at most this, degrees (e.g. −4 for a dark sky).",
+    },
+    description: "Every pass in a date range when the alignment standing point (where the Sun or Moon sits exactly on the target) lies inside a standing region, with exact entry and exit times and points per in-region segment, the Moon's azimuth / altitude / illumination and the Sun's altitude per pass. One call replaces crossing → alignment → polygon clip → position. Same as POST /v1/alignment/search." },
 ]
 
 const jsonSchema = (schema: S.Top) => {
   const doc = S.toJsonSchemaDocument(schema) as { schema: Record<string, unknown>; definitions: Record<string, unknown> }
   return { ...doc.schema, ...(Object.keys(doc.definitions).length ? { $defs: doc.definitions } : {}) } as Record<string, unknown>
 }
+const argsSchema = (t: ToolDef): S.Top => t.payload ? S.toType(t.payload) : S.toType(S.Struct(t.query))
 const inputSchemaOf = (t: ToolDef) => {
-  const s = jsonSchema(S.toType(S.Struct(t.query)))
+  const s = jsonSchema(argsSchema(t))
   const props = s.properties as Record<string, Record<string, unknown>>
   return { ...s, additionalProperties: false, properties: Object.fromEntries(Object.entries(props).map(([k, v]) => [k, t.docs[k] ? { ...v, description: t.docs[k] } : v])) }
 }
@@ -148,12 +163,12 @@ const toolList = TOOLS.map(t => ({
 export const listTools = (version: string) => version === "2025-03-26" ? toolList.map(({ outputSchema: _o, ...t }) => t) : toolList
 const toolCodecs = new Map(TOOLS.map(t => [t.name, {
   def: t,
-  decodeArgs: S.decodeUnknownEffect(S.toType(S.Struct(t.query)) as unknown as S.Codec<Record<string, unknown>, unknown>),
-  encodeQuery: S.encodeEffect(S.Struct(t.query) as unknown as S.Codec<Record<string, unknown>, Record<string, string>>),
+  decodeArgs: S.decodeUnknownEffect(argsSchema(t) as unknown as S.Codec<Record<string, unknown>, unknown>),
+  encodeQuery: S.encodeEffect((t.payload ?? S.Struct(t.query)) as unknown as S.Codec<Record<string, unknown>, Record<string, string>>),
 }]))
 
 // ─────────────────────────────── dispatch ───────────────────────────────
-type Rest = (path: string, query: Record<string, string>) => Effect.Effect<{ status: number; body: any }, InternalError>
+type Rest = (path: string, query: Record<string, string>, body?: unknown) => Effect.Effect<{ status: number; body: any }, InternalError>
 interface Ctx { readonly headers: Readonly<Record<string, string | undefined>>; readonly rest: Rest; readonly batch: boolean }
 type Reply = { readonly status: number; readonly body: unknown } | undefined   // undefined: notification / client response, nothing to send
 
@@ -169,7 +184,7 @@ const callTool = (params: Record<string, unknown> | undefined, ctx: Ctx, version
   const args = yield* tool.decodeArgs(p.arguments ?? {}, { errors: "all", onExcessProperty: "error" }).pipe(Effect.result)
   if (args._tag === "Failure") return toolText(`Invalid arguments for ${p.name}: ${issue(args.failure)}`, true)
   const query = yield* tool.encodeQuery(args.success).pipe(Effect.mapError(e => new InternalError({ message: `could not encode ${p.name} arguments: ${issue(e)}` })))
-  const res = yield* ctx.rest(tool.def.path, query)
+  const res = yield* (tool.def.payload ? ctx.rest(tool.def.path, {}, query) : ctx.rest(tool.def.path, query))
   yield* Effect.annotateCurrentSpan({ "mcp.rest_status": res.status })
   if (res.status === 200) return { ...toolText(JSON.stringify(res.body), false, version === "2025-03-26" ? undefined : res.body) }
   if (res.status >= 500 && res.status !== 503) return yield* new InternalError({ message: `${tool.def.path} failed with ${res.status}` })
@@ -309,8 +324,9 @@ const handlePost = (req: HttpServerRequest.HttpServerRequest, rest: Rest) => Eff
 
 /** Registers POST/GET/DELETE /mcp. Tool calls dispatch to the router's own /v1 routes, in-process, in the caller's fiber. */
 export const Mcp = HttpRouter.use(router => Effect.gen(function* () {
-  const rest: Rest = (path, query) => Effect.gen(function* () {
-    const inner = HttpServerRequest.fromWeb(new Request(`http://ephem.internal${path}?${new URLSearchParams(query)}`))
+  const rest: Rest = (path, query, body) => Effect.gen(function* () {
+    const inner = HttpServerRequest.fromWeb(body === undefined ? new Request(`http://ephem.internal${path}?${new URLSearchParams(query)}`)
+      : new Request(`http://ephem.internal${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }))
     const res = yield* router.asHttpEffect().pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, inner), Effect.scoped)
     const web = HttpServerResponse.toWeb(res)
     const text = yield* Effect.promise(() => web.text())

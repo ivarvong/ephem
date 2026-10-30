@@ -33,11 +33,23 @@ const Earth = HttpApiBuilder.group(EphemApi, "earth", h => h
     magnetic: { model: "WMM2025" as const, declination: -12.5, inclination: 66, horizontalIntensityNt: 2e4, totalIntensityNt: 5e4, decimalYear: 2026.8, inValidityWindow: true } }))
   .handle("weather", ({ query }) => Effect.succeed({ time: "2026-10-28T11:51:00Z", observer: { lat: query.lat, lon: query.lon, magneticDeclination: -12.5 }, stations: [],
     feed: { source: "stub", fetchedAt: "2026-10-28T11:51:00Z", ageSeconds: query.n ?? 1, lastModified: null, upstreamAgeSeconds: null, stale: false, tier: "hit" as const, stations: 0 } })))
+const searchConv = { definition: "", region: "", segments: "", passes: "", candidates: "", windows: "", filters: "", azimuth: "", terrestrialRefraction: "", heights: "",
+  observerHeightRef: "default" as const, targetHeightRef: "ellipsoid" as const, terrestrialRefractionK: 0.13, refraction: { model: "", temperatureC: 10, pressureHpa: 1010 }, geoid }
+const geometry = { reference: { lat: 0, lon: 0 }, distanceM: { min: 1, max: 2 }, elevation: { min: 0, max: 1 }, azimuth: { min: 0, max: 1 },
+  band: { trueAltitudeMin: 0, trueAltitudeMax: 1, azimuthMin: 0, azimuthMax: 1 }, margins: { altitude: 0, azimuth: 0 }, maxDistanceKm: 1, referenceSpreadM: 1 }
+const regionInfo = { encoding: "r1.x", polygons: 1, rings: 1, vertices: 4, bbox: [0, 0, 1, 1] as const, geoidUndulation: { min: 0, max: 0 } }
+const Search = HttpApiBuilder.group(EphemApi, "search", h => h
+  .handle("search", ({ payload }) => Effect.succeed({ body: payload.body, start: payload.start, end: payload.end, target: obs(payload.target), observer: { observerHeight: payload.observerHeight ?? 0, heightRef: "default" as const },
+    region: { ...regionInfo, vertices: Array.isArray(payload.region) ? 4 : 0 }, passes: [], search: { geometry, windows: [], passesBeforeFilters: 0, counters: {} }, conventions: searchConv, provenance: prov }))
+  .handle("searchWindow", ({ query }) => Effect.succeed({ body: query.body, start: query.start, end: query.start, target: obs({ lat: query.targetLat, lon: query.targetLon }), observer: { observerHeight: 0, heightRef: "default" as const },
+    region: { ...regionInfo, encoding: query.region }, passes: [], geometry, counters: {}, conventions: searchConv, provenance: prov })))
 const Meta = HttpApiBuilder.group(EphemApi, "meta", h => h.handle("health", () => Effect.succeed({ ok: true as const, implementation: "stub", version: "0" })))
 const Platform = Layer.mergeAll(HttpPlatform.layer, FileSystem.layerNoop({}), Path.layer, Etag.layerWeak).pipe(Layer.provideMerge(FileSystem.layerNoop({})))
-const App = HttpApiBuilder.layer(EphemApi, { openapiPath: "/openapi.json" }).pipe(Layer.provide([Sky, Earth, Meta]), Layer.provide(Platform))
+const App = HttpApiBuilder.layer(EphemApi, { openapiPath: "/openapi.json" }).pipe(Layer.provide([Sky, Search, Earth, Meta]), Layer.provide(Platform))
 const { handler } = HttpRouter.toWebHandler(App, { disableLogger: true })
 const get = (p: string) => handler(new Request("http://x" + p))
+const post = (p: string, body: unknown) => handler(new Request("http://x" + p, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }))
+const searchBody = { body: "moon", target: { lat: 40.68925, lon: -74.0445, height: 70, heightRef: "msl" }, region: [-74.004, 40.6918, -73.986, 40.7052], observerHeight: 5, heightRef: "msl", start: "2026-11-16T00:00:00Z", end: "2026-11-18T00:00:00Z" }
 
 describe("contract", () => {
   it("decodes numeric query params and applies defaults", async () => {
@@ -63,8 +75,24 @@ describe("contract", () => {
     expect((await get("/v1/track?lat=40.7&lon=-74&start=2026-10-28 12:00&end=2026-10-28T13:00:00Z")).status).toBe(400)
     expect((await get("/v1/track?lat=40.7&lon=-74&start=2026-10-28T12:00:00Z")).status).toBe(400)
   })
+  it("search: JSON body with a bbox or GeoJSON region; unknown fields and bad regions are 400", async () => {
+    const r = await post("/v1/alignment/search", searchBody)
+    expect(r.status).toBe(200); expect(((await r.json()) as any).region.vertices).toBe(4)
+    const poly = { type: "Feature", properties: { name: "x" }, geometry: { type: "Polygon", coordinates: [[[-74, 40.7], [-73.99, 40.7], [-73.99, 40.71], [-74, 40.7]]] } }
+    expect((await post("/v1/alignment/search", { ...searchBody, region: poly, include: ["sun", "phase"], minIlluminated: 0.1, maxSunAltitude: -4 })).status).toBe(200)
+    expect((await post("/v1/alignment/search", { ...searchBody, bogus: 1 })).status).toBe(400)
+    expect((await post("/v1/alignment/search", { ...searchBody, region: [1, 2, 3] })).status).toBe(400)
+    expect((await post("/v1/alignment/search", { ...searchBody, region: { type: "LineString", coordinates: [[0, 0], [1, 1]] } })).status).toBe(400)
+    expect((await post("/v1/alignment/search", { ...searchBody, include: ["moon"] })).status).toBe(400)
+    expect((await post("/v1/alignment/search", { ...searchBody, minIlluminated: 2 })).status).toBe(400)
+  })
+  it("search window: a GET with the r1 region encoding", async () => {
+    expect((await get("/v1/alignment/search/window?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=37&region=r1.AbC_-&start=2026-10-17T00:00:00Z")).status).toBe(200)
+    expect((await get("/v1/alignment/search/window?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=37&region=nope&start=2026-10-17T00:00:00Z")).status).toBe(400)
+  })
   it("serves OpenAPI", async () => {
     const spec = OpenApi.fromApi(EphemApi) as any
-    expect(Object.keys(spec.paths)).toEqual(expect.arrayContaining(["/v1/position", "/v1/day", "/v1/alignment", "/v1/track", "/v1/weather", "/v1/magnetic"]))
+    expect(Object.keys(spec.paths)).toEqual(expect.arrayContaining(["/v1/position", "/v1/day", "/v1/alignment", "/v1/track", "/v1/weather", "/v1/magnetic", "/v1/alignment/search", "/v1/alignment/search/window"]))
+    expect(spec.paths["/v1/alignment/search"].post.requestBody).toBeDefined()
   })
 })

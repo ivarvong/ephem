@@ -16,6 +16,8 @@ export const ENDPOINTS: ReadonlyArray<Endpoint> = [
     required: ["lat", "lon", "body"], example: "/v1/crossing?body=moon&lat=40.6985&lon=-73.999&height=5&heightRef=msl&altitude=0.87&altitudeType=apparent&direction=set&start=2026-11-16T00:00:00Z&end=2026-11-18T00:00:00Z" },
   { path: "/v1/alignment", summary: "Where to stand so the Sun or Moon (centre, a limb, or the Moon's lit-area centroid: aim) sits on a landmark, per instant; with observerLat/Lon also when it passes the landmark from a fixed spot. Heights in ellipsoid or msl (heightRef, targetHeightRef), per-point rates, include=sun,phase.",
     required: ["body", "targetLat", "targetLon", "targetHeight", "start", "end"], example: "/v1/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&observerHeight=5&heightRef=msl&start=2026-11-17T03:44:30Z&end=2026-11-17T03:46:00Z&stepSeconds=5&maxDistanceKm=8" },
+  { path: "/v1/alignment/search/window", summary: "One 30-day window of POST /v1/alignment/search (the cacheable unit; the POST fans out to these). start on the 30-day grid since 1970-01-01, region in the r1 encoding the POST returns as region.encoding.",
+    required: ["body", "targetLat", "targetLon", "targetHeight", "region", "start"], example: "/v1/alignment/search/window?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&observerHeight=5&heightRef=msl&region=r1.AQEE3-fawQWAz5KEA8CpBwAAwKkHv6kHAA&start=2026-11-03T00:00:00Z" },
   { path: "/v1/sightline", summary: "The sight line's height above sea level against ground distance from an eye to a target (Earth curvature; straight and refracted with k = 0.13), and the clearance over obstacle points lat:lon:heightMsl.",
     required: ["observerLat", "observerLon", "targetLat", "targetLon", "targetHeight"], example: "/v1/sightline?observerLat=40.6935&observerLon=-74.0017&observerHeight=5&heightRef=msl&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&samples=11&obstacles=40.6894:-74.0166:25" },
   { path: "/v1/track", summary: "Sun and Moon azimuth, true and apparent altitude on a UTC grid (≤ 8 days, ≤ 1 441 samples), columnar.",
@@ -25,7 +27,7 @@ export const ENDPOINTS: ReadonlyArray<Endpoint> = [
   { path: "/healthz", summary: "Liveness.", required: [], example: "/healthz" },
 ]
 
-const CONVENTION_KEYS: ReadonlyArray<keyof typeof CONVENTIONS> = ["frame", "trueAltitude", "apparentAltitude", "height", "rise", "crossing", "alignment", "aim", "passes", "rates", "brightLimb", "phase", "twilight", "goldenHour", "blueHour", "track", "sightline", "supportedRange", "ut1", "magnetic", "weather", "unknownParameters"]
+const CONVENTION_KEYS: ReadonlyArray<keyof typeof CONVENTIONS> = ["frame", "trueAltitude", "apparentAltitude", "height", "rise", "crossing", "alignment", "aim", "passes", "rates", "brightLimb", "phase", "twilight", "goldenHour", "blueHour", "track", "sightline", "search", "supportedRange", "ut1", "magnetic", "weather", "unknownParameters"]
 const RULES = [
   "Times are UTC ISO-8601 with a trailing Z (e.g. 2026-11-17T03:45:00Z); supported 1972-01-01 to 2149-12-31.",
   "Angles are degrees; azimuth from true north through east, [0, 360). Rates are degrees per minute.",
@@ -35,6 +37,13 @@ const RULES = [
   "Deterministic answers (anything with an explicit time or window) are cached immutably; x-ephem-cache says HIT or MISS.",
 ]
 
+/** The one POST route (JSON body; QUERY_PARAMS lists query routes only). */
+export const SEARCH_POST = {
+  path: "/v1/alignment/search",
+  summary: "Every pass in [start, end) (≤ 400 days) when the alignment standing point lies inside a standing region, with exact entry / exit per in-region segment, Moon az / alt / illuminated and Sun altitude per pass. One call instead of crossing → alignment → polygon clip → position.",
+  fields: "body*, target* {lat, lon, height, heightRef}, region* (GeoJSON Polygon | MultiPolygon | Feature, or bbox [west, south, east, north]), observerHeight, heightRef, start*, end*, temperature, pressure, dut1, aim, include [sun, phase], minIlluminated, maxSunAltitude",
+  example: '{"body":"moon","target":{"lat":40.68925,"lon":-74.0445,"height":70,"heightRef":"msl"},"region":[-73.9995,40.7,-73.993,40.706],"observerHeight":5,"heightRef":"msl","start":"2026-11-16T00:00:00Z","end":"2026-11-18T00:00:00Z","maxSunAltitude":-4}',
+}
 const params = (path: string, required: ReadonlyArray<string>) => (QUERY_PARAMS[path] ?? []).map(p => (required.includes(p) ? `${p}*` : p))
 
 /** /llms.txt (llmstxt.org shape: H1, summary, sections of links / facts). */
@@ -45,7 +54,7 @@ export const llmsTxt = (): string => [
   "",
   "## Machine-readable",
   `- OpenAPI 3.1: ${BASE}/openapi.json`,
-  `- MCP (Streamable HTTP, no auth): ${BASE}/mcp (tools: sun_moon_position, day_events, crossing, alignment, sight_line, sun_moon_track, weather_nearest; each returns the same JSON as its REST route)`,
+  `- MCP (Streamable HTTP, no auth): ${BASE}/mcp (tools: sun_moon_position, day_events, crossing, alignment, sight_line, sun_moon_track, weather_nearest, alignment_search; each returns the same JSON as its REST route)`,
   `- Human docs (plain HTML): ${BASE}/docs`,
   "",
   "## Rules",
@@ -53,6 +62,9 @@ export const llmsTxt = (): string => [
   "",
   "## Endpoints (GET; * = required)",
   ...ENDPOINTS.flatMap(e => [`- ${e.path}: ${e.summary}`, `  params: ${params(e.path, e.required).join(", ") || "none"}`, `  example: ${BASE}${e.example}`]),
+  "",
+  `## ${SEARCH_POST.path} (POST, JSON body; * = required)`,
+  `- ${SEARCH_POST.summary}`, `  fields: ${SEARCH_POST.fields}`, `  example: curl -X POST -H 'content-type: application/json' ${BASE}${SEARCH_POST.path} -d '${SEARCH_POST.example}'`,
   "",
   "## Conventions",
   ...CONVENTION_KEYS.map(k => `- ${k}: ${CONVENTIONS[k]}`),
@@ -72,6 +84,7 @@ export const docsHtml = (): string => `<!doctype html><html lang="en"><head><met
 </ul>
 <h2>Rules</h2><ul>${RULES.map(r => `<li>${esc(r)}</li>`).join("")}</ul>
 <h2>Endpoints</h2><p>All GET. <code>*</code> = required.</p><dl>${ENDPOINTS.map(e => `<dt><code>${e.path}</code></dt><dd>${esc(e.summary)}<br>Parameters: <code>${params(e.path, e.required).join(", ") || "none"}</code><br>Example: <a href="${esc(e.example)}"><code>${esc(e.example)}</code></a></dd>`).join("")}</dl>
+<h2>POST <code>${SEARCH_POST.path}</code></h2><p>${esc(SEARCH_POST.summary)}</p><p>JSON body: <code>${esc(SEARCH_POST.fields)}</code></p><p>Example body: <code>${esc(SEARCH_POST.example)}</code></p>
 <h2>Conventions</h2><dl>${CONVENTION_KEYS.map(k => `<dt>${k}</dt><dd>${esc(CONVENTIONS[k])}</dd>`).join("")}</dl>
 </body></html>`
 
