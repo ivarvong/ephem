@@ -135,7 +135,9 @@ export const Rum = HttpRouter.add("POST", "/rum", Effect.gen(function* () {
   const r = validateRum(body, { now, headers, cf: (req.source as { cf?: RumContext["cf"] } | undefined)?.cf, version: sink._tag === "Some" ? sink.value.version : undefined })
   if (!r.ok) { yield* Effect.annotateCurrentSpan({ "rum.rejected": r.reason }); return noStore(r.status) }
   if (r.rows.length && !limiter(r.rows[0]!.trace_id, now)) return noStore(429, { "retry-after": "60" })
-  yield* Effect.annotateCurrentSpan({ "rum.rows": r.rows.length, "rum.dropped": r.dropped })
+  // The batch's page view: so its /rum invocation (a pagehide beacon has no response for the browser to see) joins the trace.
+  const tp = r.rows[0] ? { "client.trace_id": r.rows[0].trace_id } : {}
+  yield* Effect.annotateCurrentSpan({ "rum.rows": r.rows.length, "rum.dropped": r.dropped, ...tp })
   if (sink._tag === "Some" && r.rows.length) sink.value.emit(r.rows)
   return noStore(204, { "x-ephem-rum": `${r.rows.length} ${r.dropped}` })
 }))

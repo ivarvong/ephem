@@ -91,6 +91,7 @@ describe("POST /rum", () => {
     const r = await post(JSON.stringify(batch([span(), span({ sid: "2222222222222222" })])), {}, sink)
     expect(r.status).toBe(204); expect(r.headers.get("cache-control")).toBe("no-store"); expect(r.headers.get("x-ephem-rum")).toBe("2 0")
     expect(got.map(x => x.span_id)).toEqual(["a1b2c3d4e5f60718", "2222222222222222"]); expect(got[0]!.version).toBe("v-test")
+    expect(got.every(x => x.trace_id === TID)).toBe(true)
   })
   it("caps the body (413), rejects junk (400), honours DNT (204, nothing stored)", async () => {
     const { got, sink } = sinkOf()
