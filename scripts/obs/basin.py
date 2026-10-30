@@ -155,9 +155,21 @@ def iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def table_rows(out: str) -> list[dict]:
+    """wrangler's box-drawn result table → dicts (header from the first │ line; empty cells → None)."""
+    lines = [ln for ln in out.splitlines() if ln.startswith("│") and ln.count("│") >= 2]   # not wrangler's lone "│" progress line
+    if not lines:
+        return []
+    cells = lambda ln: [c.strip() for c in ln.strip().strip("│").split("│")]  # noqa: E731
+    head = cells(lines[0])
+    return [{h: (v if v != "" else None) for h, v in zip(head, cells(ln))} for ln in lines[1:]]
+
+
 def sql(a) -> None:
     since = iso(datetime.now(timezone.utc) - timedelta(hours=a.hours))
     q = a.raw or QUERIES[a.name].format(since=since)
+    if a.json:
+        print(json.dumps(table_rows(basin_sql(q)))); return
     print(f"-- {q}\n-- (rows land in Iceberg about every {ROLL_S} s: the newest minute or two is not there yet)")
     print(basin_sql(q))
 
@@ -208,7 +220,7 @@ sub.add_parser("status").set_defaults(f=status)
 p = sub.add_parser("failures"); p.add_argument("--minutes", type=float, default=60); p.set_defaults(f=failures)
 p_prov = sub.add_parser("provision"); p_prov.add_argument("stream", nargs="*", help="only these streams' sinks + pipelines (default: all, plus the catalog credential)"); p_prov.set_defaults(f=provision)
 p_cs = sub.add_parser("create-streams"); p_cs.add_argument("stream", nargs="+", choices=list(STREAMS)); p_cs.set_defaults(f=create_streams)
-p = sub.add_parser("sql"); p.add_argument("name", nargs="?", choices=sorted(QUERIES), default="by-route"); p.add_argument("--hours", type=float, default=1); p.add_argument("--raw"); p.set_defaults(f=sql)
+p = sub.add_parser("sql"); p.add_argument("name", nargs="?", choices=sorted(QUERIES), default="by-route"); p.add_argument("--hours", type=float, default=1); p.add_argument("--raw"); p.add_argument("--json", action="store_true", help="rows as a JSON array (for scripts/obs/trace-view.ts, journey.ts)"); p.set_defaults(f=sql)
 p = sub.add_parser("crosscheck"); p.add_argument("--from", dest="frm", required=True); p.add_argument("--to", required=True); p.set_defaults(f=crosscheck)
 sub.add_parser("types").set_defaults(f=types)
 a = ap.parse_args()
