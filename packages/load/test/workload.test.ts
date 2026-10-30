@@ -117,9 +117,9 @@ describe("stats", () => {
   })
   it("records errors apart from latency, and pin misses", () => {
     const s = kindStats()
-    record(s, { status: 200, ms: 12, ray: "x-EWR", colo: "EWR", cache: "HIT", version: "v1" }, "v1")
-    record(s, { status: 200, ms: 14, ray: "y-EWR", colo: "EWR", cache: "HIT", version: "v2" }, "v1")
-    record(s, { status: 0, ms: 10_000, ray: null, colo: "?", cache: null, version: null, error: "timeout" }, "v1")
+    record(s, { status: 200, ms: 12, at: 0, ray: "x-EWR", colo: "EWR", cache: "HIT", version: "v1" }, "v1")
+    record(s, { status: 200, ms: 14, at: 5, ray: "y-EWR", colo: "EWR", cache: "HIT", version: "v2" }, "v1")
+    record(s, { status: 0, ms: 10_000, at: 9, ray: null, colo: "?", cache: null, version: null, error: "timeout" }, "v1")
     expect(s).toMatchObject({ completed: 3, ok: 2, pinMiss: 1, errors: { timeout: 1 }, served: { EWR: 2 } })
     expect(s.hist.n).toBe(2)
   })

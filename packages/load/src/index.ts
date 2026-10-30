@@ -39,15 +39,15 @@ async function whereAmI(): Promise<string> {
 /** One request against ephem, timed from just before fetch to the last body byte. */
 async function fire(spec: RunSpec, kind: Kind, path: string, method: "GET" | "POST", body: string | undefined): Promise<Outcome> {
   const url = target(path)
-  const t0 = Date.now()
+  const t0 = Date.now(), at = t0 - spec.startAt
   try {
     const r = await fetch(url, { method, headers: headers(spec, { kind, method, path, ...(body !== undefined ? { body } : {}) }), ...(body !== undefined ? { body } : {}), redirect: "manual", signal: AbortSignal.timeout(kind === "search" ? LIMITS.timeoutMs.search : LIMITS.timeoutMs.other) })
     await r.arrayBuffer()
     const ray = r.headers.get("cf-ray")
-    return { status: r.status, ms: Date.now() - t0, ray, colo: rayColo(ray), cache: r.headers.get("x-ephem-cache"), version: r.headers.get("x-ephem-version") }
+    return { status: r.status, ms: Date.now() - t0, at, ray, colo: rayColo(ray), cache: r.headers.get("x-ephem-cache"), version: r.headers.get("x-ephem-version") }
   } catch (e) {
     const name = e instanceof Error ? e.name : "Error"
-    return { status: 0, ms: Date.now() - t0, ray: null, colo: "?", cache: null, version: null, error: name === "TimeoutError" || name === "AbortError" ? "timeout" : name }
+    return { status: 0, ms: Date.now() - t0, at, ray: null, colo: "?", cache: null, version: null, error: name === "TimeoutError" || name === "AbortError" ? "timeout" : name }
   }
 }
 
@@ -107,13 +107,15 @@ export class Generator extends DurableObject<Env> {
   private async drive(cfg: ShardConfig, live: { runId: string; stats: ShardStats; stop: boolean }): Promise<void> {
     const { spec, plan: p } = cfg
     const st = live.stats
-    if ((spec.mix.warm ?? 0) > 0) {
-      for (const k of WARM_KEYS) {
-        if (Date.now() > spec.startAt - 200) break
-        st.prewarm.sent++
-        const o = await fire(spec, "warm", k, "GET", undefined)
-        if (o.error === undefined && o.status < 400) st.prewarm.ok++
-      }
+    if ((spec.mix.warm ?? 0) > 0) {   // every warm key once, in-flight-cap wide, so the run's warm GETs are HITs in this colo
+      const keys = [...WARM_KEYS]
+      await Promise.all(Array.from({ length: LIMITS.inflightPerShard }, async () => {
+        for (let k = keys.shift(); k !== undefined && Date.now() < spec.startAt - 500; k = keys.shift()) {
+          st.prewarm.sent++
+          const o = await fire(spec, "warm", k, "GET", undefined)
+          if (o.error === undefined && o.status < 400) st.prewarm.ok++
+        }
+      }))
     }
     const rand = mulberry32(p.seed), pick = picker(spec.mix), period = 1000 / p.rate, phase = (p.shard / p.shards) * period
     const end = spec.startAt + spec.durationS * 1000
@@ -124,7 +126,8 @@ export class Generator extends DurableObject<Env> {
       if (at >= end || live.stop) break
       await sleep(at - Date.now())
       if (live.stop) break
-      st.maxLagMs = Math.max(st.maxLagMs, Date.now() - at)
+      const lag = Date.now() - at
+      st.maxLagMs = Math.max(st.maxLagMs, lag); if (lag > LIMITS.lateMs) st.late++
       const kind = pick(rand()), s: KindStats = st.kinds[kind]
       s.offered++
       if (inflight.size >= LIMITS.inflightPerShard) { s.dropped++; continue }
@@ -203,16 +206,16 @@ const coordinator = (x: Exports) => x.Coordinator.get(x.Coordinator.idFromName("
 
 const fold = (reports: readonly ShardReport[], withSample: boolean, sampleCap: number) => {
   const kinds = Object.fromEntries(KINDS.map(k => [k, kindStats()])) as Record<Kind, KindStats>
-  let maxLagMs = 0
+  let maxLagMs = 0, late = 0
   const prewarm = { sent: 0, ok: 0 }
   for (const r of reports) {
     if (!r.stats) continue
     for (const k of KINDS) mergeKind(kinds[k], r.stats.kinds[k], sampleCap)
-    maxLagMs = Math.max(maxLagMs, r.stats.maxLagMs); prewarm.sent += r.stats.prewarm.sent; prewarm.ok += r.stats.prewarm.ok
+    maxLagMs = Math.max(maxLagMs, r.stats.maxLagMs); late += r.stats.late ?? 0; prewarm.sent += r.stats.prewarm.sent; prewarm.ok += r.stats.prewarm.ok
   }
   const out: Partial<Record<Kind, KindSummary>> = {}
   for (const k of KINDS) if (kinds[k].offered > 0) out[k] = summarize(kinds[k], withSample)
-  return { kinds: out, maxLagMs, prewarm, merged: kinds }
+  return { kinds: out, maxLagMs, late, prewarm, merged: kinds }
 }
 
 async function report(x: Exports, runId: string, withSample: boolean): Promise<Response> {
@@ -228,7 +231,7 @@ async function report(x: Exports, runId: string, withSample: boolean): Promise<R
     for (const r of reports) colos[r.colo] = (colos[r.colo] ?? 0) + 1
     const state: State = reports.length < shards ? "pending" : reports.every(r => r.state === "done") ? "done" : reports.every(r => r.state === "done" || r.state === "failed") ? "failed" : reports.some(r => r.state === "running") ? "running" : "pending"
     const f = fold(reports, withSample, LIMITS.samplePerKind * 4)
-    regions.push({ region, shards, state, generatorColos: colos, errors: reports.filter(r => r.error).map(r => `${r.shard}: ${r.error}`), maxLagMs: f.maxLagMs, prewarm: f.prewarm, kinds: f.kinds })
+    regions.push({ region, shards, state, generatorColos: colos, errors: reports.filter(r => r.error).map(r => `${r.shard}: ${r.error}`), maxLagMs: f.maxLagMs, late: f.late, prewarm: f.prewarm, kinds: f.kinds })
   }
   const done = regions.every(r => r.state === "done" || r.state === "failed") || (run.stopped && all.every(r => r.state !== "running"))
   return json({ ok: true, runId, done, stopped: run.stopped, spec, shards, window: { startAt: new Date(spec.startAt).toISOString(), endAt: new Date(spec.startAt + spec.durationS * 1000).toISOString() }, regions, totals: fold(all, false, 0).kinds })

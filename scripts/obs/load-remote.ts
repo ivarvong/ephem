@@ -94,7 +94,7 @@ if (flags.has("plan")) {
   const p = await call("POST", "/plan", body)
   console.log(JSON.stringify(p, null, 2)); process.exit(0)
 }
-const start = await call("POST", "/run", body)
+const start = await call("POST", "/run", body).catch((e: Error) => { console.error(e.message); process.exit(1) })
 const runId: string = start.runId
 const endAt = new Date(Date.parse(start.startAt) + body.duration * 1000).toISOString()
 console.log(`run ${runId}: ${body.mode} ${body.rate} req/s x ${body.duration} s from ${body.regions.join(",")} (${start.shardsPerRegion} shards/region, via ${start.viaColo})${pin ? ` pinned ephem=${pin}` : ""}`)
@@ -115,6 +115,7 @@ for (;;) {
   if (rep.done) break
 }
 rep = await call("GET", `/run/${runId}?sample=1`)
+await call("POST", `/run/${runId}/stop`).catch(() => undefined)   // every shard is done: release the one-run lock now, not at endsAt + 30 s
 const dir = process.env.LOAD_DIR ?? "load-runs"
 fs.mkdirSync(dir, { recursive: true })
 const file = path.join(dir, `${runId}.json`)
@@ -123,9 +124,9 @@ if (flags.has("json")) console.log(JSON.stringify(rep))
 else console.log(table(rep))
 const errs = rep.regions.flatMap((r: any) => r.errors.map((e: string) => `${r.region}/${e}`))
 if (errs.length) console.log(`shard errors: ${errs.join("; ")}`)
-const lag = Math.max(...rep.regions.map((r: any) => r.maxLagMs))
+const lag = Math.max(...rep.regions.map((r: any) => r.maxLagMs)), late = rep.regions.reduce((a: number, r: any) => a + (r.late ?? 0), 0)
 const totals = Object.values(rep.totals as Record<string, Summary>)
 const bad = totals.reduce((a, s) => a + sumErr(s), 0), miss = totals.reduce((a, s) => a + s.pinMiss, 0), drop = totals.reduce((a, s) => a + s.dropped, 0)
-console.log(`run ${runId}: ${totals.reduce((a, s) => a + s.ok, 0)} ok, ${bad} errors/5xx, ${drop} dropped at the in-flight cap, max scheduler lag ${lag} ms${pin ? `, ${miss} answers not from the pinned version` : ""}; written to ${file}`)
+console.log(`run ${runId}: ${totals.reduce((a, s) => a + s.ok, 0)} ok, ${bad} errors/5xx, ${drop} dropped at the in-flight cap, ${late} sent late (> 50 ms after their slot; max lag ${lag} ms)${pin ? `, ${miss} answers not from the pinned version` : ""}; written to ${file}`)
 console.log(`server side: python3 scripts/obs/load-check.py ${file}   (>= 5 min after the end for complete telemetry)`)
 process.exit(errs.length || bad || (pin && miss) ? 1 : 0)

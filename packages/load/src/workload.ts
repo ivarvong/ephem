@@ -40,7 +40,8 @@ export const LIMITS = {
   inflightPerShard: 6,
   timeoutMs: { search: 30_000, other: 10_000 } as const,
   samplePerKind: 150, // rays kept per shard and kind (client ms + ray, for the server-side join)
-  startLeadMs: 4_000, // every shard starts at the same instant, this far after POST /run (prewarm happens before it)
+  startLeadMs: 8_000, // every shard starts at the same instant, this far after POST /run (prewarm happens before it)
+  lateMs: 50, // an arrival sent this much after its scheduled instant counts as late (generator-side lag, not ephem's)
 } as const
 
 export interface RunSpec {

@@ -30,17 +30,18 @@ type Counts = Record<string, number>
 const bump = (c: Counts, k: string, n = 1) => { c[k] = (c[k] ?? 0) + n }
 const mergeCounts = (into: Counts, c: Counts) => { for (const [k, n] of Object.entries(c)) bump(into, k, n) }
 
-/** One kind's counters on one shard (or merged). `sample`: [ray, client ms, status] for the server-side join. */
+/** One kind's counters on one shard (or merged). `sample`: [ray, client ms, status, sent at (ms after the start)] for the
+ * server-side join (scripts/obs/load-check.py). */
 export interface KindStats {
   offered: number; dropped: number; completed: number; ok: number
   status: Counts; errors: Counts; cache: Counts; served: Counts; versions: Counts; pinMiss: number
-  hist: Hist; sample: Array<[string, number, number]>
+  hist: Hist; sample: Array<[string, number, number, number]>
 }
 export const kindStats = (): KindStats => ({ offered: 0, dropped: 0, completed: 0, ok: 0, status: {}, errors: {}, cache: {}, served: {}, versions: {}, pinMiss: 0, hist: hist(), sample: [] })
-export type ShardStats = { kinds: Record<Kind, KindStats>; maxLagMs: number; prewarm: { sent: number; ok: number } }
-export const shardStats = (): ShardStats => ({ kinds: Object.fromEntries(KINDS.map(k => [k, kindStats()])) as Record<Kind, KindStats>, maxLagMs: 0, prewarm: { sent: 0, ok: 0 } })
+export type ShardStats = { kinds: Record<Kind, KindStats>; maxLagMs: number; late: number; prewarm: { sent: number; ok: number } }
+export const shardStats = (): ShardStats => ({ kinds: Object.fromEntries(KINDS.map(k => [k, kindStats()])) as Record<Kind, KindStats>, maxLagMs: 0, late: 0, prewarm: { sent: 0, ok: 0 } })
 
-export interface Outcome { status: number; ms: number; ray: string | null; colo: string; cache: string | null; version: string | null; error?: string }
+export interface Outcome { status: number; ms: number; at: number; ray: string | null; colo: string; cache: string | null; version: string | null; error?: string }
 /** Record one completed request. A pinned run counts every answer not from the pinned version. `sample` is a uniform
  * reservoir (Algorithm R) over the answered requests, so it spans the whole run, not its first seconds. */
 export const record = (s: KindStats, o: Outcome, pin: string | null, rand: () => number = Math.random): void => {
@@ -51,7 +52,7 @@ export const record = (s: KindStats, o: Outcome, pin: string | null, rand: () =>
   bump(s.served, o.colo); bump(s.cache, o.cache ?? "-"); bump(s.versions, (o.version ?? "-").slice(0, 8))
   if (pin !== null && o.version !== pin) s.pinMiss++
   if (o.ray === null) return
-  const row: [string, number, number] = [o.ray, Math.round(o.ms), o.status]
+  const row: [string, number, number, number] = [o.ray, Math.round(o.ms), o.status, Math.round(o.at)]
   if (s.sample.length < LIMITS.samplePerKind) s.sample.push(row)
   else { const j = Math.floor(rand() * s.hist.n); if (j < LIMITS.samplePerKind) s.sample[j] = row }
 }
@@ -67,7 +68,7 @@ export const mergeKind = (into: KindStats, s: KindStats, sampleCap: number): voi
 export interface KindSummary {
   offered: number; dropped: number; completed: number; ok: number; errors: Counts; status: Counts; cache: Counts; served: Counts; versions: Counts; pinMiss: number
   ms: { p50: number | null; p90: number | null; p99: number | null; max: number | null; mean: number | null }
-  sample?: Array<[string, number, number]>
+  sample?: Array<[string, number, number, number]>
 }
 export const summarize = (s: KindStats, withSample: boolean): KindSummary => ({
   offered: s.offered, dropped: s.dropped, completed: s.completed, ok: s.ok, errors: s.errors, status: s.status, cache: s.cache, served: s.served, versions: s.versions, pinMiss: s.pinMiss,
