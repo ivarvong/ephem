@@ -6,11 +6,15 @@
 //    target, which lies in [azMin, azMax] (vertices). Seen from one reference point R (the region's centre) the body differs
 //    from what P sees by at most the tilt of the vertical between them (s/R), meridian convergence and parallax: the margins.
 //    No representative observer elevation is guessed: the band is the whole range the region allows.
-// 2. Scan, provably complete. The body's true altitude at R changes by at most 16°/h (Earth rotation 15.04°/h, own motion
-//    and diurnal parallax < 1°/h), its azimuth by at most 16.1°/h / cos(altitude). With d(t) = distance of the altitude from
-//    the band, no in-band instant lies within d(t)/16°/h of t, so the scan jumps that far; near the band it steps 60 s and
-//    keeps every interval [t₀, t₁] with d(t₀) + d(t₁) ≤ L·(t₁ − t₀) for both altitude and azimuth (otherwise the body cannot
-//    reach the band inside it). Every instant with P inside the region lies inside a kept span, and span ends are outside.
+// 2. Scan, provably complete. Seen from R (geodetic latitude φ) a fixed direction's altitude changes at ω·cos φ·sin A
+//    (ω = 15.0411°/h, Earth rotation) and its azimuth at ω·(sin φ − cos φ·cos A·tan h); the body's own motion, diurnal
+//    parallax included, adds < 1°/h of arc (÷ cos h in azimuth). So |dh/dt| ≤ ω·cos φ + 1°/h and, while |h| ≤ H,
+//    |dA/dt| ≤ ω·(|sin φ| + cos φ·tan H) + 1°/h ÷ cos H. With d(t) the altitude's (or azimuth's) distance from the band, no
+//    in-band instant lies within d(t)/L of t, so the scan jumps that far (an azimuth jump only as far as |h| provably stays
+//    ≤ H); near the band it steps 60 s and keeps every interval [t₀, t₁] with d(t₀) + d(t₁) ≤ L·(t₁ − t₀) for both altitude
+//    and azimuth (otherwise the body cannot reach the band inside it). Each kept span's ends are then pulled in by the same
+//    jumps, from both sides, until a jump is under 1 s. Every instant with P inside the region lies inside a kept span, and
+//    span ends are out of the band, so outside the region.
 // 3. Clip, exactly. Along each span the ground track P(t) is sampled with chords ≤ 50 m (finer where it curves); every chord
 //    that crosses a region edge is refined on the true track: the signed distance of P(t) from the edge's line is solved to
 //    1 mm with Illinois' method (each evaluation is a full standing-point solve). Between consecutive crossings the track is
@@ -35,8 +39,10 @@ export const SEARCH = {
   lookbackS: 6 * 3600,           // a window scans this far back so a pass that began earlier is recognised as not its own
   lookaheadS: 2 * 3600,          // and this far past its end so its last pass is complete
   scanStepS: 60,
-  altRateDegPerH: 16,
-  azRateDegPerH: 16.1,           // ÷ cos(altitude)
+  earthRateDegPerH: 15.0411,     // ω: Earth rotation (sidereal)
+  ownRateDegPerH: 1,             // the body's own motion seen from R, diurnal parallax included: Moon < 0.64 + 0.27°/h
+  azJumpCapDeg: 15,              // azimuth jumps only while |h| ≤ band + this (the azimuth bound grows with tan h)
+  trimMinS: 1,                   // span ends are pulled in until a jump is shorter than this
   chordM: 50, sagittaM: 0.01, crossingTolM: 1e-3, crossingTolS: 1e-4,
   maxPassesPerWindow: 200,
   maxElevationDeg: 60,
@@ -151,7 +157,11 @@ export const searchWindow = (src: BlockSource, inp: SearchInput): { geometry: Se
   const ref: Geodetic = { lat: geo.reference.lat, lon: geo.reference.lon, height: eyeHeight(inp)(geo.reference.lat, geo.reference.lon) }
   const { trueAltitudeMin: hLo, trueAltitudeMax: hHi } = geo.band
   const az0 = geo.band.azimuthMin, azW = (geo.band.azimuthMax - geo.band.azimuthMin + 360) % 360
-  const lAlt = SEARCH.altRateDegPerH / 3.6e6, lAz = SEARCH.azRateDegPerH / Math.cos(Math.min(hHi + 1, 85) * DEG) / 3.6e6   // °/ms
+  // Rate bounds at R (°/ms): altitude; azimuth while |h| ≤ H (keep test: H = band + 1°; jumps: band + azJumpCapDeg).
+  const W = SEARCH.earthRateDegPerH, own = SEARCH.ownRateDegPerH, sinP = Math.abs(Math.sin(ref.lat * DEG)), cosP = Math.cos(ref.lat * DEG)
+  const azRate = (H: number) => (W * (sinP + cosP * Math.tan(H * DEG)) + own / Math.cos(H * DEG)) / 3.6e6
+  const hBand = Math.max(Math.abs(hLo), Math.abs(hHi))
+  const lAlt = (W * cosP + own) / 3.6e6, hKeep = Math.min(hBand + 1, 85), lAz = azRate(hKeep), hJump = Math.min(hBand + SEARCH.azJumpCapDeg, 85), lAzJ = azRate(hJump)
   let lt = 0
   const look = (ms: number) => {
     c.scanEvaluations++
@@ -159,13 +169,15 @@ export const searchWindow = (src: BlockSource, inp: SearchInput): { geometry: Se
     lt = a.lt
     const h = tp.altitude, da = h < hLo ? hLo - h : h > hHi ? h - hHi : 0
     const rel = (tp.azimuth - az0 + 360) % 360, dz = rel <= azW ? 0 : Math.min(rel - azW, 360 - rel)
-    return { da, dz }
+    // the longest interval on either side of ms that provably holds no in-band instant
+    const ja = da / lAlt, jz = Math.abs(h) < hJump ? Math.min(dz / lAzJ, (hJump - Math.abs(h)) / lAlt) : 0
+    return { da, dz, jump: ja > jz ? ja : jz }
   }
 
   // 2. scan → spans
   const scanFrom = inp.startMs - SEARCH.lookbackS * 1000, scanTo = inp.endMs + SEARCH.lookaheadS * 1000, step = SEARCH.scanStepS * 1000
   const spans: Array<[number, number]> = []
-  let open: [number, number] | undefined, prev: { t: number; da: number; dz: number } | undefined
+  let open: [number, number] | undefined, prev: { t: number; da: number; dz: number; jump: number } | undefined
   for (let t = scanFrom; t <= scanTo || open;) {
     const l = look(t)
     if (prev) {
@@ -174,8 +186,19 @@ export const searchWindow = (src: BlockSource, inp: SearchInput): { geometry: Se
       else if (open) { spans.push(open); open = undefined }
     }
     prev = { t, ...l }
-    const jump = l.da / lAlt
-    t += jump > step ? jump : step
+    t += l.jump > step ? l.jump : step
+  }
+  // pull each span's ends in: from an out-of-band end, [end, end ± jump) holds no in-band instant
+  const trimMs = SEARCH.trimMinS * 1000
+  for (const sp of spans) for (const dir of [1, -1] as const) {
+    let t = dir > 0 ? sp[0] : sp[1], end = t
+    for (;;) {
+      const j = look(t).jump
+      if (j > 0) end = t                                   // out of the band: a valid span end
+      if (j < trimMs || (dir > 0 ? t + j >= sp[1] : t - j <= sp[0])) break
+      t += dir * j
+    }
+    if (dir > 0) sp[0] = end; else sp[1] = end
   }
 
   // 3. track and clip each span

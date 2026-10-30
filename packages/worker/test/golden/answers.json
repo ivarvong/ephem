@@ -1,6 +1,6 @@
 {
-  "cacheVersion": 7,
-  "recorded": "2026-10-30T13:13:24.267Z",
+  "cacheVersion": 8,
+  "recorded": "2026-10-30T22:24:48.164Z",
   "requests": {
     "day.nyc": "/v1/day?date=2026-10-28&tz=America/New_York&lat=40.7127&lon=-74.0059&height=10",
     "day.tromso": "/v1/day?date=2026-11-15&tz=Europe/Oslo&lat=69.6492&lon=18.9553",
@@ -27,6 +27,6 @@
     "track.tromso.step": "996e668c5aaebd830a030f3aca6da6b3",
     "sightline.pier6": "f12bfcf96b29962660f09d6f3be080e2",
     "magnetic.nyc": "ef703ff8d3120e4fce346168bf792918",
-    "search.window.liberty": "6148a71553777de863011f62b01a1c2a"
+    "search.window.liberty": "2e8cca84a86c7c873836dfaf26b532b8"
   }
 }

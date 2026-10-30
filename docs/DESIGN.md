@@ -330,10 +330,18 @@ farthest vertex; with the target above the eye elevation falls with distance) an
 bearings to the target (extremes at vertices). Seen from one reference point R (bbox centre) the body differs by at most the
 tilt of the vertical s/R_min (R_min = 6 335 439 m), parallax s/356 400 km and meridian convergence; with `aim` ≠ center the
 aim point is ≤ one disc radius (< 0.3°) off the centre. Those are the margins (park: altitude 0.0104°, azimuth 0.0184°).
-The scan then uses two Lipschitz bounds: true altitude changes < 16°/h, azimuth < 16.1°/h ÷ cos(altitude). Where the
-altitude is d from the band no in-band instant lies within d/(16°/h), so the scan jumps that far; near the band it steps
-60 s and keeps each step [t₀, t₁] with d(t₀) + d(t₁) ≤ L·(t₁ − t₀) for both altitude and azimuth. Every instant with P inside
-lies in a kept span, and span ends are outside (counted as `anomalies` if ever not; 0 everywhere so far).
+The scan then uses two Lipschitz bounds at R (geodetic latitude φ). A fixed direction's altitude changes at ω·cos φ·sin A
+(ω = 15.0411°/h) and its azimuth at ω·(sin φ − cos φ·cos A·tan h); the body's own motion seen from R adds < 1°/h of arc
+(Moon ≤ 0.64°/h geocentric + 0.27°/h diurnal parallax), ÷ cos h in azimuth. So |dh/dt| ≤ ω·cos φ + 1°/h (12.4°/h at New York;
+the earlier global 16°/h was ω + 1 at the equator), and while |h| ≤ H, |dA/dt| ≤ ω·(|sin φ| + cos φ·tan H) + 1°/h ÷ cos H.
+Where the altitude is d from the band no in-band instant lies within d/L, so the scan jumps that far; it also jumps on the
+azimuth's distance from its band (H = band + 15°, and only as far as |h| provably stays ≤ H), which skips the risings and
+settings at the wrong bearing. Near the band it steps 60 s and keeps each step [t₀, t₁] with d(t₀) + d(t₁) ≤ L·(t₁ − t₀) for
+both altitude and azimuth (H = band + 1°). Each kept span's ends are then pulled in by the same jumps from both sides until a
+jump is < 1 s, and an end is always an evaluated out-of-band instant. Every instant with P inside lies in a kept span, and span
+ends are outside (counted as `anomalies` if ever not; 0 everywhere so far). Measured (2026-10-30, Node, the customer's
+12-month park scan): scan evaluations 16 649 → 6 210, track evaluations 4 376 → 2 563, span time 15 660 → 9 713 s, same
+64 passes / 125 segments, entries and exits within 1 ms (ms rounding), brute force 1 s: 0 missed.
 
 **Exact entries and exits.** Along a span P(t) is sampled with chords ≤ 50 m (from the measured speed), bisected where a
 sample sits > 4 cm off its neighbours' chord (park: max 0.6 mm). For each chord that crosses an edge, the signed distance of
