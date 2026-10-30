@@ -237,6 +237,18 @@ back-azimuth by the residual; repeat until the azimuth residual < 1e-9° and P m
 Points are omitted when the body is below −1° or no P lies within `maxDistanceKm`. The property test re-evaluates every
 returned point and demands (1) and (2) to 1e-7°.
 
+**Heights (2026-10-30).** `observerHeight` (`heightRef`) and `targetHeight` (`targetHeightRef`) are metres above the
+ellipsoid by default and above the EGM96 geoid with `msl`, as on every endpoint; without `observerHeight` the eye is on the
+geoid (heightMsl 0; before 2026-10-30 it was 0 m above the ellipsoid). With `heightRef=msl` the eye's ellipsoidal height is
+`observerHeight + N(P)` at every candidate point inside the solver, so N varies along the track (cm per km here). Each track
+point reports `heightEllipsoid`, `heightMsl`, `geoidUndulation`, and the body's `altitudeRate` / `azimuthRate` seen from that
+point (±10 s, as /v1/position); `target` echoes the target's heights; a `conventions` block states the solve, what
+`azimuth` means, terrestrial refraction (modelled: constant k = 0.13 along the sight line), refraction and heights. The
+Worker prefetches the geoid bands for target lat ± maxDistanceKm. Evidence: the customer's Statue of Liberty repro
+(2026-11-17T03:44:30–03:46:00Z) in ellipsoidal heights (their hand-copied N = −32.81 m) and in msl heights (70 m / 5 m)
+agree to ≤ 8.5 m along a 12 m/s track (N at the statue is −32.90 m, so their target was 0.09 m high); vs the Skyfield
+oracle with msl heights: position ≤ 25 mm, heightEllipsoid ≤ 1.8 mm (`crosscheck.py --only alignment`, 0 failures).
+
 **Converse ("from here, when").** With `observerLat/Lon`: the azimuth to the target and its apparent elevation are fixed;
 find the instants where the body's azimuth − target azimuth crosses zero (2-min sampling, ±180° wrap crossings
 discarded), and report `altitudeOffset` = body apparent altitude − target elevation. Negative means the body centre is

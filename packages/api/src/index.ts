@@ -22,7 +22,7 @@ export const CONVENTIONS = {
   brightLimb: "Position angle of the Moon's bright limb, measured from celestial north through east (Meeus 48.5).",
   supportedRange: "1972-01-01T00:00:00Z to 2149-12-31T23:59:59Z (UTC with leap seconds; DE440 coverage).",
   ut1: "UT1 = UTC + dut1 (request parameter, default 0). No polar motion.",
-  alignment: "Standing point P solves: body azimuth at P = forward geodesic azimuth P→target, and body apparent altitude at P = target apparent elevation = geometric elevation (exact, WGS-84 ECEF) + k·θ/2 with k = 0.13, θ = geodesic distance / 6 371 008.8 m. Track points are omitted when the body is below −1° or no P lies within maxDistanceKm. Geodesics: WGS-84 (Vincenty/Karney agree to 1 mm here).",
+  alignment: "Standing point P solves: body azimuth at P = forward geodesic azimuth P→target, and body apparent altitude at P = target apparent elevation = geometric elevation (exact, WGS-84 ECEF) + k·θ/2 with k = 0.13, θ = geodesic distance / 6 371 008.8 m. Track points are omitted when the body is below −1° or no P lies within maxDistanceKm. Geodesics: WGS-84 (Vincenty/Karney agree to 1 mm here). Heights: observerHeight (heightRef) and targetHeight (targetHeightRef) are above the ellipsoid by default, above the EGM96 geoid with msl; no observerHeight = the eye on the geoid. Every response carries a conventions block (terrestrial refraction, azimuth, refraction, heights, rates).",
   magnetic: "WMM2025 (NOAA NCEI), degree 12 with secular variation; declination east positive; magnetic bearing = true − declination. Verified against the model's published test values.",
   weather: "Nearest METAR stations by great-circle distance from aviationweather.gov's all-stations feed, cached ≤ 60 s fresh, served up to 10 min stale while it refreshes; feed.tier and feed.ageSeconds say which.",
   crossing: "/v1/crossing: every instant in the window when the chosen limb (default centre) reaches `altitude`, true (default) or apparent (the same refraction model as /v1/position and /v1/day), or meets a horizonProfile; rise = upward.",
@@ -212,8 +212,10 @@ export const CrossingResponse = S.Struct({
 export const AlignmentQuery = {
   body: S.Literals(["sun", "moon"]),
   targetLat: num(Lat), targetLon: num(Lon),
-  targetHeight: num(Height),                 // ellipsoidal height of the point to frame (e.g. the torch)
-  observerHeight: optNum(Height),            // ellipsoidal eye height where you stand; default: targetHeight's ground ≈ 0
+  targetHeight: num(Height),                 // height of the point to frame (e.g. the torch), metres; see targetHeightRef
+  targetHeightRef: S.optionalKey(HeightRef), // what targetHeight is measured from; default ellipsoid
+  observerHeight: optNum(Height),            // eye height where you stand, metres; see heightRef. Default: the eye on the geoid (heightMsl 0)
+  heightRef: S.optionalKey(HeightRef),       // what observerHeight is measured from; default ellipsoid (as `height` on every endpoint)
   start: UtcString, end: UtcString,
   stepSeconds: optNum(S.Finite.check(S.isBetween({ minimum: 1, maximum: 3600 }))),   // default 60
   maxDistanceKm: optNum(S.Finite.check(S.isBetween({ minimum: 0.01, maximum: 200 }))), // default 20
@@ -224,9 +226,14 @@ export const AlignmentPoint = S.Struct({
   time: UtcString,
   lat: Lat, lon: Lon,                 // where to stand
   distanceKm: S.Finite,               // ground distance to the target
-  azimuth: Degrees,                   // from observer toward target (= body azimuth)
-  apparentAltitude: Degrees,          // of the target top = of the body centre
-  angularRadius: Degrees,             // of the body, for framing
+  azimuth: Degrees.annotate(d0("The body's azimuth seen from this standing point, degrees true; by construction = the forward geodesic azimuth from here to the target (conventions.azimuth).")),
+  apparentAltitude: Degrees.annotate(d0("The body's apparent altitude seen from here = the target's apparent elevation (terrestrial refraction k·θ/2 included), degrees.")),
+  angularRadius: Degrees,             // of the body, topocentric, for framing
+  altitudeRate: S.Finite.annotate(d0("d(true altitude)/dt of the body seen from this standing point, degrees per minute (±10 s symmetric difference, as /v1/position).")),
+  azimuthRate: S.Finite.annotate(d0("d(azimuth)/dt of the body seen from this standing point, degrees per minute (±10 s symmetric difference, as /v1/position).")),
+  heightEllipsoid: S.Finite.annotate(d0("The eye's height above WGS-84 at this standing point, metres.")),
+  heightMsl: S.Finite.annotate(d0("The eye's height above the EGM96 geoid at this standing point, metres.")),
+  geoidUndulation: S.Finite.annotate(d0("EGM96 N at this standing point, metres: heightEllipsoid = heightMsl + geoidUndulation.")),
 })
 export const Pass = S.Struct({
   time: UtcString,
@@ -235,12 +242,26 @@ export const Pass = S.Struct({
   apparentAltitude: Degrees,
 })
 export const FromObserver = S.Struct({
+  observer: SkyObserver,
   azimuthToTarget: Degrees, distanceKm: S.Finite, targetElevation: Degrees,
   passes: S.Array(Pass),              // instants when the body's azimuth equals the target's, within [start, end]
 })
+export const AlignmentConventions = S.Struct({
+  definition: S.String, azimuth: S.String, apparentAltitude: S.String,
+  terrestrialRefraction: S.String.annotate(d0("Whether and how refraction along the sight line (eye → target) is modelled.")),
+  heights: S.String, rates: S.String,
+  observerHeightRef: S.Literals(["ellipsoid", "msl", "default"]).annotate(d0("What observerHeight was measured from; default = no observerHeight, the eye is on the geoid.")),
+  targetHeightRef: HeightRef,
+  terrestrialRefractionK: S.Finite,
+  refraction: S.Struct({ model: S.String, temperatureC: S.Finite, pressureHpa: S.Finite }),
+  geoid: GeoidConventions,
+})
 export const AlignmentResponse = S.Struct({
-  body: S.Literals(["sun", "moon"]), track: S.Array(AlignmentPoint),
+  body: S.Literals(["sun", "moon"]),
+  target: SkyObserver.annotate(d0("The target point with its height in both references (heightRef: what targetHeight was measured from).")),
+  track: S.Array(AlignmentPoint),
   fromObserver: S.optionalKey(FromObserver),
+  conventions: AlignmentConventions,
   provenance: Provenance,
 })
 
@@ -342,7 +363,7 @@ export const SkyGroup = HttpApiGroup.make("sky").add(
   HttpApiEndpoint.get("position", "/v1/position", { query: PositionQuery, success: PositionResponse, error: [OutOfRange, InvalidInput, GeoidUnavailable] }),
   HttpApiEndpoint.get("day", "/v1/day", { query: DayQuery, success: DayResponse, error: [OutOfRange, InvalidInput, GeoidUnavailable] }),
   HttpApiEndpoint.get("crossing", "/v1/crossing", { query: CrossingQuery, success: CrossingResponse, error: [OutOfRange, InvalidInput, GeoidUnavailable] }),
-  HttpApiEndpoint.get("alignment", "/v1/alignment", { query: AlignmentQuery, success: AlignmentResponse, error: [OutOfRange, InvalidInput] }),
+  HttpApiEndpoint.get("alignment", "/v1/alignment", { query: AlignmentQuery, success: AlignmentResponse, error: [OutOfRange, InvalidInput, GeoidUnavailable] }),
   HttpApiEndpoint.get("track", "/v1/track", { query: TrackQuery, success: TrackResponse, error: [OutOfRange, InvalidInput, GeoidUnavailable] }),
 )
 export const EarthGroup = HttpApiGroup.make("earth").add(
@@ -353,7 +374,7 @@ export const MetaGroup = HttpApiGroup.make("meta").add(
   HttpApiEndpoint.get("health", "/healthz", { success: S.Struct({ ok: S.Literal(true), implementation: S.String, version: S.String }) }),
 )
 export const API_DESCRIPTION = [
-  "Sun and Moon positions, day events, crossings and alignments from JPL DE440. Every response carries provenance (implementation, ephemeris, DE440 blocks read, compute time, cache tiers) and, for /v1/position, /v1/day and /v1/crossing, a conventions block with every threshold, horizon, refraction input and geoid value used.",
+  "Sun and Moon positions, day events, crossings and alignments from JPL DE440. Every response carries provenance (implementation, ephemeris, DE440 blocks read, compute time, cache tiers) and, for /v1/position, /v1/day, /v1/crossing and /v1/alignment, a conventions block with every threshold, horizon, refraction input and geoid value used.",
   "",
   "Changes on 2026-10-29 (API correctness pass):",
   "1. /v1/day rise and set now depend on height. An explicit `height` is metres above the WGS-84 ellipsoid (unchanged meaning), and the sea-horizon dip is taken from the height above mean sea level (EGM96). Example: in New York `height=0` is ≈ 33 m above sea level, so sunrise is ≈ 1 min earlier and sunset ≈ 1 min later than before. Pass `heightRef=msl` for a height above sea level (iOS `altitude`, maps); omit `height` to stand at sea level, which gives the previous times (Sun within 1 ms).",
@@ -361,6 +382,9 @@ export const API_DESCRIPTION = [
   "3. Unknown query parameters are rejected with 400 InvalidRequest (kind UnknownParameter, with the allowed list). They used to be ignored.",
   "4. New: /v1/crossing; on /v1/day `temperature`, `pressure`, `horizon` (sea | geometric | degrees), `horizonProfile`, `limb`; `heightRef` everywhere; `altitudeRate` and `azimuthRate` (°/min) in positions; observer heightMsl and geoidUndulation.",
   "5. New (2026-10-29): /v1/track, the sampled Sun and Moon azimuth / altitude / apparent altitude over a UTC grid in one immutable answer (what the homepage draws its paths from).",
+  "",
+  "Changes on 2026-10-30 (round-2 feedback):",
+  "6. /v1/alignment: `heightRef` (observer) and `targetHeightRef`, each ellipsoid (default) | msl, as on /v1/crossing; `target` echoes the target's heights and geoid undulation; every track point has `altitudeRate`, `azimuthRate` (°/min, as /v1/position), `heightEllipsoid`, `heightMsl`, `geoidUndulation`; a `conventions` block. BEHAVIOUR CHANGE: without `observerHeight` the eye is now on the geoid (heightMsl 0, as on every other endpoint); it used to be 0 m above the ellipsoid (≈ 33 m below sea level in New York).",
 ].join("\n")
 
 /** Unknown query parameters are an error, not silently ignored (a dropped `temperature` changes nothing and says nothing). */

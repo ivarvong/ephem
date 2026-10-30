@@ -58,13 +58,17 @@ describe("geoid bands via BlockStore", () => {
     expect(calls).toEqual(geoidBandsFor(40.7))   // L1
     expect(r1.observer.geoidUndulation).toBe(want)
   })
-  it("routes without an observer never touch the geoid", async () => {
+  it("routes without an observer never touch the geoid; alignment loads only the bands its standing points can reach", async () => {
     const calls: number[] = []
     const h = makeHandler(blocks(), undefined, undefined, makeGeoid(async b => { calls.push(b); throw new Error("no") }))
-    const a = await h(new Request("http://x/v1/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&start=2026-10-29T02:00:00Z&end=2026-10-29T02:10:00Z"))
-    expect(a.status).toBe(200)
     expect((await h(new Request("http://x/v1/magnetic?lat=40.7&lon=-74&time=2026-10-28T12:00:00Z"))).status).toBe(200)
     expect(calls).toEqual([])
+    // alignment has heights (heightRef / targetHeightRef, and the eye on the geoid by default) since 2026-10-30
+    const ok: number[] = []
+    const h2 = makeHandler(blocks(), undefined, undefined, makeGeoid(async b => { ok.push(b); return { buf: ab(bundledGeoidBand(b)), status: "MISS" } }))
+    const a = await h2(new Request("http://x/v1/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&start=2026-10-29T02:00:00Z&end=2026-10-29T02:10:00Z"))
+    expect(a.status).toBe(200)
+    expect([...new Set(ok)].toSorted()).toEqual([...new Set([...geoidBandsFor(40.68925 - 0.2), ...geoidBandsFor(40.68925 + 0.2)])].toSorted())
   })
   it("fails closed: a failed fetch or a band with the wrong bytes is a 503 GeoidUnavailable, and is retried next request", async () => {
     let n = 0

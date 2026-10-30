@@ -144,6 +144,8 @@ def run_alignment(R, A, B, q):
         R.check("align.distanceKm", abs(pa["distanceKm"] - pb["distanceKm"]), TOL["align_km"], f"{ctx} {t}")
         R.check("align.azimuth", angdiff(pa["azimuth"], pb["azimuth"]), TOL["angle_deg"], f"{ctx} {t}")
         R.check("align.apparentAltitude", abs(pa["apparentAltitude"] - pb["apparentAltitude"]), TOL["angle_deg"], f"{ctx} {t}")
+        if "heightEllipsoid" in pa and "heightEllipsoid" in pb:
+            R.check("align.heightEllipsoid_m", abs(pa["heightEllipsoid"] - pb["heightEllipsoid"]), TOL["align_m"], f"{ctx} {t}")
 
 OBS = [("40.7127", "-74.0059", "-22.6", "America/New_York"), ("69.6492", "18.9553", "20", "Europe/Oslo"),
        ("-33.8568", "151.2153", "25", "Australia/Sydney"), ("-0.1807", "-78.4678", "2850", "America/Guayaquil"),
@@ -202,7 +204,11 @@ def default_cases(seed=440):
     align = [dict(body="moon", targetLat="40.68925", targetLon="-74.0445", targetHeight="63.4", observerHeight="-30.9",
                   start="2026-10-28T23:45:00Z", end="2026-10-29T02:00:00Z", stepSeconds="900", maxDistanceKm="20"),
              dict(body="sun", targetLat="40.748441", targetLon="-73.985664", targetHeight="410", observerHeight="-25",
-                  start="2026-10-28T20:00:00Z", end="2026-10-28T21:40:00Z", stepSeconds="600", maxDistanceKm="30")]
+                  start="2026-10-28T20:00:00Z", end="2026-10-28T21:40:00Z", stepSeconds="600", maxDistanceKm="30"),
+             dict(body="moon", targetLat="40.68925", targetLon="-74.0445", targetHeight="70", targetHeightRef="msl", observerHeight="5", heightRef="msl",
+                  start="2026-11-17T03:44:30Z", end="2026-11-17T03:46:00Z", stepSeconds="30", maxDistanceKm="8", observerLat="40.7003", observerLon="-73.9968"),
+             dict(body="moon", targetLat="40.68925", targetLon="-74.0445", targetHeight="70", targetHeightRef="msl",
+                  start="2026-11-17T03:44:30Z", end="2026-11-17T03:46:00Z", stepSeconds="45", maxDistanceKm="8")]
     return dict(position=pos, day=days, crossing=cross, alignment=align, reject=rejects)
 
 if __name__ == "__main__":

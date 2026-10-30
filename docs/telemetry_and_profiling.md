@@ -49,7 +49,7 @@ this.
 | `api.fetch` | src/responses.ts | `ephem.api_key` (path + sorted query), `ephem.api_cache`, `http.status_code` — real ms: the whole loopback incl. tier lookups |
 | `alignment` / `day` / `position` / `track` / `crossing` | handlers (Api invocation) | `blocks`, `reads`, `l1`, `blocks_<status>`, `fetchedBytes`, `ephem.isolate_computes` (computations this isolate has run, this one included: 1 = fresh isolate) |
 | `compute.<endpoint>` | handlers | `ephem.block_reads`, `ephem.instants`, `ephem.iterations`, `ephem.track_points`, `ephem.events`, `ephem.crossings` (compute.crossing) |
-| `geoid.load` | src/geoid.ts (position, day, crossing, track: every route with an observer) | `geoid.bands` (1, or 2 at a band edge), `geoid.l1`, `geoid.<status>` per fetched band (`geoid.hit`, `geoid.miss`, …), `geoid.fetchedBytes`, `ephem.geoid_cache` (`L1`, or `HIT:1`). Runs concurrently with `blocks.load`. See "Geoid bands (EGM96 from R2)" |
+| `geoid.load` | src/geoid.ts (position, day, crossing, track: every route with an observer; alignment: one per band its standing points can reach, target lat ± maxDistanceKm, plus observerLat) | `geoid.bands` (1, or 2 at a band edge), `geoid.l1`, `geoid.<status>` per fetched band (`geoid.hit`, `geoid.miss`, …), `geoid.fetchedBytes`, `ephem.geoid_cache` (`L1`, or `HIT:1`). Runs concurrently with `blocks.load`. See "Geoid bands (EGM96 from R2)" |
 | `blocks.load` | src/blocks.ts | `blocks.count`, `ephem.blocks_cache` (`L1`, or `HIT:2,MISS:1`: BlockStore loopback statuses), `cache.l1`, `cache.blocks_hit` / `cache.blocks_miss` / …, `cache.fetchedBytes`; `cache.originReads/originBytes` only for in-process reads (tests, dev) |
 | `GET` (runtime) | workerd | `cpu_time_ms`, `wall_time_ms`, geo |
 | `fetch` / `jsRpcCall` (runtime) | workerd | a loopback fetch; `jsRpcCall method=send` is the Basin pipeline send (~1 s, after the response) |
@@ -190,7 +190,9 @@ Where things run: a MISS runs the cached entrypoint at the tier colo (Api invoca
 
 Every route with an observer (position, day, crossing, track; also MCP tools and the front door's live position) needs
 the EGM96 undulation N, because `observer.geoidUndulation` is always in the answer and a missing `height` puts the observer
-on the geoid. Alignment, magnetic, weather and the static routes do not. Until 2026-10-30 the 30′ grid was bundled
+on the geoid. Since 2026-10-30 (CACHE_VERSION 4) alignment does too: `heightRef` / `targetHeightRef`, per-point
+`geoidUndulation`, and the eye on the geoid by default; it loads every band within target lat ± maxDistanceKm (1–2 bands;
+`geoidAcross` in handlers.ts). Magnetic, weather and the static routes do not. Until 2026-10-30 the 30′ grid was bundled
 (`egm96-grid.ts`, 384 KB = 38% of the script); now the Worker bundles only its manifest (`packages/core/src/egm96-bands.ts`:
 per band offset, length, sha256 prefix; 1.7 KB) and reads bands from R2:
 
@@ -204,7 +206,7 @@ handler ─ geoid.load (concurrent with blocks.load) ─ L1 (isolate Map, ≤ 46
   band edge (`geoidBandsFor(lat)`). The band count is what decides fetches; bytes are tiny next to a round trip.
 - **Integrity / fail closed:** BlockStore checks length + sha256 before answering (else 502 `no-store`); the consumer
   checks again before the band enters L1. Any failure is a typed **503 `GeoidUnavailable`** naming the band and the cause
-  (in the contract for the four routes); nothing is cached and the next request retries. Core throws if a band was not
+  (in the contract for the five routes); nothing is cached and the next request retries. Core throws if a band was not
   prefetched, so a wiring bug can never answer with a wrong height.
 - **Bit-identical:** same decoder over the same bytes. Golden test unchanged; sweep of 8.28 M lookups (random, every node
   and midpoint, every row/band edge ± 1e-9, poles, lon wrap) old bundled code vs new code over the bytes read back from R2:

@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder"
 import { EphemApi, InvalidInput, OutOfRange } from "@ephem/api"
-import { SUPPORTED, TRACK_DEFAULT_STEP_S, alignment, blocksFor, crossingRequest, crossingWindow, dayRequest, instant, instrumented, isValidZone, localMidnight, nextDate, positionRequest, trackRequest, trackWindowError } from "@ephem/core"
+import { SUPPORTED, TRACK_DEFAULT_STEP_S, alignmentLatRange, alignmentRequest, blocksFor, crossingRequest, crossingWindow, dayRequest, instant, instrumented, isValidZone, localMidnight, nextDate, positionRequest, trackRequest, trackWindowError } from "@ephem/core"
 import { Blocks, blocksCache } from "./blocks.ts"
 import { Geoid, geoidCache } from "./geoid.ts"
 import { EarthLive } from "./weather.ts"
@@ -30,6 +30,11 @@ const geoidAt = (lat: number) => Effect.gen(function* () {
   const s = yield* (yield* Geoid).load(lat)
   yield* Effect.annotateCurrentSpan({ ...s, "ephem.geoid_cache": geoidCache(s) })
 }).pipe(Effect.withSpan("geoid.load"))
+/** Every geoid band a latitude range touches (alignment: standing points within maxDistanceKm of the target), plus `extra`. */
+const geoidAcross = ([lo, hi]: [number, number], ...extra: number[]) => {
+  const lats = [lo, hi, ...extra]; for (let x = lo + 1; x < hi; x += 1) lats.push(x)   // bands are 4° tall: 1° steps miss none
+  return Effect.all(lats.map(geoidAt), { concurrency: "unbounded", discard: true })
+}
 /** Run a pure computation over prefetched blocks (and whatever `pre` loads concurrently: the observer's geoid bands),
  *  timing it and attaching diagnostics; spans carry cache tiers and work counts. */
 const compute = <A, E = never, R = never>(name: string, blocks: ReadonlyArray<number>, f: (src: Parameters<typeof instrumented>[0]) => A, attrs: (out: A) => Attrs = () => ({}),
@@ -86,13 +91,16 @@ export const SkyLive = HttpApiBuilder.group(EphemApi, "sky", h => h
     if (end <= start) return yield* new InvalidInput({ message: "end must be after start" })
     if ((end - start) / 1000 / step > 2000) return yield* new InvalidInput({ message: "at most 2000 steps per request" })
     if ((q.observerLat === undefined) !== (q.observerLon === undefined)) return yield* new InvalidInput({ message: "observerLat and observerLon go together" })
+    const maxDistanceKm = q.maxDistanceKm ?? 20
+    const observer = q.observerLat !== undefined && q.observerLon !== undefined ? { lat: q.observerLat, lon: q.observerLon } : undefined
     const { out, provenance } = yield* compute("alignment", blocksFor(jd(start), jd(end)), src =>
-      alignment(src, { body: q.body, target: { lat: q.targetLat, lon: q.targetLon, height: q.targetHeight }, observerHeight: q.observerHeight ?? 0,
-        startMs: start, endMs: end, stepSeconds: step, maxDistanceKm: q.maxDistanceKm ?? 20, temperature: q.temperature, pressure: q.pressure, dut1: q.dut1,
-        ...(q.observerLat !== undefined && q.observerLon !== undefined ? { observer: { lat: q.observerLat, lon: q.observerLon } } : {}) }),
-      o => ({ "ephem.instants": Math.floor((end - start) / 1000 / step) + 1, "ephem.track_points": o.track.length, "ephem.iterations": o.track.reduce((s, p) => s + p.iterations, 0), "ephem.passes": o.fromObserver?.passes.length }))
+      alignmentRequest(src, { body: q.body, targetLat: q.targetLat, targetLon: q.targetLon, targetHeight: q.targetHeight, targetHeightRef: q.targetHeightRef,
+        observerHeight: q.observerHeight, heightRef: q.heightRef, startMs: start, endMs: end, stepSeconds: step, maxDistanceKm,
+        temperature: q.temperature, pressure: q.pressure, dut1: q.dut1, observer }),
+      o => ({ "ephem.instants": Math.floor((end - start) / 1000 / step) + 1, "ephem.track_points": o.track.length, "ephem.iterations": o.track.reduce((s, p) => s + p.iterations, 0), "ephem.passes": o.fromObserver?.passes.length }),
+      geoidAcross(alignmentLatRange(q.targetLat, maxDistanceKm), ...(observer ? [observer.lat] : [])))
     const track = out.track.map(({ iterations: _i, ...p }) => p)
-    return { body: out.body, track, ...(out.fromObserver ? { fromObserver: out.fromObserver } : {}), provenance }
+    return { ...out, track, provenance }
   }).pipe(Effect.withSpan("alignment")))
   .handle("track", ({ query: q }) => Effect.gen(function* () {
     const start = yield* parseUtc(q.start), end = yield* parseUtc(q.end), step = q.stepSeconds ?? TRACK_DEFAULT_STEP_S

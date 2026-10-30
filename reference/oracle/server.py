@@ -328,10 +328,11 @@ def target_elevation(olat, olon, oh, tlat, tlon, th):
     _, _, dist = GEOD.inv(olon, olat, tlon, tlat)
     return geo + math.degrees(K_TERR * (dist / R_MEAN) / 2), dist
 
-def standing_point(B, t, T, P, tlat, tlon, th, oh, maxd_m):
-    """Solve P: body azimuth at P = forward azimuth P→target; body apparent altitude at P = target apparent elevation."""
+def standing_point(B, t, T, P, tlat, tlon, th, eye, maxd_m):
+    """Solve P: body azimuth at P = forward azimuth P→target; body apparent altitude at P = target apparent elevation.
+    eye(lat, lon): the eye's ellipsoidal height there (msl heights add the geoid at each candidate point)."""
     def look(lat, lon):
-        p = body_position(EARTH + wgs84.latlon(lat, lon, elevation_m=oh), B, t, T, P)
+        p = body_position(EARTH + wgs84.latlon(lat, lon, elevation_m=eye(lat, lon)), B, t, T, P)
         return p["azimuth"], p["altitude"], p["apparentAltitude"], p["angularRadius"]
     olat, olon = tlat, tlon; back = None
     for it in range(1, 13):
@@ -341,7 +342,7 @@ def standing_point(B, t, T, P, tlat, tlon, th, oh, maxd_m):
         def place(dm):
             lo2, la2, _ = GEOD.fwd(tlon, tlat, back, dm); return la2, lo2
         def g(dm):
-            la2, lo2 = place(dm); el, _ = target_elevation(la2, lo2, oh, tlat, tlon, th); return el - app
+            la2, lo2 = place(dm); el, _ = target_elevation(la2, lo2, eye(la2, lo2), tlat, tlon, th); return el - app
         lo_d, hi_d = 1.0, maxd_m
         if g(lo_d) < 0 or g(hi_d) > 0: return None
         while hi_d - lo_d > 1e-4:
@@ -356,14 +357,23 @@ def standing_point(B, t, T, P, tlat, tlon, th, oh, maxd_m):
         if abs(d_az) < 1e-9 and moved < 1e-3: break
         back = (back + d_az) % 360
     _, _, dist = GEOD.inv(olon, olat, tlon, tlat)
-    return dict(time=iso_ms(t), lat=olat, lon=olon, distanceKm=dist / 1000, azimuth=az, apparentAltitude=app, angularRadius=rad)
+    hE = eye(olat, olon); N = geoid_n(olat, olon)
+    return dict(time=iso_ms(t), lat=olat, lon=olon, distanceKm=dist / 1000, azimuth=az, apparentAltitude=app, angularRadius=rad,
+                heightEllipsoid=hE, heightMsl=hE - N, geoidUndulation=N)
 
 def alignment(q):
     body = q.get("body")
     if body not in ("sun", "moon"): raise BadInput("body must be sun or moon")
     B = SUN if body == "sun" else MOON
     tlat, tlon, th = fnum(q, "targetLat", lo=-90, hi=90), fnum(q, "targetLon", lo=-180, hi=180), fnum(q, "targetHeight")
-    oh, step, maxd = fnum(q, "observerHeight", 0.0), fnum(q, "stepSeconds", 60.0, 1, 3600), fnum(q, "maxDistanceKm", 20.0, 0.01, 200)
+    tref, oref = q.get("targetHeightRef", "ellipsoid"), q.get("heightRef", "ellipsoid")
+    if tref not in ("ellipsoid", "msl") or oref not in ("ellipsoid", "msl"): raise BadInput("heightRef / targetHeightRef must be ellipsoid or msl")
+    tN = geoid_n(tlat, tlon)
+    if tref == "msl": th = th + tN
+    step, maxd = fnum(q, "stepSeconds", 60.0, 1, 3600), fnum(q, "maxDistanceKm", 20.0, 0.01, 200)
+    if "observerHeight" not in q: oh, msl = 0.0, True          # no height: the eye on the geoid, as every endpoint
+    else: oh, msl = fnum(q, "observerHeight", lo=-500, hi=100000), oref == "msl"
+    eye = (lambda la, lo: oh + geoid_n(la, lo)) if msl else (lambda la, lo: oh)
     T, P, dut1 = fnum(q, "temperature", 10.0), fnum(q, "pressure", 1010.0), fnum(q, "dut1", 0.0, -0.9, 0.9)
     s, e = parse_utc(q.get("start")), parse_utc(q.get("end"))
     if e <= s or (e - s).total_seconds() / step > 2000: raise BadInput("end must follow start, at most 2000 steps")
@@ -371,14 +381,15 @@ def alignment(q):
     ts = timescale_with_dut1(dut1); track = []
     n = int((e - s).total_seconds() // step) + 1
     for i in range(n):
-        p = standing_point(B, ts.from_datetime(s + dt.timedelta(seconds=i * step)), T, P, tlat, tlon, th, oh, maxd * 1000)
+        p = standing_point(B, ts.from_datetime(s + dt.timedelta(seconds=i * step)), T, P, tlat, tlon, th, eye, maxd * 1000)
         if p: track.append(p)
-    out = dict(body=body, track=track, provenance=PROV)
+    out = dict(body=body, target=dict(lat=tlat, lon=tlon, height=th, heightEllipsoid=th, heightMsl=th - tN, geoidUndulation=tN, heightRef=tref),
+               track=track, provenance=PROV)
     if "observerLat" in q:
         olat, olon = fnum(q, "observerLat", lo=-90, hi=90), fnum(q, "observerLon", lo=-180, hi=180)
-        el, dist = target_elevation(olat, olon, oh, tlat, tlon, th)
+        el, dist = target_elevation(olat, olon, eye(olat, olon), tlat, tlon, th)
         az_t, _, _ = GEOD.inv(olon, olat, tlon, tlat); az_t %= 360
-        o = EARTH + wgs84.latlon(olat, olon, elevation_m=oh)
+        o = EARTH + wgs84.latlon(olat, olon, elevation_m=eye(olat, olon))
         def look(tt):
             return body_position(o, B, ts.tt_jd(tt), T, P)
         def d_az(tt): return ((look(tt)["azimuth"] - az_t + 540) % 360) - 180
@@ -396,7 +407,7 @@ ALLOWED = {
     "/v1/day": {"lat", "lon", "height", "heightRef", "date", "tz", "temperature", "pressure", "horizon", "horizonProfile", "limb", "dut1"},
     "/v1/crossing": {"lat", "lon", "height", "heightRef", "body", "altitude", "altitudeType", "horizonProfile", "limb", "direction",
                      "start", "end", "date", "tz", "temperature", "pressure", "dut1"},
-    "/v1/alignment": {"body", "targetLat", "targetLon", "targetHeight", "observerHeight", "start", "end", "stepSeconds", "maxDistanceKm",
+    "/v1/alignment": {"body", "targetLat", "targetLon", "targetHeight", "targetHeightRef", "observerHeight", "heightRef", "start", "end", "stepSeconds", "maxDistanceKm",
                       "temperature", "pressure", "dut1", "observerLat", "observerLon"},
 }
 class H(BaseHTTPRequestHandler):

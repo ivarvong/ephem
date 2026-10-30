@@ -19,7 +19,9 @@ const Sky = HttpApiBuilder.group(EphemApi, "sky", h => h
   .handle("day", ({ query }) => Effect.succeed({ date: query.date, tz: query.tz, start: "2026-10-28T04:00:00Z", end: "2026-10-29T04:00:00Z", observer: obs(query), events: [], conventions: dayConv, provenance: prov }))
   .handle("crossing", ({ query }) => Effect.succeed({ body: query.body, start: "2026-10-28T04:00:00Z", end: "2026-10-29T04:00:00Z", observer: obs(query), crossings: [],
     conventions: { definition: "", limb: "center" as const, altitudeType: "true" as const, trueLimbAltitude: 0, refraction: null, horizon: null, geoid }, provenance: prov }))
-  .handle("alignment", ({ query }) => Effect.succeed({ body: query.body, track: [], provenance: prov }))
+  .handle("alignment", ({ query }) => Effect.succeed({ body: query.body, target: obs({ lat: query.targetLat, lon: query.targetLon, height: query.targetHeight }), track: [],
+    conventions: { definition: "", azimuth: "", apparentAltitude: "", terrestrialRefraction: "", heights: "", rates: "", observerHeightRef: "default" as const, targetHeightRef: "ellipsoid" as const,
+      terrestrialRefractionK: 0.13, refraction: { model: "", temperatureC: 10, pressureHpa: 1010 }, geoid }, provenance: prov }))
   .handle("track", ({ query }) => Effect.succeed({ start: query.start, end: query.end, stepSeconds: query.stepSeconds ?? 1200, count: 1, observer: obs(query),
     sun: { azimuth: [1], altitude: [2], apparentAltitude: [null] }, moon: { azimuth: [3], altitude: [4], apparentAltitude: [4.2] },
     conventions: { refraction: posConv.refraction, horizon, geoid }, provenance: prov })))

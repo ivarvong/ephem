@@ -10,8 +10,10 @@ import { type Geodetic, angularRadius, apparent, enuOf, epochAt, frameAt, itrsOf
 import { type Vec3, DEG, dot, mxv, norm, sub, wrap360 } from "./linalg.ts"
 import { crossings, solve } from "./day.ts"
 import { instant, isoMs } from "./time.ts"
+import { RATE_STEP_S } from "./position.ts"
 
-import { K_TERRESTRIAL, R_MEAN_M, refractTrue as refract } from "./horizon.ts"
+import { type HeightRef, K_TERRESTRIAL, R_MEAN_M, refractTrue as refract } from "./horizon.ts"
+import { geoidUndulation } from "./geoid.ts"
 export { K_TERRESTRIAL, R_MEAN_M }
 
 /** Apparent elevation (deg) of the point at ITRS `Tx` from P, `s` metres away along the ground. */
@@ -28,7 +30,10 @@ export const targetElevation = (P: Geodetic, T: Geodetic): { elevation: number; 
 export interface AlignmentInput {
   readonly body: BodyName
   readonly target: Geodetic              // the point to frame (e.g. the torch), ellipsoidal height
-  readonly observerHeight: number        // eye height, ellipsoidal metres
+  readonly observerHeight: number        // eye height, metres above the ellipsoid (default) or the geoid (observerHeightRef msl)
+  /** msl: observerHeight is above the EGM96 geoid, so the eye's ellipsoidal height is observerHeight + N at every candidate
+   *  standing point (N varies along the track). Default ellipsoid: the eye is observerHeight above WGS-84 everywhere. */
+  readonly observerHeightRef?: HeightRef | undefined
   readonly startMs: number; readonly endMs: number; readonly stepSeconds: number
   readonly maxDistanceKm: number
   readonly temperature?: number | undefined; readonly pressure?: number | undefined; readonly dut1?: number | undefined
@@ -37,8 +42,12 @@ export interface AlignmentInput {
 export interface AlignmentPoint {
   readonly time: string; readonly lat: number; readonly lon: number
   readonly distanceKm: number; readonly azimuth: number; readonly apparentAltitude: number; readonly angularRadius: number
+  readonly heightEllipsoid: number        // the eye's height above WGS-84 at this standing point, metres
   readonly iterations: number
 }
+/** The eye's ellipsoidal height at (lat, lon). */
+export const eyeHeight = (inp: Pick<AlignmentInput, "observerHeight" | "observerHeightRef">): ((lat: number, lon: number) => number) =>
+  inp.observerHeightRef === "msl" ? (lat, lon) => inp.observerHeight + geoidUndulation(lat, lon) : () => inp.observerHeight
 
 const EARTH_RAD_S = 7.292115e-5, C_M_S = 299_792_458, MAX_ITER = 12, POS_TOL_M = 1e-3, AZ_TOL_DEG = 1e-9, LAT_TOL_M = 1e-8, DIST_BISECT_M = 1e-7   // 1e-7 m keeps the elevation residual below 1e-7° even 100 m from the target
 
@@ -94,8 +103,8 @@ export const standingPoint = (src: BlockSource, inp: AlignmentInput, utcMs: numb
   // the vertical (≈ s/R, comparable to the altitude itself at grazing angles) and parallax into the solve; only aberration is left over.
   type Look = ReturnType<typeof look>
   const seen = (b: Look, r: Vec3) => sub(b.v, sub(r, b.r))
-  const warm = seed.P !== undefined
-  let P: Geodetic = seed.P ?? { lat: inp.target.lat, lon: inp.target.lon, height: inp.observerHeight }
+  const warm = seed.P !== undefined, eye = eyeHeight(inp)
+  let P: Geodetic = seed.P ?? { lat: inp.target.lat, lon: inp.target.lon, height: eye(inp.target.lat, inp.target.lon) }
   let backAz = 0, it = 0, b = look(P), dist = seed.dist
   seed.P = undefined
   const Tx = itrsOf(inp.target), lo = 1, hi = inp.maxDistanceKm * 1000
@@ -109,7 +118,7 @@ export const standingPoint = (src: BlockSource, inp: AlignmentInput, utcMs: numb
     for (let k = 0; k < MAX_ITER; k++) {
       // (2): distance along the current back-azimuth where the target's apparent elevation equals the body's apparent altitude.
       const line = directLine(inp.target.lat, inp.target.lon, backAz)
-      const place = (dm: number): Geodetic => { const d = line(dm); return { lat: d.lat, lon: d.lon, height: inp.observerHeight } }
+      const place = (dm: number): Geodetic => { const d = line(dm); return { lat: d.lat, lon: d.lon, height: eye(d.lat, d.lon) } }
       const bv = b
       const g = (dm: number) => {                     // place(dm) is dm from T along the geodesic
         const Q = place(dm), r = itrsOf(Q), { up } = enuOf(Q), e = sub(Tx, r), w = seen(bv, r)
@@ -137,7 +146,15 @@ export const standingPoint = (src: BlockSource, inp: AlignmentInput, utcMs: numb
   }
   const e = targetElevation(P, inp.target)
   seed.P = P
-  return { time: isoMs(utcMs), lat: P.lat, lon: P.lon, distanceKm: e.distanceM / 1000, azimuth: az, apparentAltitude: app, angularRadius: b.radius, iterations: it }
+  return { time: isoMs(utcMs), lat: P.lat, lon: P.lon, distanceKm: e.distanceM / 1000, azimuth: az, apparentAltitude: app, angularRadius: b.radius, heightEllipsoid: P.height, iterations: it }
+}
+
+/** d(true altitude)/dt and d(azimuth)/dt of the body seen from a fixed point, degrees per minute: the symmetric difference
+ *  over ±RATE_STEP_S that /v1/position uses (same definition, same units). */
+export const ratesAt = (src: BlockSource, body: BodyName, P: Geodetic, utcMs: number, dut1 = 0): { altitudeRate: number; azimuthRate: number } => {
+  const at = (ms: number) => { const f = frameAt(src, instant(ms, dut1), P); return topocentric(f, apparent(src, f, body).v) }
+  const a = at(utcMs - RATE_STEP_S * 1000), b = at(utcMs + RATE_STEP_S * 1000), perMin = 60 / (2 * RATE_STEP_S)
+  return { altitudeRate: (b.altitude - a.altitude) * perMin, azimuthRate: (((b.azimuth - a.azimuth) % 360 + 540) % 360 - 180) * perMin }
 }
 
 export interface Pass { readonly time: string; readonly altitudeOffset: number; readonly angularRadius: number; readonly apparentAltitude: number }
@@ -145,7 +162,7 @@ export interface FromObserver { readonly azimuthToTarget: number; readonly dista
 
 /** Converse: from a fixed spot, the instants in the window when the body's azimuth equals the target's azimuth. */
 export const fromObserver = (src: BlockSource, inp: AlignmentInput, obs: { lat: number; lon: number }): FromObserver => {
-  const P: Geodetic = { lat: obs.lat, lon: obs.lon, height: inp.observerHeight }
+  const P: Geodetic = { lat: obs.lat, lon: obs.lon, height: eyeHeight(inp)(obs.lat, obs.lon) }
   const e = targetElevation(P, inp.target), T = inp.temperature ?? 10, Pr = inp.pressure ?? 1010
   const look = (ms: number) => {
     const f = frameAt(src, instant(ms, inp.dut1 ?? 0), P), a = apparent(src, f, inp.body), tp = topocentric(f, a.v)

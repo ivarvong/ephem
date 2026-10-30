@@ -3,7 +3,7 @@
  "info": {
   "title": "Api",
   "version": "0.0.1",
-  "description": "Sun and Moon positions, day events, crossings and alignments from JPL DE440. Every response carries provenance (implementation, ephemeris, DE440 blocks read, compute time, cache tiers) and, for /v1/position, /v1/day and /v1/crossing, a conventions block with every threshold, horizon, refraction input and geoid value used.\n\nChanges on 2026-10-29 (API correctness pass):\n1. /v1/day rise and set now depend on height. An explicit `height` is metres above the WGS-84 ellipsoid (unchanged meaning), and the sea-horizon dip is taken from the height above mean sea level (EGM96). Example: in New York `height=0` is ≈ 33 m above sea level, so sunrise is ≈ 1 min earlier and sunset ≈ 1 min later than before. Pass `heightRef=msl` for a height above sea level (iOS `altitude`, maps); omit `height` to stand at sea level, which gives the previous times (Sun within 1 ms).\n2. `apparentAltitude` in /v1/position is now `number | null`: refraction is applied down to the observer's horizon (default the sea horizon, −dip) and the value is null below it or below −1.6963°. It used to repeat the true altitude below −1°. One refraction model now serves every endpoint (34′ at the horizon), so apparent altitudes are 1.3 % of the refraction lower than Skyfield's Bennett (0.45′ at 0°, 0.07′ at 10°), and /v1/crossing at apparent 0° (upper limb) equals /v1/day's sunrise.\n3. Unknown query parameters are rejected with 400 InvalidRequest (kind UnknownParameter, with the allowed list). They used to be ignored.\n4. New: /v1/crossing; on /v1/day `temperature`, `pressure`, `horizon` (sea | geometric | degrees), `horizonProfile`, `limb`; `heightRef` everywhere; `altitudeRate` and `azimuthRate` (°/min) in positions; observer heightMsl and geoidUndulation.\n5. New (2026-10-29): /v1/track, the sampled Sun and Moon azimuth / altitude / apparent altitude over a UTC grid in one immutable answer (what the homepage draws its paths from)."
+  "description": "Sun and Moon positions, day events, crossings and alignments from JPL DE440. Every response carries provenance (implementation, ephemeris, DE440 blocks read, compute time, cache tiers) and, for /v1/position, /v1/day, /v1/crossing and /v1/alignment, a conventions block with every threshold, horizon, refraction input and geoid value used.\n\nChanges on 2026-10-29 (API correctness pass):\n1. /v1/day rise and set now depend on height. An explicit `height` is metres above the WGS-84 ellipsoid (unchanged meaning), and the sea-horizon dip is taken from the height above mean sea level (EGM96). Example: in New York `height=0` is ≈ 33 m above sea level, so sunrise is ≈ 1 min earlier and sunset ≈ 1 min later than before. Pass `heightRef=msl` for a height above sea level (iOS `altitude`, maps); omit `height` to stand at sea level, which gives the previous times (Sun within 1 ms).\n2. `apparentAltitude` in /v1/position is now `number | null`: refraction is applied down to the observer's horizon (default the sea horizon, −dip) and the value is null below it or below −1.6963°. It used to repeat the true altitude below −1°. One refraction model now serves every endpoint (34′ at the horizon), so apparent altitudes are 1.3 % of the refraction lower than Skyfield's Bennett (0.45′ at 0°, 0.07′ at 10°), and /v1/crossing at apparent 0° (upper limb) equals /v1/day's sunrise.\n3. Unknown query parameters are rejected with 400 InvalidRequest (kind UnknownParameter, with the allowed list). They used to be ignored.\n4. New: /v1/crossing; on /v1/day `temperature`, `pressure`, `horizon` (sea | geometric | degrees), `horizonProfile`, `limb`; `heightRef` everywhere; `altitudeRate` and `azimuthRate` (°/min) in positions; observer heightMsl and geoidUndulation.\n5. New (2026-10-29): /v1/track, the sampled Sun and Moon azimuth / altitude / apparent altitude over a UTC grid in one immutable answer (what the homepage draws its paths from).\n\nChanges on 2026-10-30 (round-2 feedback):\n6. /v1/alignment: `heightRef` (observer) and `targetHeightRef`, each ellipsoid (default) | msl, as on /v1/crossing; `target` echoes the target's heights and geoid undulation; every track point has `altitudeRate`, `azimuthRate` (°/min, as /v1/position), `heightEllipsoid`, `heightMsl`, `geoidUndulation`; a `conventions` block. BEHAVIOUR CHANGE: without `observerHeight` the eye is now on the geoid (heightMsl 0, as on every other endpoint); it used to be 0 m above the ellipsoid (≈ 33 m below sea level in New York)."
  },
  "paths": {
   "/v1/position": {
@@ -1808,10 +1808,34 @@
       "required": true
      },
      {
+      "name": "targetHeightRef",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "ellipsoid",
+        "msl"
+       ]
+      },
+      "required": false
+     },
+     {
       "name": "observerHeight",
       "in": "query",
       "schema": {
        "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "heightRef",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "ellipsoid",
+        "msl"
+       ]
       },
       "required": false
      },
@@ -1904,6 +1928,56 @@
             "moon"
            ]
           },
+          "target": {
+           "type": "object",
+           "properties": {
+            "lat": {
+             "type": "number",
+             "minimum": -90,
+             "maximum": 90
+            },
+            "lon": {
+             "type": "number",
+             "minimum": -180,
+             "maximum": 180
+            },
+            "height": {
+             "type": "number",
+             "description": "Metres above the WGS-84 ellipsoid (same as heightEllipsoid; kept for compatibility)."
+            },
+            "heightEllipsoid": {
+             "type": "number"
+            },
+            "heightMsl": {
+             "type": "number",
+             "description": "Metres above the EGM96 geoid (≈ mean sea level)."
+            },
+            "geoidUndulation": {
+             "type": "number",
+             "description": "EGM96 N, metres: heightEllipsoid = heightMsl + geoidUndulation."
+            },
+            "heightRef": {
+             "type": "string",
+             "enum": [
+              "ellipsoid",
+              "msl",
+              "default"
+             ],
+             "description": "What the request's height was measured from; default = no height given, the observer is on the geoid."
+            }
+           },
+           "required": [
+            "lat",
+            "lon",
+            "height",
+            "heightEllipsoid",
+            "heightMsl",
+            "geoidUndulation",
+            "heightRef"
+           ],
+           "additionalProperties": false,
+           "description": "The target point with its height in both references (heightRef: what targetHeight was measured from)."
+          },
           "track": {
            "type": "array",
            "items": {
@@ -1926,13 +2000,35 @@
               "type": "number"
              },
              "azimuth": {
-              "type": "number"
+              "type": "number",
+              "description": "The body's azimuth seen from this standing point, degrees true; by construction = the forward geodesic azimuth from here to the target (conventions.azimuth)."
              },
              "apparentAltitude": {
-              "type": "number"
+              "type": "number",
+              "description": "The body's apparent altitude seen from here = the target's apparent elevation (terrestrial refraction k·θ/2 included), degrees."
              },
              "angularRadius": {
               "type": "number"
+             },
+             "altitudeRate": {
+              "type": "number",
+              "description": "d(true altitude)/dt of the body seen from this standing point, degrees per minute (±10 s symmetric difference, as /v1/position)."
+             },
+             "azimuthRate": {
+              "type": "number",
+              "description": "d(azimuth)/dt of the body seen from this standing point, degrees per minute (±10 s symmetric difference, as /v1/position)."
+             },
+             "heightEllipsoid": {
+              "type": "number",
+              "description": "The eye's height above WGS-84 at this standing point, metres."
+             },
+             "heightMsl": {
+              "type": "number",
+              "description": "The eye's height above the EGM96 geoid at this standing point, metres."
+             },
+             "geoidUndulation": {
+              "type": "number",
+              "description": "EGM96 N at this standing point, metres: heightEllipsoid = heightMsl + geoidUndulation."
              }
             },
             "required": [
@@ -1942,7 +2038,12 @@
              "distanceKm",
              "azimuth",
              "apparentAltitude",
-             "angularRadius"
+             "angularRadius",
+             "altitudeRate",
+             "azimuthRate",
+             "heightEllipsoid",
+             "heightMsl",
+             "geoidUndulation"
             ],
             "additionalProperties": false
            }
@@ -1950,6 +2051,55 @@
           "fromObserver": {
            "type": "object",
            "properties": {
+            "observer": {
+             "type": "object",
+             "properties": {
+              "lat": {
+               "type": "number",
+               "minimum": -90,
+               "maximum": 90
+              },
+              "lon": {
+               "type": "number",
+               "minimum": -180,
+               "maximum": 180
+              },
+              "height": {
+               "type": "number",
+               "description": "Metres above the WGS-84 ellipsoid (same as heightEllipsoid; kept for compatibility)."
+              },
+              "heightEllipsoid": {
+               "type": "number"
+              },
+              "heightMsl": {
+               "type": "number",
+               "description": "Metres above the EGM96 geoid (≈ mean sea level)."
+              },
+              "geoidUndulation": {
+               "type": "number",
+               "description": "EGM96 N, metres: heightEllipsoid = heightMsl + geoidUndulation."
+              },
+              "heightRef": {
+               "type": "string",
+               "enum": [
+                "ellipsoid",
+                "msl",
+                "default"
+               ],
+               "description": "What the request's height was measured from; default = no height given, the observer is on the geoid."
+              }
+             },
+             "required": [
+              "lat",
+              "lon",
+              "height",
+              "heightEllipsoid",
+              "heightMsl",
+              "geoidUndulation",
+              "heightRef"
+             ],
+             "additionalProperties": false
+            },
             "azimuthToTarget": {
              "type": "number"
             },
@@ -1988,10 +2138,128 @@
             }
            },
            "required": [
+            "observer",
             "azimuthToTarget",
             "distanceKm",
             "targetElevation",
             "passes"
+           ],
+           "additionalProperties": false
+          },
+          "conventions": {
+           "type": "object",
+           "properties": {
+            "definition": {
+             "type": "string"
+            },
+            "azimuth": {
+             "type": "string"
+            },
+            "apparentAltitude": {
+             "type": "string"
+            },
+            "terrestrialRefraction": {
+             "type": "string",
+             "description": "Whether and how refraction along the sight line (eye → target) is modelled."
+            },
+            "heights": {
+             "type": "string"
+            },
+            "rates": {
+             "type": "string"
+            },
+            "observerHeightRef": {
+             "type": "string",
+             "enum": [
+              "ellipsoid",
+              "msl",
+              "default"
+             ],
+             "description": "What observerHeight was measured from; default = no observerHeight, the eye is on the geoid."
+            },
+            "targetHeightRef": {
+             "type": "string",
+             "enum": [
+              "ellipsoid",
+              "msl"
+             ]
+            },
+            "terrestrialRefractionK": {
+             "type": "number"
+            },
+            "refraction": {
+             "type": "object",
+             "properties": {
+              "model": {
+               "type": "string"
+              },
+              "temperatureC": {
+               "type": "number"
+              },
+              "pressureHpa": {
+               "type": "number"
+              }
+             },
+             "required": [
+              "model",
+              "temperatureC",
+              "pressureHpa"
+             ],
+             "additionalProperties": false
+            },
+            "geoid": {
+             "type": "object",
+             "properties": {
+              "model": {
+               "type": "string",
+               "enum": [
+                "EGM96"
+               ]
+              },
+              "source": {
+               "type": "string"
+              },
+              "interpolationErrorM": {
+               "type": "object",
+               "properties": {
+                "rms": {
+                 "type": "number"
+                },
+                "p99": {
+                 "type": "number"
+                },
+                "max": {
+                 "type": "number"
+                }
+               },
+               "required": [
+                "rms",
+                "p99",
+                "max"
+               ],
+               "additionalProperties": false
+              }
+             },
+             "required": [
+              "model",
+              "source",
+              "interpolationErrorM"
+             ],
+             "additionalProperties": false
+            }
+           },
+           "required": [
+            "definition",
+            "azimuth",
+            "apparentAltitude",
+            "terrestrialRefraction",
+            "heights",
+            "rates",
+            "observerHeightRef",
+            "targetHeightRef",
+            "terrestrialRefractionK",
+            "refraction",
+            "geoid"
            ],
            "additionalProperties": false
           },
@@ -2047,7 +2315,9 @@
          },
          "required": [
           "body",
+          "target",
           "track",
+          "conventions",
           "provenance"
          ],
          "additionalProperties": false
@@ -2068,6 +2338,16 @@
            "$ref": "#/components/schemas/InvalidInputEncoded"
           }
          ]
+        }
+       }
+      }
+     },
+     "503": {
+      "description": "GeoidUnavailable",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/GeoidUnavailableEncoded"
         }
        }
       }
