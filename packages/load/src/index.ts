@@ -12,7 +12,7 @@
 // Bearer LOAD_TOKEN (a Workers secret) on everything but /health; without the secret every call is refused.
 import { DurableObject } from "cloudflare:workers"
 import { type KindStats, type KindSummary, type Outcome, type ShardStats, kindStats, mergeKind, record, shardStats, summarize } from "./stats.ts"
-import { KINDS, LIMITS, ORIGIN, REGIONS, RUN_ID, WARM_KEYS, build, endOf, measureFrom, headers, mulberry32, picker, plan, rayColo, target, validate, type Kind, type Region, type RunSpec, type ShardPlan } from "./workload.ts"
+import { KINDS, LIMITS, ORIGIN, REGIONS, RUN_ID, WARM_KEYS, build, endOf, measureFrom, headers, keyRand, mulberry32, picker, plan, rayColo, target, validate, type Kind, type Region, type RunSpec, type ShardPlan } from "./workload.ts"
 
 interface Env { readonly LOAD_TOKEN?: string; readonly VERSION?: { readonly id: string } }
 interface Exports { readonly Generator: DurableObjectNamespace<Generator>; readonly Coordinator: DurableObjectNamespace<Coordinator> }
@@ -118,7 +118,7 @@ export class Generator extends DurableObject<Env> {
         }
       }))
     }
-    const rand = mulberry32(p.seed), pick = picker(spec.mix), period = 1000 / p.rate, phase = (p.shard / p.shards) * period
+    const rand = mulberry32(p.seed), keys = keyRand(spec.runId, p.seed), pick = picker(spec.mix), period = 1000 / p.rate, phase = (p.shard / p.shards) * period
     const end = endOf(spec), from = measureFrom(spec)
     this.ctx.storage.sql.exec(`UPDATE runs SET startedAt = ? WHERE runId = ?`, spec.startAt, spec.runId)
     const inflight = new Set<Promise<void>>()
@@ -132,7 +132,7 @@ export class Generator extends DurableObject<Env> {
       const kind = pick(rand()), measured = at >= from, s: KindStats = st.kinds[kind]
       if (measured) s.offered++
       if (inflight.size >= LIMITS.inflightPerShard) { if (measured) s.dropped++; continue }
-      const b = build(kind, rand, i, Date.now())
+      const b = build(kind, keys, i, Date.now())
       if (!measured) st.warmup.sent++
       const job: Promise<void> = fire(spec, kind, b.path, b.method, b.body)
         .then(o => { if (measured) record(s, o, spec.pin, rand); else if (o.error === undefined && o.status < 400) st.warmup.ok++ })

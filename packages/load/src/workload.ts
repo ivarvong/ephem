@@ -163,6 +163,17 @@ export const mulberry32 = (seed: number): (() => number) => {
   }
 }
 
+/** FNV-1a of a string: mixes the run id into the key PRNG (keyRand). */
+export const fnv1a = (x: string): number => {
+  let h = 0x811c9dc5
+  for (let i = 0; i < x.length; i++) h = Math.imul(h ^ x.charCodeAt(i), 0x01000193) >>> 0
+  return h
+}
+/** The PRNG for request keys (lat/lon, days, target heights): seeded by the run id too, so the cold workloads' keys are new in
+ * every run. With the seed alone, a rerun with the same seed and plan re-sent the last run's keys and they were HITs (validation
+ * run L20261030T224511Z-iqf9: track 71% HIT, scans p50 70 ms vs 318 ms the run before). The schedule and kind picks stay on the seed. */
+export const keyRand = (runId: string, shardSeed: number): (() => number) => mulberry32((fnv1a(runId) ^ Math.imul(shardSeed, 0x9e3779b1)) >>> 0)
+
 /** Weighted pick of the next request's kind. */
 export const picker = (mix: Mix): ((u: number) => Kind) => {
   const ks = KINDS.filter(k => (mix[k] ?? 0) > 0), t = total(mix)
@@ -201,7 +212,7 @@ const BOXES: ReadonlyArray<readonly [number, number, number, number]> = [
 ]
 
 /**
- * One request of a kind. `rand` is the shard's seeded PRNG, `i` the arrival index, `now` epoch ms.
+ * One request of a kind. `rand` is the shard's key PRNG (keyRand), `i` the arrival index, `now` epoch ms.
  *   position  GET /v1/position (live, no time: computed in the front door), split-ab's probe
  *   warm      GET one of WARM_KEYS (pre-warmed: Workers Caching HITs)
  *   track     GET /v1/track, homepage-shaped (72 h from a UTC midnight, default 20-min grid) at a fresh lat/lon (load.sh LOAD=track)

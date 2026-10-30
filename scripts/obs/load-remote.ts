@@ -3,6 +3,7 @@
 //        [--pin ephem=<version id>] [--seed 1] [--mix position=40,warm=30,track=15,weather=14,search=1] [--run-id <id>]
 //        [--warmup 10 s before the measured window, sent on the same schedule, counted apart] [--shards N per region (more than the plan needs)] [--plan] [--json] [--quiet] [--base https://ephem-load.ivar.workers.dev]
 // --mode   position | warm | track | weather | search | mixed       --rate  total req/s over all regions ("120/min" also works)
+// --seed   the schedule and kind picks; cold keys also mix in the run id, so they are new in every run (never HITs from a rerun)
 // --pin    every request carries Cloudflare-Workers-Version-Overrides: ephem="<id>"; the table counts answers from any other version
 // --plan   print the validated spec and shard plan; start nothing
 // Prints the run id and window at the start (for queue.py / cpu-by-version.py / load-check.py --from/--to), then the client

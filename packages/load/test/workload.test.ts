@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
 import { add, hist, kindStats, mergeHist, quantile, record } from "../src/stats.ts"
-import { KINDS, LIMITS, MIXED, ORIGIN, WARM_KEYS, build, endOf, measureFrom, headers, mulberry32, picker, plan, rayColo, searchRate, target, validate } from "../src/workload.ts"
+import { KINDS, LIMITS, MIXED, ORIGIN, WARM_KEYS, build, endOf, keyRand, measureFrom, headers, mulberry32, picker, plan, rayColo, searchRate, target, validate } from "../src/workload.ts"
 import park from "../src/park.json" with { type: "json" }
 
 const NOW = Date.parse("2026-10-30T12:00:00Z")
@@ -89,6 +89,12 @@ describe("workloads", () => {
     expect(body.target.height).toBeGreaterThanOrEqual(71)
     expect(body.region).toEqual(JSON.parse(readFileSync(new URL("../../../scripts/obs/split-ab/brooklyn-bridge-park.geojson", import.meta.url), "utf8")))
     expect(park.type).toBe("Feature")
+  })
+  it("cold keys never repeat across runs, even with the same seed and plan", () => {
+    const a = keyRand("L20261030T224511Z-iqf9", 7), b = keyRand("L20261030T224512Z-abcd", 7)
+    const pa = new Set(Array.from({ length: 300 }, (_, i) => build("track", a, i, NOW).path)), pb = Array.from({ length: 300 }, (_, i) => build("track", b, i, NOW).path)
+    expect(pb.filter(p => pa.has(p))).toHaveLength(0)
+    expect(build("track", keyRand("r", 7), 0, NOW).path).toBe(build("track", keyRand("r", 7), 0, NOW).path)   // reproducible per run
   })
   it("fresh keys are fresh", () => {
     const r = mulberry32(3)
