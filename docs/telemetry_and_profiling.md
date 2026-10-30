@@ -8,7 +8,7 @@ Last verified: 2026-10-30 (version 4e7c34ee; crossing span + MCP probe b49a8a02;
 
 ## The loop
 
-instrument → gate green → commit → deploy (`scripts/deploy.sh main "…"`: gate in a clean worktree, deploy, smoke, MCP probe) → drive uncached load →
+instrument → gate green → commit → deploy (`scripts/deploy.sh main "…"`: gate in a clean worktree, 0% canary smoke, promote, live smoke, auto-rollback; see "Deploys") → drive uncached load →
 **measure by exact version** (`cpu-by-version.py`, `trace.py`, `profile.sh`) → fix the biggest measured bucket → repeat.
 Every number you report carries its version id (and trace id or profile file). Log runs in
 `~/code/lab_notebook/ephem-deploy-2026-10-28.md`.
@@ -26,6 +26,8 @@ Every number you report carries its version id (and trace id or profile file). L
 | `python3 scripts/obs/metar-cache.py [--minutes 30] [--version 80f5b087] [--slice 2]` | METAR feed cache: per (version, tier) request count, share, wall and CPU p50/p99, parses, data age; upstream calls (MetarFeed's `{"evt":"metar.upstream"}`) by status, conditional, and per minute. Joins each `{"evt":"metar"}` log line to its invocation on `$metadata.requestId`. |
 | `python3 scripts/obs/cache-probe.py [base] --mode repeat\|unique\|burst [--keys 10] [--repeats 5] [--burst 50] [--routes day,…]` | Client-side cross-check of Workers Caching: per request `x-ephem-cache` (the Api's cf-cache-status relayed by the front door), client and server-timing latency; p50/p99 by (route, status). `burst` fires N concurrent identical cold requests (collapsing test); count Api invocations for that key with a `starts_with` filter on `$workers.event.request.url = https://api.internal/<path>?<sorted query>`. |
 | `node --experimental-strip-types scripts/obs/mcp-probe.ts [base]` | Full MCP client session against `/mcp` (legacy handshake + modern 2026-07-28 flow + error cases); every tool call (8 tools, incl. `crossing` and `sight_line`; the alignment call uses heightRef/targetHeightRef=msl, aim=litCentroid, include=sun,phase) is checked equal to its REST endpoint (the POST tool `alignment_search` against its REST POST), plus the REST 400 UnknownParameter and a null `apparentAltitude` case. Pass/fail table with latency and cf-ray. Run after every deploy. |
+| `scripts/smoke.sh <base> [--pin <version>] [--expect <version>] [--only a,b]` | Every route + content checks + the MCP probe; `--pin` sends `Cloudflare-Workers-Version-Overrides` and requires `x-ephem-version` = that version on every response (the probe too, via `EPHEM_VERSION`). deploy.sh runs the deployed commit's copy. See "Deploys". |
+| `python3 scripts/obs/tail-check.py [--minutes 10] [--version <id>] [--wait 90] [--require /v1/track,…]` | ephem-tail from its own o11y events (no Basin token needed): invocations by (version, outcome), `basin_send_failed` lines, and the route labels summed from its `tail_batch` log lines. Exit 1 on a non-ok outcome, a send failure or a missing required label. deploy.sh runs it after a tail deploy. |
 | `python3 scripts/obs/trace.py --jsonrpc-id <id>` | The trace of one MCP message (the probe's ids are `<run>-<step>`). |
 | `python3 scripts/obs/symbolize.py in.pb [out.pb]` | Replaces minified function names in a prod pprof with names read from the source (see "Source maps"). |
 
@@ -76,6 +78,44 @@ Views: `events` (invocations: `$metadata.type = cf-worker-event`; spans: `type =
 `calculations`. Useful keys: `$workers.cpuTimeMs`, `$workers.wallTimeMs`, `$workers.scriptVersion.id`,
 `$workers.event.request.url`, `$workers.event.response.status`, `$metadata.traceId`. The `events` view returns at most
 1000 rows per query.
+
+## Deploys (`scripts/deploy.sh`)
+
+`scripts/deploy.sh <rev> "<message>" [auto|ephem|tail|all]` (`DRY=1`: gate only). Lock, never-backwards guard
+(`ALLOW_OLDER=1` to roll back on purpose), clean worktree of `<rev>`, full gate, then:
+
+1. **ephem-tail** first when targeted (`auto`: packages/tail, packages/worker/src/routes.ts or the invocations schema
+   changed since the last `deployed-tail/` tag, or `tailConsumers` changed): `cf deploy`. After ephem's smoke has sent it
+   traffic, `scripts/obs/tail-check.py --version <new> --require <the smoke's routes>` must pass, else ephem-tail is routed
+   back to its previous version. Tag `deployed-tail/<ts>`.
+2. **ephem, gradual**: record the version at 100% (`cf workers deployments list`; a split deployment aborts), `cf workers
+   versions create`, `cf workers deployments create` with new 0% + previous 100%, wait until 5 pinned `/healthz` in a row
+   come from the new version, then `smoke.sh --pin <new>`. Prod traffic never sees the canary. Fail → remove it, exit 1.
+3. Promote (new 100%), wait until 5 unpinned `/healthz` in a row carry the new `x-ephem-version` (not a fixed sleep), then
+   `smoke.sh --expect <new>`. Failed checks are retried once (only those, after `RETRY_S`=5 s). Still failing → route 100%
+   back to the recorded version, wait until it serves, re-smoke it with the last deployed commit's smoke.sh, exit 1, no tag.
+4. A diff touching non-versioned settings (`tailConsumers`, `observability`, `logpush` in cloudflare.config.ts; `GRADUAL=0`
+   forces it) skips the 0% stage and uses `cf deploy`: `versions create` says those apply only on the next deployment.
+   Steps 3's live smoke and rollback still apply; a rollback restores code, not those settings.
+
+**Why it is trustworthy** (2026-10-30): version overrides ([docs](https://developers.cloudflare.com/workers/versions-and-deployments/version-overrides/))
+apply to versions in the current deployment, including at 0%; the front door sets `x-ephem-version` from the
+VERSION binding, and smoke.sh fails any response from another version. The pinned front door's `ctx.exports` loopbacks run
+the pinned version too: in the canary window of 37d28e99 (18:53:21.8–18:53:33.8Z) all Api (5) and MetarFeed (1)
+invocations were 37d28e99, the 3 front-door invocations on 0d870218 were other traffic. A 0% version is reachable
+pinned 3.0–3.7 s after the deployment (n=3); a promoted one serves 5/5 unpinned 2.7–6.2 s after (n=3), so the old
+`sleep 5` was not a guarantee.
+
+**Rollback, measured** (throwaway detached commit 8f6bb15 whose smoke checks a nonexistent route in the live phase only;
+never on main): canary smoke 18/18 pinned → promote → `deploy-canary` 404, retried after 5 s, 404 → rollback.
+
+| run | new version | promote → rollback deployment | rollback deployment → previous (37d28e99) serves 5/5 | decision → restored | new version at 100% |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 5679099c | 18:56:22.7 → 18:56:42.1Z | 5.3 s | 6.9 s | ~25 s |
+| 2 | 2b0a5695 | 18:58:03.4 → 18:58:20.8Z | 3.9 s | 5.5 s | ~21 s |
+
+Restoration is < 10 s from the decision; the rest is the live smoke (~7 s) and the 5 s retry. Both exited 1 untagged and
+re-smoked 37d28e99 18/18 (run 2; run 1 re-smoked with the failed commit's own smoke, fixed in cb07493).
 
 ## Caching (Workers Caching; never the Cache API)
 
@@ -314,7 +354,7 @@ R2 bucket `ephem-logs`, warehouse `5ad2236b39de4c8bd8f6270ea63f3ea9_ephem-logs`,
 | --- | --- | --- |
 | stream | `ephem_requests` `d43e9589a2784812afda39033b6792eb` | schema `packages/worker/ops/basin/requests.schema.json`; Worker binding on, HTTP off; binding `LOGS` |
 | stream | `ephem_invocations` `2d45db937f214e5cae5c19ba4c099779` | schema `ops/basin/invocations.schema.json`; written by `ephem-tail` (binding `INVOCATIONS`) |
-| Tail Worker | `ephem-tail` (packages/tail) | attached via `tailConsumers` in packages/worker/cloudflare.config.ts; deploy `cd packages/tail && cf deploy` |
+| Tail Worker | `ephem-tail` (packages/tail) | attached via `tailConsumers` in packages/worker/cloudflare.config.ts; deploy `scripts/deploy.sh main "…" tail` (auto when packages/tail or src/routes.ts changed); route labels from packages/worker/src/routes.ts (shared with the request row) |
 | bucket / catalog | `ephem-logs`, catalog enabled | `credential_status: absent` until the R2 admin token exists |
 | sinks, pipelines | `ephem_{requests,invocations}_sink`, `…_pipeline` → tables `ephem.requests`, `ephem.invocations`, roll 60 s | **not created yet**: they need an R2 Account API token (Admin Read & Write) at `~/.config/ephem/r2-admin-token` (chmod 600), then `python3 scripts/obs/basin.py provision` |
 
@@ -357,6 +397,13 @@ Workers Caching miss or revalidation), with the work counts. It gets the front's
 
 **Privacy rules** (tested): no IP, no raw path or query string, no full user agent, coordinates rounded to 0.01°. MCP client
 names are reduced to `[a-z0-9._-]{≤32}`.
+
+**Tail route labels.** ephem-tail's `route` comes from packages/worker/src/routes.ts, the request row's own list (tests:
+it equals what the router serves, /openapi.json and /docs; the tail uses the same Set). Before e98a175b (git 64d7ce8) it had
+its own list and labelled /v1/track, /v1/sightline, /v1/alignment/search(+/window), /llms.txt and /docs/interactive "other".
+Each tail() call logs `{"tail_batch":{"rows":n,"routes":["<entrypoint> <route> <n>",…]}}`, read by
+`scripts/obs/tail-check.py`; on e98a175b after deploy.sh's smoke: `- /v1/track 2`, `- /v1/sightline 1`,
+`- /v1/alignment/search 1`, `- /llms.txt 1`, `- /docs/interactive 1`, 0 non-ok outcomes, 0 `basin_send_failed`.
 
 **Tail Worker split.** A request that dies before its waitUntil runs (exceededCpu, exceededMemory, an uncaught exception)
 writes no request row. `ephem-tail` gets one TailItem per ephem invocation (front, Api, BlockStore, MetarFeed) and writes
@@ -506,6 +553,14 @@ column.
   and tests (3c87955 shipped that way; test-only type error). Both fixed (8de819d, 66c8256).
 - Re-deploying an older rev for an A/B is a rollback: it replaced another agent's fresh deploy (19405fee, git 8159032) for
   ~2 min on 2026-10-30. Check `cf workers deployments list` immediately before every A/B deploy, and restore after.
+- **`curl … | grep -q …` under `set -o pipefail` is a false failure**: grep exits at the first match, curl's next write gets
+  EPIPE (exit 23), the pipeline fails. It failed a healthy /docs 29 of 100 times from EWR (match at byte 748 of 16 469;
+  10/10 with `--limit-rate 4k`), and is the cause of 1bff6e62's "/docs has no /openapi.json link": o11y shows every /docs
+  request to 1bff6e62 (13:18:12–13:18:33Z) returned 200. smoke.sh writes bodies to files and greps those
+  (`echo "$S" | head -1 | grep` had the same flaw). Repro: scratchpad `deploy/repro-pipefail.sh`.
+- Workers Observability splits JSON log keys on ".": `{"routes":{"- /llms.txt":1}}` came back as
+  `{"- /llms":{"txt":1}}` (ephem-tail 9b316309). Log label/count pairs as strings ("- /llms.txt 1"), not as object keys.
+- The default handler's TailItem has no `entrypoint` (ephem-tail labels it "-"); only `Api`, `BlockStore`, `MetarFeed` carry one.
 - `/v1/day` needs `tz`; `/v1/position` takes `time` optionally (default now).
 - `/v1/track` rejects a start/end off the stepSeconds grid (422 naming the snapped values): snap on the client so keys are
   shared. The homepage's live poll has no `time`: with one it would be forwarded and leave a single-use immutable entry.
