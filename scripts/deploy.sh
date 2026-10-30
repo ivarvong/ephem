@@ -36,7 +36,12 @@ done
 
 echo "== gate @ $SHA"
 cd "$WT"
-npm run typecheck >/dev/null && npm run lint >/dev/null && npm test 2>&1 | grep -E 'Test Files|Tests '
+# One command per line: a failure inside an && list does not trip `set -e`, so `typecheck && lint && test` passed the gate
+# with a failing typecheck and skipped lint and tests (found 2026-10-30, 3c87955).
+npm run typecheck >/dev/null || { echo "GATE FAILED: typecheck" >&2; exit 1; }
+npm run lint >/dev/null || { echo "GATE FAILED: lint" >&2; exit 1; }
+npm test > "$WT/.test.log" 2>&1 || { tail -40 "$WT/.test.log" >&2; echo "GATE FAILED: tests" >&2; exit 1; }
+grep -E 'Test Files|Tests ' "$WT/.test.log"
 
 [ "${DRY:-}" = 1 ] && { echo "== DRY=1: gate passed @ $SHA, not deploying"; exit 0; }
 echo "== deploy @ $SHA"

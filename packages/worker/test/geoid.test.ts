@@ -69,7 +69,7 @@ describe("geoid bands via BlockStore", () => {
   it("fails closed: a failed fetch or a band with the wrong bytes is a 503 GeoidUnavailable, and is retried next request", async () => {
     let n = 0
     const h = makeHandler(blocks(), undefined, undefined, makeGeoid(loopbackGeoid(async b => {
-      n++; return n === 1 ? new Response("R2 down", { status: 502 }) : n === 2 ? new Response(bundledGeoidBand(b + 1)) : new Response(bundledGeoidBand(b), { headers: { "cf-cache-status": "HIT" } })
+      n++; return n === 1 ? new Response("R2 down", { status: 502 }) : n === 2 ? new Response(ab(bundledGeoidBand(b + 1))) : new Response(ab(bundledGeoidBand(b)), { headers: { "cf-cache-status": "HIT" } })
     })))
     for (const want of [/BlockStore 502 for geoid band 12: R2 down/, /band 12: (\d+ bytes|sha256)/]) {
       const r = await h(new Request(`http://x/v1/track?${NYC}&start=2026-10-29T00:00:00Z&end=2026-10-29T01:00:00Z`))
