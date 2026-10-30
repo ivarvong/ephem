@@ -386,6 +386,31 @@ start. Slimming the window JSON would cut front-door CPU a few ms per scan and i
 The lever left was fewer CPU-heavy invocations on the front door's isolates: window compute in a separate Worker was done
 on 2026-10-30 and did not move this tail (5/1 420 → 5/1 425 probes, still new front-door isolates); see "Compute split".
 
+## Instrument (`/instrument`, src/instrument.ts)
+
+The live sky as a working RPN calculator, from the RPN Instrument design system (no maker's branding), vendored by
+`node scripts/instrument-ds.mjs <dir>` into `src/instrument-ds.ts` (fonts as base64, OFL licences, tokens.css generated from
+tokens.json, the design system's own Tailwind 3.4.17 `bundle.css` verbatim except font URLs, `bundle.js` with 8 asserted
+patches: live SKY, a DAY menu, `data-cell` ids for the phone grid, `rpn.seed/refresh`). No build dependency in the repo.
+Location: `visitor()` from home.ts (?lat&lon&tz, else request.cf, else Liberty Island).
+
+- **Request budget (hard rule, test/instrument.test.ts):** first load = HTML + 3 fonts + **2 API calls**: live `/v1/position`
+  (no `time`) and `/v1/day`. Then one live position every 30 s while visible, `/v1/day` again only when the local date changes.
+  `window.__instrument` = `{ t0, dataAt, dayAt, calls, errors }` (ms since navigation start) for scripts.
+- **Assets:** `GET /assets/<sha12>/<file>` (sha256 prefix of the file; wrong sha or name → 404), `public, max-age=31536000,
+  immutable`, decoded once per isolate. Fonts are preloaded. CSS and JS are inline in the page (`private, no-store`, it embeds
+  the location). Spans: `instrument` (`home.source`, `home.colo`, `home.tz`), `asset` (`asset.name`, `asset.hit`). Asset requests
+  have no route label in request rows / ephem-tail (`/assets/…` is not in ROUTES: it is a prefix).
+- **Bundle choice, measured (2026-10-30, main 5edf1b7 vs + instrument):** 474.46 → 589.70 KiB (gzip 164.08 → 221.08); local
+  `cf workers check`, 6 alternating runs, median active / window 36.3 / 55.1 → 36.3 / 54.8 ms: no start-up cost (string bytes,
+  as the geoid grid showed). So the assets stay in the bundle; Workers static assets would also avoid a front-door invocation
+  per cold font load (3 per new visitor), but need assets support in deploy.sh's versions/canary flow, unbuilt.
+- **Measure:** scratchpad `instrument/check.mjs <base> <label> [runs]` (puppeteer-core): phone 390×844 + desktop shots,
+  no horizontal scroll, every button/link ≥ 44 px on the phone, behaviour (SKY/DAY pushes, maths, keyboard, shift legends,
+  focus ring, reduced motion), and cold/warm resource timing.
+- Phone (≤ 560 px): the Calculator's groups become `display: contents` in one 12-column grid ordered per `data-cell`; the
+  LCD's menu labels take no touches there (the 44 px soft keys under them do). ≥ 900 × 760: `zoom: 1.5`.
+
 ## MCP (`/mcp`, src/mcp.ts)
 
 Unauthenticated, stateless MCP over Streamable HTTP, written in Effect (no SDK). Dual-era: modern **2026-07-28**

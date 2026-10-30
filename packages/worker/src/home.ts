@@ -300,6 +300,7 @@ footer.tel{border-top:1px solid var(--line);padding-top:14px;padding-bottom:max(
 footer.tel i{font:500 10px/1 var(--sans);font-style:normal;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin-right:8px}
 :focus-visible{outline:1px solid var(--accent);outline-offset:3px}
 .err{color:var(--alert)}
+.inst{margin:0 0 8px;font:500 11px/1 var(--sans);letter-spacing:.14em;text-transform:uppercase}.inst a{color:var(--faint);display:inline-flex;align-items:center;min-height:44px}.inst a:hover{color:var(--accent)}
 @media (max-width:760px){.bodies,.hood .in{grid-template-columns:minmax(0,1fr)}.wxc dl.cells{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
 .wxc dl.cells>div:nth-child(n+3){border-top:1px solid var(--line)}.wxc dl.cells>div:nth-child(3){border-left:0}}
 @media (min-width:900px){.blk{grid-template-columns:200px minmax(0,1fr);gap:32px}.blk>h2{padding-top:3px}.hud{padding-bottom:26px}.hud{padding-top:max(22px,env(safe-area-inset-top))}}
@@ -364,6 +365,7 @@ footer.tel i{font:500 10px/1 var(--sans);font-style:normal;letter-spacing:.14em;
       </div>
     </div>
   </details>
+  <p class="inst"><a href="/instrument" id="inst">Instrument view</a></p>
   <footer class="tel" id="foot"></footer>
 </main>
 <script>const LOC = ${json(v)};</script>
@@ -817,6 +819,7 @@ $("locate").addEventListener("click", function () {
     $("locnote").textContent = ""; history.replaceState(null, "", "?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "&tz=" + encodeURIComponent(loc.tz)); reloadAll();
   }, function (e) { $("locnote").textContent = e.code === 1 ? "Location permission denied; using Cloudflare's estimate." : "Couldn't get a location fix."; }, { enableHighAccuracy: true, timeout: 10000 });
 });
+if (location.search) $("inst").href = "/instrument" + location.search;
 $("share").addEventListener("click", function () {
   var u = location.origin + "/?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "&tz=" + encodeURIComponent(loc.tz) + (loc.source === "device" ? "" : "&place=" + encodeURIComponent(loc.city));
   (navigator.clipboard ? navigator.clipboard.writeText(u) : Promise.reject()).then(function () { $("locnote").textContent = "Link copied."; }, function () { $("locnote").textContent = u; });

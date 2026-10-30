@@ -56,6 +56,7 @@ export const llmsTxt = (): string => [
   `- OpenAPI 3.1: ${BASE}/openapi.json`,
   `- MCP (Streamable HTTP, no auth): ${BASE}/mcp (tools: sun_moon_position, day_events, crossing, alignment, sight_line, sun_moon_track, weather_nearest, alignment_search; each returns the same JSON as its REST route)`,
   `- Human docs (plain HTML): ${BASE}/docs`,
+  `- Pages for people: ${BASE}/ (live sky) and ${BASE}/instrument (an RPN calculator over the live /v1/position and /v1/day; same ?lat&lon&tz overrides)`,
   "",
   "## Rules",
   ...RULES.map(r => `- ${r}`),
@@ -81,6 +82,7 @@ export const docsHtml = (): string => `<!doctype html><html lang="en"><head><met
 <li>OpenAPI 3.1 spec: <a href="/openapi.json"><code>/openapi.json</code></a></li>
 <li>For agents: <a href="/llms.txt"><code>/llms.txt</code></a> · MCP server: <code>${BASE}/mcp</code> (Streamable HTTP)</li>
 <li>Interactive reference (needs JavaScript): <a href="/docs/interactive"><code>/docs/interactive</code></a></li>
+<li>Pages: <a href="/">the live sky</a> · <a href="/instrument">the instrument</a> (an RPN calculator over the live <code>/v1/position</code> and <code>/v1/day</code>; <code>?lat&amp;lon&amp;tz</code> override the location)</li>
 </ul>
 <h2>Rules</h2><ul>${RULES.map(r => `<li>${esc(r)}</li>`).join("")}</ul>
 <h2>Endpoints</h2><p>All GET. <code>*</code> = required.</p><dl>${ENDPOINTS.map(e => `<dt><code>${e.path}</code></dt><dd>${esc(e.summary)}<br>Parameters: <code>${params(e.path, e.required).join(", ") || "none"}</code><br>Example: <a href="${esc(e.example)}"><code>${esc(e.example)}</code></a></dd>`).join("")}</dl>
