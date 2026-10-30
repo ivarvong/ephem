@@ -6,7 +6,7 @@ import * as HttpRouter from "effect/http/HttpRouter"
 import * as HttpServerRequest from "effect/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/http/HttpServerResponse"
 import { isValidZone } from "@ephem/core"
-import { CLIENT_TRACE_JS, TRACE_HEADER, documentTrace, traceIdScript } from "./clienttrace.ts"
+import { CLIENT_TRACE_JS, documentTrace, documentTraceHeaders, traceparentMeta, type DocumentTrace } from "./clienttrace.ts"
 
 interface CfLocation {
   readonly latitude?: string; readonly longitude?: string; readonly city?: string; readonly region?: string
@@ -39,12 +39,12 @@ export const visitor = (url: URL, cf: CfLocation | undefined): Visitor => {
 }
 
 export const Home = HttpRouter.add("GET", "/", req => Effect.gen(function* () {
-  const tid = yield* documentTrace(req)   // on the root span: the document and the page's fetches share this trace id
+  const tid = yield* documentTrace(req)   // on the root span; the page's fetches are its children (src/clienttrace.ts)
   return yield* Effect.gen(function* () {
     const url = Option.getOrElse(HttpServerRequest.toURL(req), () => new URL("http://localhost/"))
     const v = visitor(url, (req.source as { cf?: CfLocation }).cf)
     yield* Effect.annotateCurrentSpan({ "home.source": v.source, "home.colo": v.colo ?? "", "home.tz": v.tz })
-    return HttpServerResponse.text(page(v, tid), { contentType: "text/html; charset=utf-8", headers: { "cache-control": "private, no-store", [TRACE_HEADER]: tid } })
+    return HttpServerResponse.text(page(v, tid), { contentType: "text/html; charset=utf-8", headers: { "cache-control": "private, no-store", ...documentTraceHeaders(tid) } })
   }).pipe(Effect.withSpan("home"))
 }))
 
@@ -189,9 +189,10 @@ function ringLabelSpot(y, w, h, bounds, segs, obstacles, pad) {
 }
 `
 
-export const page = (v: Visitor, traceId = "") => `<!doctype html>
+export const page = (v: Visitor, trace?: DocumentTrace) => `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
+${traceparentMeta(trace)}
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>ephem · the sky over ${v.city.replace(/[<>&"]/g, "")}</title>
 <meta name="description" content="Where the Sun and the Moon are right now, from JPL DE440, computed on Cloudflare's edge.">
@@ -372,7 +373,7 @@ footer.tel i{font:500 10px/1 var(--sans);font-style:normal;letter-spacing:.14em;
   <p class="inst"><a href="/instrument" id="inst">Instrument view</a></p>
   <footer class="tel" id="foot"></footer>
 </main>
-<script>const LOC = ${json(v)};${traceIdScript(traceId)}</script>
+<script>const LOC = ${json(v)};</script>
 <script>
 (function () {
 "use strict";

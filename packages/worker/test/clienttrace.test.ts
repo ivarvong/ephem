@@ -6,8 +6,8 @@ import { resolve } from "node:path"
 import { makeHandler } from "../src/app.ts"
 import { REC, direct, makeBlocks } from "../src/blocks.ts"
 import { setTracing, type Tracing } from "../src/trace.ts"
-import { CLIENT_TRACE_JS, parseTraceparent } from "../src/clienttrace.ts"
-import { forwardHeaders } from "../src/responses.ts"
+import { CLIENT_TRACE_JS, parseTraceparent, traceparentMeta } from "../src/clienttrace.ts"
+import { forwardHeaders, forwards } from "../src/responses.ts"
 import { page as homePage } from "../src/home.ts"
 import { instrumentPage } from "../src/instrument.ts"
 
@@ -51,21 +51,71 @@ describe("traceparent", () => {
     expect(res.status).toBe(200); expect(res.headers.get("x-ephem-trace")).toBeNull()
     expect(JSON.stringify(spans)).not.toContain("client.trace_id")
   })
-  it("a page document gets a server-made trace id: on the root span, echoed, inlined, reused by the page's fetches", async () => {
+  const TPRE = /^00-([0-9a-f]{32})-([0-9a-f]{16})-01$/
+  const metaOf = (html: string) => /<meta name="traceparent" content="([^"]*)">/.exec(html)?.[1]
+  it("a page document carries trace context: <meta name=traceparent> in the head, Server-Timing, x-ephem-trace, on the root span", async () => {
     for (const path of ["/", "/instrument"]) {
       const { spans, tracing } = recorder(); setTracing(tracing)
       const res = await makeHandler(makeBlocks(origin))(new Request("http://x" + path))
-      const tid = res.headers.get("x-ephem-trace")!, html = await res.text()
-      expect(tid, path).toMatch(/^[0-9a-f]{32}$/)
-      expect(html).toContain(`var __EPHEM_TRACE_ID = "${tid}";`)
-      expect(spans.find(s => s.name === "GET")!.attrs, path).toMatchObject({ "client.trace_id": tid, "client.trace_origin": "document" })
+      const html = await res.text(), meta = metaOf(html)!, m = TPRE.exec(meta)!
+      expect(m, path).not.toBeNull()
+      expect(html.indexOf(meta)).toBeLessThan(html.indexOf("</head>"))
+      expect(res.headers.get("x-ephem-trace"), path).toBe(m[1])
+      expect(res.headers.get("server-timing"), path).toMatch(new RegExp(`^trace;desc="${meta}", total;dur=`))
+      const root = spans.find(s => s.name === "GET")!.attrs
+      expect(root, path).toMatchObject({ "client.trace_id": m[1], "client.document_span_id": m[2], "client.trace_origin": "minted", "effect.span_id": m[2] })   // fetches are children of the root span
+      expect(res.headers.get("cache-control"), path).toBe("private, no-store")
       setTracing(undefined)
     }
-    const res = await makeHandler(makeBlocks(origin))(new Request("http://x/", { headers: { traceparent: TP } }))
-    expect(res.headers.get("x-ephem-trace")).toBe(TID); expect(await res.text()).toContain(`"${TID}"`)
-    const win: Record<string, unknown> = {}
-    new Function("window", "crypto", `var __EPHEM_TRACE_ID = "${TID}";` + CLIENT_TRACE_JS)(win, globalThis.crypto)
-    expect(win.__ephemTrace).toMatchObject({ traceId: TID, fromDocument: true })
+  })
+  it("an incoming traceparent on the document is adopted: same trace id, the incoming span is the parent", async () => {
+    const { spans, tracing } = recorder(); setTracing(tracing)
+    const res = await makeHandler(makeBlocks(origin))(new Request("http://x/instrument", { headers: { traceparent: TP } }))
+    const m = TPRE.exec(metaOf(await res.text())!)!
+    expect(m[1]).toBe(TID); expect(m[2]).not.toBe(SID); expect(res.headers.get("x-ephem-trace")).toBe(TID)
+    expect(spans.find(s => s.name === "GET")!.attrs).toMatchObject({ "client.trace_id": TID, "client.span_id": SID, "client.trace_origin": "adopted", "effect.parent_id": SID })
+  })
+  it("malformed traceparents on the document are ignored: a fresh id, nothing of the header in the page or spans", async () => {
+    const bad = [`00-${TID.toUpperCase()}-${SID}-01`, `00-${"0".repeat(32)}-${SID}-01`, `00-${TID}-${"0".repeat(16)}-01`, `ff-${TID}-${SID}-01`, `00-${TID}-${SID}-01-extra`,
+      `00-${TID}-${SID}-01"><script>alert(1)</script>`, "00-" + "g".repeat(32) + "-" + SID + "-01", " ".repeat(55)]
+    for (const h of bad) {
+      const { spans, tracing } = recorder(); setTracing(tracing)
+      const res = await makeHandler(makeBlocks(origin))(new Request("http://x/", { headers: { traceparent: h } }))
+      const html = await res.text(), m = TPRE.exec(metaOf(html)!)!
+      expect(m, h).not.toBeNull(); expect(m[1], h).not.toBe(TID)
+      expect(html).not.toContain("alert(1)")
+      expect(spans.find(s => s.name === "GET")!.attrs["client.trace_origin"], h).toBe("minted")
+      setTracing(undefined)
+    }
+  })
+  it("no cached HTML can carry a stale trace id: pages are private, no-store, never forwarded to the cached Api, and every response gets a new id", async () => {
+    expect(forwards("GET", new URL("http://x/"))).toBe(false); expect(forwards("GET", new URL("http://x/instrument"))).toBe(false)
+    const h = makeHandler(makeBlocks(origin))
+    for (const path of ["/", "/instrument"]) {
+      const ids = new Set<string>()
+      for (let i = 0; i < 5; i++) { const r = await h(new Request("http://x" + path)); expect(r.headers.get("cache-control")).toBe("private, no-store"); ids.add(metaOf(await r.text())!) }
+      expect(ids.size, path).toBe(5)
+    }
+  })
+  it("traceparentMeta renders only a valid hex traceparent", () => {
+    expect(traceparentMeta({ traceId: TID, spanId: SID, traceparent: TP })).toBe(`<meta name="traceparent" content="${TP}">`)
+    expect(traceparentMeta({ traceId: TID, spanId: SID, traceparent: `00-${TID}-${SID}-01"><x>` })).toBe("")
+    expect(traceparentMeta(undefined)).toBe("")
+  })
+  it("the page boot reads the meta tag first, then the navigation entry's serverTiming, then mints a fresh id", () => {
+    const boot = (meta: string | null, st: string | null) => {
+      const win: Record<string, unknown> = {}
+      const document = { querySelector: () => meta == null ? null : { getAttribute: () => meta } }
+      const performance = { now: () => 0, getEntriesByType: () => [{ serverTiming: st == null ? [] : [{ name: "total", description: "" }, { name: "trace", description: st }] }] }
+      new Function("window", "document", "performance", "crypto", CLIENT_TRACE_JS)(win, document, performance, globalThis.crypto)
+      return win.__ephemTrace as { traceId: string; parentSpanId: string | null; from: string }
+    }
+    const OTHER = `00-${"a".repeat(32)}-${"b".repeat(16)}-01`
+    expect(boot(TP, OTHER)).toMatchObject({ traceId: TID, parentSpanId: SID, from: "meta" })
+    expect(boot(null, OTHER)).toMatchObject({ traceId: "a".repeat(32), parentSpanId: "b".repeat(16), from: "server-timing" })
+    expect(boot("junk", null)).toMatchObject({ parentSpanId: null, from: "fresh" })
+    expect(boot(`00-${"0".repeat(32)}-${SID}-01`, null).from).toBe("fresh")
+    expect(boot(null, null).traceId).toMatch(/^[0-9a-f]{32}$/)
   })
   it("the front door forwards a valid traceparent to the Api, drops an invalid one", () => {
     expect(forwardHeaders({ "cf-ray": "r1-EWR", traceparent: TP })).toEqual({ "x-ephem-ray": "r1-EWR", traceparent: TP })

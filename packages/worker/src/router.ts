@@ -55,7 +55,8 @@ export const toHandler = (app: unknown) => {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, POST, OPTIONS", "access-control-allow-headers": "*" } })
     const t0 = performance.now()
     const res = await handler(request, log ? Context.make(RequestLog, log) : undefined)
-    const h = new Headers(res.headers); h.set("server-timing", `total;dur=${(performance.now() - t0).toFixed(1)}`)
+    const h = new Headers(res.headers); const tr = res.headers.get("server-timing")   // a page's `trace;desc=…` entry (src/clienttrace.ts) stays; anything else is replaced
+    h.set("server-timing", (tr?.startsWith("trace;") ? tr + ", " : "") + `total;dur=${(performance.now() - t0).toFixed(1)}`)
     return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h })
   }
 }

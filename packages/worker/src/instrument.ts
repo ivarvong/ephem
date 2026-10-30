@@ -22,7 +22,7 @@ import { visitor, type Visitor } from "./home.ts"
 import { ASSETS, TOKENS_CSS } from "./instrument-ds.ts"
 import { ENGINE_JS } from "./instrument-engine.ts"
 import { declinationAt } from "./weather.ts"
-import { CLIENT_TRACE_JS, TRACE_HEADER, documentTrace, traceIdScript } from "./clienttrace.ts"
+import { CLIENT_TRACE_JS, documentTrace, documentTraceHeaders, traceparentMeta, type DocumentTrace } from "./clienttrace.ts"
 
 /** The immutable URL of a vendored file (fonts, OFL licences). */
 export const assetUrl = (name: string): string => `/assets/${ASSETS[name]!.sha}/${name}`
@@ -43,12 +43,12 @@ const Assets = HttpRouter.add("GET", "/assets/:sha/:name", Effect.gen(function* 
 }).pipe(Effect.withSpan("asset")))
 
 const Page = HttpRouter.add("GET", "/instrument", req => Effect.gen(function* () {
-  const tid = yield* documentTrace(req)   // on the root span: the document and the page's fetches share this trace id
+  const tid = yield* documentTrace(req)   // on the root span; the page's fetches are its children (src/clienttrace.ts)
   return yield* Effect.gen(function* () {
     const url = Option.getOrElse(HttpServerRequest.toURL(req), () => new URL("http://localhost/instrument"))
     const v = visitor(url, (req.source as { cf?: Parameters<typeof visitor>[1] }).cf)
     yield* Effect.annotateCurrentSpan({ "home.source": v.source, "home.colo": v.colo ?? "", "home.tz": v.tz })
-    return HttpServerResponse.text(instrumentPage(v, url.search, Date.now(), tid), { contentType: "text/html; charset=utf-8", headers: { "cache-control": "private, no-store", [TRACE_HEADER]: tid } })
+    return HttpServerResponse.text(instrumentPage(v, url.search, Date.now(), tid), { contentType: "text/html; charset=utf-8", headers: { "cache-control": "private, no-store", ...documentTraceHeaders(tid) } })
   }).pipe(Effect.withSpan("instrument"))
 }))
 
@@ -487,13 +487,14 @@ stack really computes (try <b>DAY</b>, then SET, RISE, <kbd>−</kbd> for the da
 <p style="margin-top:12px">Fonts: <a href="${assetUrl("RPNDot-OFL.txt")}">RPN Dot</a> and <a href="${assetUrl("SofiaSansCondensed-OFL.txt")}">Sofia Sans</a> (OFL). <a href="/docs">The API</a>.</p>
 </aside>`
 
-export const instrumentPage = (v: Visitor, search = "", now = Date.now(), traceId = ""): string => {
+export const instrumentPage = (v: Visitor, search = "", now = Date.now(), trace?: DocumentTrace): string => {
   const fonts = Object.keys(ASSETS).filter(f => f.endsWith(".woff2"))
   const back = "/" + (search && /[?&]lat=/.test(search) ? search : "")
   const magdec = declinationAt(v.lat, v.lon, now).declination
   return `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
+${traceparentMeta(trace)}
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>ephem · instrument · ${esc(v.city)}</title>
 <meta name="description" content="The live Sun and Moon from JPL DE440 on a working RPN calculator: the soft keys push real values onto the stack.">
@@ -510,7 +511,7 @@ ${fonts.map(f => `<link rel="preload" href="${assetUrl(f)}" as="font" type="font
 <noscript><p style="text-align:center">The instrument needs JavaScript. <a href="${esc(back)}">The sky view</a> and <a href="/docs">the API</a> work without it.</p></noscript>
 <script>${ENGINE_JS}</script>
 <script>${VIEW_JS}</script>
-<script>const LOC = ${json({ lat: v.lat, lon: v.lon, tz: v.tz, place: v.place, magdec })};${traceIdScript(traceId)}</script>
+<script>const LOC = ${json({ lat: v.lat, lon: v.lon, tz: v.tz, place: v.place, magdec })};</script>
 <script>${CLIENT_TRACE_JS}${GLUE_JS}</script>
 </body></html>`
 }

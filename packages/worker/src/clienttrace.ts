@@ -16,20 +16,34 @@ export { parseTraceparent }
 export const TRACE_HEADER = "x-ephem-trace"
 
 const hex = (n: number) => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => b.toString(16).padStart(2, "0")).join("")
+const HEX16 = /^[0-9a-f]{16}$/
 
-/** The page routes (/, /instrument): the document request can't carry the page's trace id, so the server makes it (or takes
- *  the request's own valid traceparent), records it on the root span (`client.trace_origin: document` when made here) and
- *  inlines it (`__EPHEM_TRACE_ID`), so the document and every fetch the page makes share one trace id. Call it outside the
- *  handler's own withSpan, so the annotation lands on the root request span. */
+/** The page routes (/, /instrument) carry trace context too (OTel document-load convention). The document's trace id is the
+ *  incoming traceparent's (adopted: Effect's HttpMiddleware.tracer already parents the root span on it) or a fresh one; its
+ *  span id is the root Effect request span's own id (`effect.span_id` on that Workers span), so the page's fetch spans are
+ *  its children. Recorded on the root span: `client.trace_id`, `client.document_span_id`, `client.trace_origin`
+ *  (`adopted` | `minted`; with `client.span_id` = the incoming parent when adopted). Returned to the page as
+ *  `<meta name="traceparent">` (read first by CLIENT_TRACE_JS), `Server-Timing: trace;desc="<traceparent>"` (the navigation
+ *  entry's serverTiming) and `x-ephem-trace` (curl, CDP). Call it outside the handler's own withSpan, so the current span is
+ *  the root request span. The HTML is `private, no-store` and never forwarded to the cached Api, so a per-response id is safe. */
 export const documentTrace = (req: HttpServerRequest.HttpServerRequest) => Effect.gen(function* () {
   const tp = parseTraceparent(req.headers["traceparent"])
-  if (tp) return tp.traceId   // ClientTrace already annotated it
-  const id = hex(16)
-  yield* Effect.annotateCurrentSpan({ "client.trace_id": id, "client.trace_origin": "document" })
-  return id
+  const span = yield* Effect.option(Effect.currentSpan)
+  const cur = span._tag === "Some" ? span.value : undefined
+  // Minted here, never taken from Effect's span: its own parser accepts header values that W3C rejects (a malformed
+  // traceparent still parents the Effect span), and only a strictly valid incoming id is ever adopted.
+  const traceId = tp?.traceId ?? hex(16)
+  const spanId = cur && HEX16.test(cur.spanId) ? cur.spanId : hex(8)
+  yield* Effect.annotateCurrentSpan({ "client.trace_id": traceId, "client.document_span_id": spanId, "client.trace_origin": tp ? "adopted" : "minted" })
+  return { traceId, spanId, traceparent: `00-${traceId}-${spanId}-01` }
 })
-/** The inline declaration the page's CLIENT_TRACE_JS reads (32 hex chars only, safe in a script). */
-export const traceIdScript = (id: string) => /^[0-9a-f]{32}$/.test(id) ? `var __EPHEM_TRACE_ID = "${id}";` : ""
+export type DocumentTrace = { readonly traceId: string; readonly spanId: string; readonly traceparent: string }
+/** Response headers of a page: the id for CDP, curl and the navigation entry's serverTiming. */
+export const documentTraceHeaders = (d: DocumentTrace): Record<string, string> =>
+  ({ [TRACE_HEADER]: d.traceId, "server-timing": `trace;desc="${d.traceparent}"` })
+/** `<meta name="traceparent">` for the page's head; built only from validated hex, anything else renders nothing. */
+export const traceparentMeta = (d: DocumentTrace | undefined): string =>
+  d && parseTraceparent(d.traceparent) ? `<meta name="traceparent" content="${d.traceparent}">` : ""
 
 export const ClientTrace = HttpRouter.middleware(Effect.gen(function* () {
   const edge = yield* Edge
@@ -45,15 +59,21 @@ export const ClientTrace = HttpRouter.middleware(Effect.gen(function* () {
 }), { global: true })
 
 /** Browser side, inlined in both pages: `__tfetch(url, init)` = fetch with a traceparent. `window.__ephemTrace` =
- *  { traceId, fromDocument, fetches: [{ spanId, url, t0, t1, status, ray, echo }] } (ms since navigation start) for scripts/obs/journey.ts. */
+ *  { traceId, parentSpanId (the document's span), from (meta | server-timing | fresh), fetches: [{ spanId, parent, url, t0, t1, status, ray, echo }] } (ms since navigation start) for scripts/obs/journey.ts. */
 export const CLIENT_TRACE_JS = String.raw`
 var __ephemTrace = window.__ephemTrace = (function () {
   function hex(n) { var b = new Uint8Array(n); crypto.getRandomValues(b); var s = ""; for (var i = 0; i < n; i++) s += (b[i] < 16 ? "0" : "") + b[i].toString(16); return s; }
-  var doc = typeof __EPHEM_TRACE_ID === "string" && /^[0-9a-f]{32}$/.test(__EPHEM_TRACE_ID) ? __EPHEM_TRACE_ID : null;   // the document's (server-made)
-  return { traceId: doc || hex(16), fromDocument: !!doc, fetches: [], hex: hex };
+  var RE = /^00-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}$/, m = null, from = "fresh";
+  try { var el = document.querySelector('meta[name="traceparent"]'); if (el) { m = RE.exec(el.getAttribute("content") || ""); if (m) from = "meta"; } } catch (e) {}
+  if (!m) try {
+    var nav = performance.getEntriesByType("navigation")[0], st = nav && nav.serverTiming || [];
+    for (var i = 0; i < st.length && !m; i++) if (st[i].name === "trace") { m = RE.exec(st[i].description || ""); if (m) from = "server-timing"; }
+  } catch (e) {}
+  if (m && (/^0+$/.test(m[1]) || /^0+$/.test(m[2]))) { m = null; from = "fresh"; }
+  return { traceId: m ? m[1] : hex(16), parentSpanId: m ? m[2] : null, from: from, fetches: [], hex: hex };
 })();
 function __tfetch(url, init) {
-  var T = __ephemTrace, sid = T.hex(8), rec = { spanId: sid, url: String(url), t0: performance.now(), t1: null, status: null, ray: null, echo: null };
+  var T = __ephemTrace, sid = T.hex(8), rec = { spanId: sid, parent: T.parentSpanId, url: String(url), t0: performance.now(), t1: null, status: null, ray: null, echo: null };
   T.fetches.push(rec);
   init = init || {}; var h = new Headers(init.headers || {}); h.set("traceparent", "00-" + T.traceId + "-" + sid + "-01"); init.headers = h;
   return fetch(url, init).then(function (r) {
