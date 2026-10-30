@@ -1,6 +1,6 @@
 #!/bin/bash
 # Deploy ephem (and ephem-compute, ephem-tail) from a committed revision only: never from the shared working tree.
-#   scripts/deploy.sh <rev> "<message>" [auto|ephem|compute|tail|all]     (DRY=1 runs the gate in the clean worktree and stops)
+#   scripts/deploy.sh <rev> "<message>" [auto|ephem|compute|tail|all|ab|ab-end]     (DRY=1 runs the gate in the clean worktree and stops)
 # Checks out <rev> into a throwaway git worktree, links node_modules from the main checkout (no npm install), runs the full
 # gate there, then deploys from that worktree:
 #   tail   ephem-tail (packages/tail) first: cf deploy, then (after ephem's smoke has sent it traffic) scripts/obs/tail-check.py
@@ -21,11 +21,16 @@
 # the last deployed-tail/ tag, or tailConsumers changed since the last deployed/ tag, plus compute (before ephem) when
 # packages/compute, core, api or worker/src changed since the last deployed-compute/ tag. Success tags deployed/<ts> (ephem),
 # deployed-compute/<ts> and deployed-tail/<ts>. Smoke checks live in the deployed commit's scripts/smoke.sh. Fails closed at every step.
+#   ab     the compute-split A/B (guide "Compute split"): <rev> must be the commit ephem's 100% version was deployed from. Uploads
+#          a second version of it built with `--mode entrypoint` (COMPUTE_MODE=entrypoint: Api + BlockStore over ctx.exports),
+#          smokes it pinned at 0% (its fresh MISS must be computed by itself), then routes 50/50 and smokes both pinned. Records
+#          both ids in <git dir>/ephem-ab; no tag. Load pins each arm with Cloudflare-Workers-Version-Overrides.
+#   ab-end routes 100% back to the recorded binding-mode version, waits until it serves, smokes it, removes the record.
 # The body is one function so bash parses the whole file before running it: editing deploy.sh can't break a running deploy.
 main() {
 set -euo pipefail
-REV=${1:?usage: deploy.sh <rev> "<message>" [auto|ephem|compute|tail|all]}; MSG=${2:?usage: deploy.sh <rev> "<message>"}; TARGET=${3:-auto}
-case "$TARGET" in auto|ephem|compute|tail|all) ;; *) echo "target must be auto|ephem|compute|tail|all" >&2; exit 2 ;; esac
+REV=${1:?usage: deploy.sh <rev> "<message>" [auto|ephem|compute|tail|all|ab|ab-end]}; MSG=${2:?usage: deploy.sh <rev> "<message>"}; TARGET=${3:-auto}
+case "$TARGET" in auto|ephem|compute|tail|all|ab|ab-end) ;; *) echo "target must be auto|ephem|compute|tail|all|ab|ab-end" >&2; exit 2 ;; esac
 ROOT=${EPHEM_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}; B=https://ephem.ivar.workers.dev; RETRY_S=${RETRY_S:-5}
 SHA=$(git -C "$ROOT" rev-parse --short=12 "$REV")
 # One deploy at a time, and never backwards: concurrent agents' deploys raced and an older commit replaced a newer one
@@ -44,6 +49,7 @@ tc_changed() { [ -n "$LAST" ] && git -C "$ROOT" diff "$LAST" "$SHA" -- packages/
 DO_TAIL=0; DO_EPHEM=0; DO_COMPUTE=0
 case "$TARGET" in
   ephem) DO_EPHEM=1 ;; tail) DO_TAIL=1 ;; compute) DO_COMPUTE=1 ;; all) DO_TAIL=1; DO_COMPUTE=1; DO_EPHEM=1 ;;
+  ab|ab-end) [ "$(git -C "$ROOT" rev-parse "$LAST")" = "$(git -C "$ROOT" rev-parse "$SHA")" ] || { echo "$TARGET: $SHA is not the last deployed ephem commit ($LAST); both arms must come from one commit" >&2; exit 1; } ;;
   auto) DO_EPHEM=1; { changed "$LAST_TAIL" packages/tail packages/worker/src/routes.ts packages/worker/ops/basin/invocations.schema.json || tc_changed; } && DO_TAIL=1
         changed "$LAST_COMPUTE" packages/compute packages/core packages/api packages/worker/src && DO_COMPUTE=1 ;;
 esac
@@ -203,6 +209,35 @@ if [ $DO_COMPUTE = 1 ]; then
 fi
 # the compute version ephem's smokes must see on a fresh MISS
 CEXP=${CNEW:-$(active ephem-compute 2>/dev/null || true)}
+
+# --- compute-split A/B: a COMPUTE_MODE=entrypoint version of the same commit beside the binding one ----------------------
+ABF="$(git -C "$ROOT" rev-parse --absolute-git-dir)/ephem-ab"
+if [ "$TARGET" = ab ]; then
+  [ -e "$ABF" ] && { echo "an A/B is already running ($(cat "$ABF")); run ab-end first" >&2; exit 1; }
+  PREV=$(active ephem); [ -n "$PREV" ] || { echo "ephem has a split deployment; resolve it first" >&2; exit 1; }
+  cd "$WT/packages/worker"
+  out=$(cf workers versions create --mode entrypoint --message "A/B arm E (COMPUTE_MODE=entrypoint): $MSG [git $SHA]" 2>&1) || { echo "$out" | tail -20 >&2; echo "version upload failed" >&2; exit 1; }
+  NEW=$(echo "$out" | sed -n 's/.*Worker Version ID: *\([0-9a-f-]*\).*/\1/p' | head -1)
+  [ -n "$NEW" ] || { echo "$out" | tail -20 >&2; echo "version upload: no version id in the output" >&2; exit 1; }
+  echo "$out" | grep -E 'COMPUTE_MODE|Startup Time|Total Upload' || true
+  route ephem "A/B arm E 0%: $MSG [git $SHA]" "$NEW:0" "$PREV:100"
+  s=$(serving "$NEW" 60 pin) || { route ephem "A/B abandoned [git $SHA]" "$PREV:100"; echo "AB FAILED: pin never reached $NEW" >&2; exit 1; }
+  # arm E computes in ephem itself: its fresh MISS carries x-ephem-compute-version = its own ephem version id
+  smoke_twice "A/B arm E, pinned $NEW" --pin "$NEW" --expect-compute "$NEW" || { route ephem "A/B arm E failed smoke [git $SHA]" "$PREV:100"; echo "AB FAILED: arm E smoke; removed it (100% $PREV)" >&2; exit 1; }
+  route ephem "A/B 50/50 S=$PREV E=$NEW: $MSG [git $SHA]" "$PREV:50" "$NEW:50"
+  echo "S=$PREV E=$NEW sha=$SHA from=$(date -u +%FT%TZ)" > "$ABF"
+  smoke_twice "A/B arm S, pinned $PREV" --pin "$PREV" ${CEXP:+--expect-compute "$CEXP"} && smoke_twice "A/B arm E, pinned $NEW" --pin "$NEW" --expect-compute "$NEW" \
+    || { route ephem "A/B ended: smoke failed [git $SHA]" "$PREV:100"; rm -f "$ABF"; echo "AB FAILED after the 50/50 split; back to 100% $PREV" >&2; exit 1; }
+  echo "== A/B running: S (binding) $PREV 50%, E (entrypoint) $NEW 50% ($ABF)"; exit 0
+fi
+if [ "$TARGET" = ab-end ]; then
+  [ -e "$ABF" ] || { echo "no A/B record ($ABF)" >&2; exit 1; }
+  PREV=$(sed -n 's/^S=\([0-9a-f-]*\) .*/\1/p' "$ABF")
+  route ephem "A/B ended: back to 100% $PREV (binding) [git $SHA]" "$PREV:100"
+  s=$(serving "$PREV" 60) || { echo "AB-END: $PREV not serving after ${s}s" >&2; exit 1; }
+  smoke_twice "after A/B, $PREV" --expect "$PREV" ${CEXP:+--expect-compute "$CEXP"} || { echo "AB-END: smoke failed on $PREV" >&2; exit 1; }
+  rm -f "$ABF"; echo "== A/B ended: ephem 100% $PREV"; exit 0
+fi
 
 if [ $DO_EPHEM = 0 ]; then
   [ $DO_TAIL = 1 ] && { bash "$WT/scripts/smoke.sh" "$B" >/dev/null || true; }   # traffic for the tail check; ephem itself is unchanged

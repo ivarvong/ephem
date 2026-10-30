@@ -10,11 +10,11 @@ import argparse, collections, json, os, sys
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(__file__))
-from telemetry import eq, events, starts  # noqa: E402
+from telemetry import eq, events_all, starts  # noqa: E402
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--from", dest="frm", required=True); ap.add_argument("--to", required=True)
-ap.add_argument("--route", default="track"); ap.add_argument("--json")
+ap.add_argument("--route", default="track"); ap.add_argument("--json"); ap.add_argument("--version", help="script version id prefix")
 ap.add_argument("--service", help="Worker: ephem (front door; default) or ephem-compute (Api, BlockStore since the compute split)")
 a = ap.parse_args()
 if a.service:
@@ -31,19 +31,14 @@ def flat(d: dict, p: str = "") -> dict:
 
 
 def spans(name: str) -> dict:
-    out, t = collections.defaultdict(list), W[0]
-    while t < W[1]:   # 15 s slices: the events view returns at most 1000 rows per query
-        for s in events(0, [eq("$metadata.type", "span"), eq("name", name)], window=(t, min(W[1], t + 15000))):
-            out[s["$metadata"]["traceId"]].append(flat(s["source"]))
-        t += 15000
+    out = collections.defaultdict(list)
+    for s in events_all([eq("$metadata.type", "span"), eq("name", name)], W):   # slices, split at the 1000-row cap
+        out[s["$metadata"]["traceId"]].append(flat(s["source"]))
     return out
 
 
-inv = []
-t = W[0]
-while t < W[1]:
-    inv += events(0, [eq("$metadata.type", "cf-worker-event"), starts("$workers.event.request.url", f"https://api.internal/v1/{a.route}")], window=(t, min(W[1], t + 15000)))
-    t += 15000
+inv = [e for e in events_all([eq("$metadata.type", "cf-worker-event"), starts("$workers.event.request.url", f"https://api.internal/v1/{a.route}")], W)
+       if not a.version or e["$workers"]["scriptVersion"]["id"].startswith(a.version)]
 handler, loads, gets = spans(a.route), spans("blocks.load"), spans("GET")
 rows = []
 for e in inv:

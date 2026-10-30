@@ -28,14 +28,19 @@ export interface Loopback {
 /** Api's key in the cache: the tag, then path and sorted query. */
 export const apiCacheKey = (pathAndQuery: string) => `/${CACHE_TAG}${pathAndQuery}`
 
-/** Service bindings to ephem-compute (front door only; cloudflare.config.ts env COMPUTE, STORE). */
-export interface ComputeBindings { readonly COMPUTE?: Binding | undefined; readonly STORE?: Binding | undefined }
+/** Service bindings to ephem-compute (front door only; cloudflare.config.ts env COMPUTE, STORE), and COMPUTE_MODE: which
+ *  path the front door takes. "binding" (default): ephem-compute over COMPUTE / STORE. "entrypoint": this Worker's own
+ *  Api / BlockStore over ctx.exports (the pre-split layout; built with `--mode entrypoint`, for the split A/B). */
+export interface ComputeBindings { readonly COMPUTE?: Binding | undefined; readonly STORE?: Binding | undefined; readonly COMPUTE_MODE?: string | undefined }
 export type Bindings = Readonly<Record<string, Binding>>
 type Name = "Api" | "BlockStore" | "MetarFeed"
 export type Resolved = { readonly [K in Name]?: Binding | undefined }
-/** Which binding answers each entrypoint: a service binding when the Worker has one, else this Worker's own ctx.exports. */
-export const resolveBindings = (exports: Bindings | undefined, env?: ComputeBindings): Resolved =>
-  ({ Api: env?.COMPUTE ?? exports?.Api, BlockStore: env?.STORE ?? exports?.BlockStore, MetarFeed: exports?.MetarFeed })
+/** Which binding answers each entrypoint: a service binding when the Worker has one (and COMPUTE_MODE is not
+ *  "entrypoint"), else this Worker's own ctx.exports. The keys are the same either way (makeLoopback). */
+export const resolveBindings = (exports: Bindings | undefined, env?: ComputeBindings): Resolved => {
+  const svc = env?.COMPUTE_MODE === "entrypoint" ? undefined : env
+  return { Api: svc?.COMPUTE ?? exports?.Api, BlockStore: svc?.STORE ?? exports?.BlockStore, MetarFeed: exports?.MetarFeed }
+}
 
 export const makeLoopback = (bindings: () => Resolved | undefined): Loopback => {
   const get = (name: Name) => { const b = bindings()?.[name]; if (!b) throw new Error(`loopback ${name} unavailable`); return b }

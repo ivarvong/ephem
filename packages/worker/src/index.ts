@@ -18,9 +18,12 @@ import { makeFeed, serveFeed } from "./metar-feed.ts"
 import { weatherLive } from "./weather.ts"
 import { pipelineSink, type PipelineLike, type RequestRow } from "./requestlog.ts"
 export { Admin } from "./admin.ts"
+// Api + BlockStore are exported here too (cache ON, cloudflare.config.ts): COMPUTE_MODE=entrypoint calls them over ctx.exports.
+export { Api, BlockStore } from "./compute.ts"
 
 // LOGS: Basin stream ephem_requests (one row per request, src/requestlog.ts); VERSION: this Worker version's id for the row;
-// REQUEST_LOGS: "off" disables rows (the logging-overhead A/B). COMPUTE / STORE: service bindings to ephem-compute's Api / BlockStore.
+// REQUEST_LOGS: "off" disables rows (the logging-overhead A/B). COMPUTE / STORE: service bindings to ephem-compute's Api / BlockStore;
+// COMPUTE_MODE "binding" uses them, "entrypoint" this Worker's own Api / BlockStore (src/loopback.ts resolveBindings).
 interface Env extends ComputeBindings { readonly COMPUTE: Binding; readonly STORE: Binding; readonly LOGS?: PipelineLike<RequestRow>; readonly VERSION?: { readonly id: string }; readonly REQUEST_LOGS?: string }
 interface Ctx { waitUntil(p: Promise<unknown>): void; readonly exports: Bindings }
 

@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(__file__))
 from datetime import datetime  # noqa: E402
-from telemetry import eq, events, starts  # noqa: E402
+from telemetry import eq, events, events_all, starts  # noqa: E402
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--minutes", type=float, default=30)
@@ -21,6 +21,7 @@ ap.add_argument("--version", help="only this script version (id prefix)")
 ap.add_argument("--entrypoint", help="only this entrypoint: default, Api, BlockStore, MetarFeed")
 ap.add_argument("--from", dest="frm", help="absolute window start, ISO-8601 (with --to)")
 ap.add_argument("--to", help="absolute window end, ISO-8601")
+ap.add_argument("--json", help="write one row per invocation (version, entrypoint, path, status, cpu, wall, ray, trace) here")
 ap.add_argument("--service", help="Worker: ephem (front door; default) or ephem-compute (Api, BlockStore since the compute split)")
 a = ap.parse_args()
 if a.service:
@@ -32,7 +33,9 @@ window = (ms(a.frm), ms(a.to)) if a.frm and a.to else None
 flt = [eq("$metadata.type", "cf-worker-event")]
 if a.path and a.entrypoint in (None, "default"):
     flt.append(starts("$workers.event.request.url", "https://ephem.ivar.workers.dev" + a.path))
-for e in events(a.minutes, flt, window=window):
+inv = events_all(flt, window) if window else events(a.minutes, flt)   # an absolute window is read in full (no 1000-row cap)
+out = []
+for e in inv:
     w = e["$workers"]
     ev = w.get("event") if isinstance(w.get("event"), dict) else {}
     path = urlparse(ev.get("request", {}).get("url", "")).path
@@ -45,6 +48,11 @@ for e in events(a.minutes, flt, window=window):
         continue
     key = (w["scriptVersion"]["id"][:8], ep, path, ev.get("response", {}).get("status"))
     rows[key][0].append(w.get("cpuTimeMs", 0)); rows[key][1].append(w.get("wallTimeMs", 0))
+    out.append(dict(version=key[0], entrypoint=ep, path=path, status=key[3], cpu=w.get("cpuTimeMs", 0), wall=w.get("wallTimeMs", 0),
+                    ray=e["$metadata"].get("rayId"), trace=e["$metadata"].get("traceId"), url=ev.get("request", {}).get("url", ""),
+                    start=e["$metadata"].get("startTime") or e.get("timestamp")))
+if a.json:
+    import json; json.dump(out, open(a.json, "w"))
 
 
 def pct(v: list, p: float):

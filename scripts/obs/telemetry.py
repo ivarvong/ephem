@@ -28,3 +28,32 @@ def starts(key: str, value: str) -> dict:
 
 def events(minutes: float, filters: list | None = None, limit: int = 1000, window: tuple[int, int] | None = None) -> list[dict]:
     return query("events", minutes, filters, limit, window=window).get("events", {}).get("events", [])
+
+
+def events_all(filters: list, window: tuple[int, int], step: int = 60_000, workers: int = 8) -> list[dict]:
+    """Every event in an absolute window: slices of `step` ms queried in parallel, and any slice that hits the view's
+    1000-row cap is halved and re-queried, so busy windows are never silently truncated. Deduplicated by event id."""
+    import threading   # not concurrent.futures: it imports the stdlib `queue`, which scripts/obs/queue.py shadows
+    def pmap(ws: list) -> list:
+        res: list = [None] * len(ws); nxt = iter(range(len(ws))); lock = threading.Lock()
+        def run() -> None:
+            while True:
+                with lock:
+                    i = next(nxt, None)
+                if i is None:
+                    return
+                res[i] = events(0, filters, window=ws[i])
+        th = [threading.Thread(target=run) for _ in range(min(workers, len(ws)))]
+        [t.start() for t in th]; [t.join() for t in th]
+        return res
+    out, seen, todo = [], set(), [(t, min(window[1], t + step)) for t in range(window[0], window[1], step)]
+    while todo:
+        batch, todo = todo, []
+        for (a, b), ev in zip(batch, pmap(batch)):
+            if len(ev) >= 1000 and b - a > 50:
+                m = (a + b) // 2; todo += [(a, m), (m, b)]; continue
+            for e in ev:
+                i = e.get("$metadata", {}).get("id")
+                if i not in seen:
+                    seen.add(i); out.append(e)
+    return out

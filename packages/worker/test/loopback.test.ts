@@ -49,6 +49,13 @@ describe("loopback guardrail", () => {
     expect(seen[2]!.url).toMatch(new RegExp(`^/geoid/${CACHE_TAG}/[0-9a-f]{16}/3$`))
     // ephem-compute itself: no service bindings, its own ctx.exports
     seen.length = 0; await makeLoopback(() => resolveBindings(own)).block(2); expect(seen[0]!.to).toBe("own BlockStore")
+    // COMPUTE_MODE=entrypoint (the split A/B's E arm): the front door's own Api / BlockStore, the same keys
+    seen.length = 0
+    const e = makeLoopback(() => resolveBindings(own, { COMPUTE: bind("COMPUTE"), STORE: bind("STORE"), COMPUTE_MODE: "entrypoint" }))
+    await e.api("/v1/track?a=1", { method: "GET", headers: {} }); await e.block(1); await e.geoid(3)
+    expect(seen.map(s => s.to)).toEqual(["own Api", "own BlockStore", "own BlockStore"])
+    expect(seen[0]!.key).toBe(`/${CACHE_TAG}/v1/track?a=1`); expect(seen[2]!.url).toMatch(new RegExp(`^/geoid/${CACHE_TAG}/[0-9a-f]{16}/3$`))
+    seen.length = 0; await makeLoopback(() => resolveBindings(own, { COMPUTE: bind("COMPUTE"), STORE: bind("STORE"), COMPUTE_MODE: "binding" })).block(1); expect(seen[0]!.to).toBe("STORE")
   })
   it("BlockStore answers only the tagged path", async () => {
     expect((await serveBlock(new Request("https://b/de440/29915576d0a65557/5442"), async () => new ArrayBuffer(8))).status).toBe(404)
