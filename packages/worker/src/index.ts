@@ -47,11 +47,24 @@ const withVersion = (r: Response, id: string | undefined): Response => {
   try { r.headers.set("x-ephem-version", id); return r } catch { const c = new Response(r.body, r); c.headers.set("x-ephem-version", id); return c }
 }
 
+// x-ephem-errors: this isolate's error count since it started (console.error lines, which is every *_failed log, and
+// unhandled rejections), only on responses to requests that carry x-ephem-smoke. A pinned canary's isolates serve only the
+// smoke, so smoke.sh --pin fails on any non-zero count: the deterministic half of the telemetry gate (an error in
+// waitUntil after a response shows on the isolate's next request). Not on other responses: nobody else needs it.
+let isolateErrors = 0
+const consoleError = console.error.bind(console)
+console.error = (...args: unknown[]) => { isolateErrors++; consoleError(...args) }
+;(globalThis as { addEventListener?: (t: string, f: () => void) => void }).addEventListener?.("unhandledrejection", () => { isolateErrors++ })
+const withErrors = (r: Response, request: Request): Response => {
+  if (!request.headers.has("x-ephem-smoke")) return r
+  try { r.headers.set("x-ephem-errors", String(isolateErrors)); return r } catch { const c = new Response(r.body, r); c.headers.set("x-ephem-errors", String(isolateErrors)); return c }
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: Ctx): Promise<Response> {
     loop = ctx.exports; bound = env
     front ??= makeHandler(blocks, { role: "front", api: lb.api }, weather, geoid)
-    return withVersion(await front(request, logs(env, p => ctx.waitUntil(p), "front")), env.VERSION?.id)
+    return withErrors(withVersion(await front(request, logs(env, p => ctx.waitUntil(p), "front")), env.VERSION?.id), request)
   },
 }
 const logs = (env: Env, waitUntil: (p: Promise<unknown>) => void, role: string) =>

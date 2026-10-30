@@ -26,6 +26,11 @@
 #          smokes it pinned at 0% (its fresh MISS must be computed by itself), then routes 50/50 and smokes both pinned. Records
 #          both ids in <git dir>/ephem-ab; no tag. Load pins each arm with Cloudflare-Workers-Version-Overrides.
 #   ab-end routes 100% back to the recorded binding-mode version, waits until it serves, smokes it, removes the record.
+# Telemetry gate (scripts/obs/canary-gate.py): after every pinned canary smoke (ephem and ephem-compute) and before promotion,
+# the gate reads Workers Observability for exactly the smoke's requests (smoke.sh --run: x-ephem-smoke header; --manifest:
+# their cf-rays) and fails on exceptions, 5xx, error logs, missing entrypoints/spans or missing telemetry; a failure removes
+# the canary exactly like a failed smoke. After promotion it runs again over the live smoke plus all real traffic for
+# O11Y_LIVE_S (90) s: a new error signature rolls back. SKIP_O11Y_GATE=1 skips it (emergencies only; loud warning).
 # The body is one function so bash parses the whole file before running it: editing deploy.sh can't break a running deploy.
 main() {
 set -euo pipefail
@@ -140,6 +145,26 @@ smoke_twice() {
   bash "$WT/scripts/smoke.sh" "$B" "$@" --only "$(paste -sd, "$f")"
 }
 
+# o11y_gate <worker> <new> <prev> <since-iso> <run> <manifest> [--live S]: the telemetry gate (prints its table)
+o11y_gate() {
+  if [ $HAS_GATE = 0 ]; then echo "!! $SHA predates the telemetry gate (no scripts/obs/canary-gate.py): gate skipped for $1 ${2:0:8}" >&2; return 0; fi
+  if [ "${SKIP_O11Y_GATE:-}" = 1 ]; then
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" >&2
+    echo "!! SKIP_O11Y_GATE=1: the telemetry gate for $1 ${2:0:8} is SKIPPED. Emergencies only. Nothing read the canary's traces." >&2
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" >&2
+    return 0
+  fi
+  local w=$1 n=$2 p=$3 since=$4 run=$5 man=$6; shift 6
+  local t0; t0=$(now)
+  python3 -I "$WT/scripts/obs/canary-gate.py" "$w" "$n" "${p:--}" --since "$since" --run "$run" --manifest "$man" --wait "${O11Y_WAIT_S:-90}" "$@"
+  local rc=$?; echo "== telemetry gate ($w ${n:0:8}${1:+ $*}): exit $rc after $(since "$t0")s"; return $rc
+}
+iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+HAS_GATE=0; [ -f "$WT/scripts/obs/canary-gate.py" ] && HAS_GATE=1
+# gate_args <run> <manifest>: smoke.sh --run/--manifest, only when this commit's smoke.sh has them
+gate_args() { [ $HAS_GATE = 1 ] && printf '%s\n' --run "$1" --manifest "$2"; return 0; }
+O11Y_LIVE_S=${O11Y_LIVE_S:-90}
+
 # --- ephem-tail ------------------------------------------------------------------------------------------------------------
 TAIL_NEW=""; TAIL_PREV=""
 if [ $DO_TAIL = 1 ]; then
@@ -186,11 +211,16 @@ if [ $DO_COMPUTE = 1 ]; then
       route ephem-compute "canary 0%: $MSG [git $SHA]" "$CNEW:0" "$CPREV:100"
       s=$(computing "$CNEW" 60 pin) || { route ephem-compute "canary abandoned: pin never reached $CNEW [git $SHA]" "$CPREV:100"; echo "COMPUTE CANARY FAILED: no pinned MISS reached $CNEW in ${s}s; removed it (prod stayed on $CPREV)" >&2; exit 1; }
       echo "pinned misses computed by $CNEW after ${s}s"
-      if ! smoke_twice "compute canary, pinned $CNEW" --pin-compute "$CNEW"; then
+      CS=$(iso_now); CRUN="cc-$SHA-$(date +%s)"; : > "$WT/.manifest-ccanary"
+      if ! smoke_twice "compute canary, pinned $CNEW" --pin-compute "$CNEW" $(gate_args "$CRUN" "$WT/.manifest-ccanary"); then
         route ephem-compute "canary failed: $MSG [git $SHA]" "$CPREV:100"
         echo "COMPUTE CANARY SMOKE FAILED on $CNEW (twice): removed it (100% $CPREV)" >&2; exit 1
       fi
-      route ephem-compute "$MSG [git $SHA]" "$CNEW:100"; echo "promoted ephem-compute $CNEW to 100%"
+      if ! o11y_gate ephem-compute "$CNEW" "$CPREV" "$CS" "$CRUN" "$WT/.manifest-ccanary"; then
+        TR=$(now); route ephem-compute "canary failed: telemetry gate [git $SHA]" "$CPREV:100"
+        echo "COMPUTE CANARY TELEMETRY GATE FAILED on $CNEW: removed it in $(since "$TR")s (100% $CPREV; prod never served it). Not tagged." >&2; exit 1
+      fi
+      T0C=$(iso_now); route ephem-compute "$MSG [git $SHA]" "$CNEW:100"; echo "promoted ephem-compute $CNEW to 100%"
     else
       out=$(cf deploy --message "$MSG [git $SHA]" 2>&1) || { echo "$out" | tail -20 >&2; echo "ephem-compute deploy failed" >&2; exit 1; }
       CNEW=$(echo "$out" | sed -n 's/.*Current Version ID: *\([0-9a-f-]*\).*/\1/p' | head -1)
@@ -198,11 +228,13 @@ if [ $DO_COMPUTE = 1 ]; then
     fi
     C_OK=1
     if s=$(computing "$CNEW" 60); then echo "ephem-compute $CNEW computing 3 consecutive misses ${s}s after promotion"; else echo "FAIL ephem-compute $CNEW not computing after ${s}s"; C_OK=0; fi
-    [ $C_OK = 1 ] && { smoke_twice "compute live" --expect-compute "$CNEW" || C_OK=0; }
+    CLRUN="cl-$SHA-$(date +%s)"; : > "$WT/.manifest-clive"
+    [ $C_OK = 1 ] && { smoke_twice "compute live" --expect-compute "$CNEW" $(gate_args "$CLRUN" "$WT/.manifest-clive") || C_OK=0; }
+    [ $C_OK = 1 ] && { o11y_gate ephem-compute "$CNEW" "${CPREV:-}" "${T0C:-$(iso_now)}" "$CLRUN" "$WT/.manifest-clive" --live "$O11Y_LIVE_S" || C_OK=0; }
     if [ $C_OK = 0 ]; then
       route ephem-compute "rollback: smoke failed for $CNEW [git $SHA]" "$CPREV:100"
       s=$(computing "$CPREV" 60) && echo "ROLLBACK: ephem-compute $CPREV computing again ${s}s after the rollback" || echo "ROLLBACK: ephem-compute $CPREV not computing after ${s}s" >&2
-      echo "COMPUTE SMOKE FAILED on $CNEW (twice): rolled back to $CPREV. Not tagged; ephem not deployed." >&2; exit 1
+      echo "COMPUTE LIVE CHECK FAILED on $CNEW (smoke twice, or the telemetry gate): rolled back to $CPREV. Not tagged; ephem not deployed." >&2; exit 1
     fi
   fi
   git -C "$ROOT" tag -f "deployed-compute/$(date -u +%Y%m%dT%H%M%SZ)" "$SHA" >/dev/null; echo "== deployed ephem-compute $SHA ($CNEW)"
@@ -260,13 +292,18 @@ if [ $MODE = gradual ]; then
   route ephem "canary 0%: $MSG [git $SHA]" "$NEW:0" "$PREV:100"
   s=$(serving "$NEW" 60 pin) || { route ephem "canary abandoned: pin never reached $NEW [git $SHA]" "$PREV:100"; echo "CANARY FAILED: a pinned request never reached $NEW in ${s}s; removed it (prod stayed on $PREV)" >&2; exit 1; }
   echo "pinned requests reach $NEW after ${s}s"
-  if ! smoke_twice "canary, pinned $NEW" --pin "$NEW" ${CEXP:+--expect-compute "$CEXP"}; then
+  CS=$(iso_now); RUN="c-$SHA-$(date +%s)"; : > "$WT/.manifest-canary"
+  if ! smoke_twice "canary, pinned $NEW" --pin "$NEW" ${CEXP:+--expect-compute "$CEXP"} $(gate_args "$RUN" "$WT/.manifest-canary"); then
     route ephem "canary failed: $MSG [git $SHA]" "$PREV:100"
     echo "CANARY SMOKE FAILED on $NEW (twice): prod never served it; removed it from the deployment (100% $PREV)" >&2; exit 1
   fi
-  T0=$(now); route ephem "$MSG [git $SHA]" "$NEW:100"; echo "promoted $NEW to 100% ($(since "$T0")s)"
+  if ! o11y_gate ephem "$NEW" "$PREV" "$CS" "$RUN" "$WT/.manifest-canary"; then
+    TR=$(now); route ephem "canary failed: telemetry gate: $MSG [git $SHA]" "$PREV:100"
+    echo "CANARY TELEMETRY GATE FAILED on $NEW: removed it from the deployment in $(since "$TR")s (100% $PREV; prod never served it). Not tagged." >&2; exit 1
+  fi
+  T0ISO=$(iso_now); T0=$(now); route ephem "$MSG [git $SHA]" "$NEW:100"; echo "promoted $NEW to 100% ($(since "$T0")s)"
 else
-  T0=$(now)
+  T0ISO=$(iso_now); T0=$(now)
   out=$(cf deploy --message "$MSG [git $SHA]" 2>&1) || { echo "$out" | tail -20 >&2; echo "deploy failed" >&2; exit 1; }
   NEW=$(echo "$out" | sed -n 's/.*Current Version ID: *\([0-9a-f-]*\).*/\1/p' | head -1)
   [ -n "$NEW" ] || { echo "$out" | tail -20 >&2; echo "deploy: no version id in the output" >&2; exit 1; }
@@ -276,7 +313,10 @@ fi
 # guarantee it). A version that never serves counts as a failed smoke.
 LIVE_OK=1
 if s=$(serving "$NEW" 60); then echo "$NEW serving all of 5 consecutive /healthz ${s}s after promotion"; else echo "FAIL $NEW not serving after ${s}s"; LIVE_OK=0; fi
-[ $LIVE_OK = 1 ] && { smoke_twice "live" --expect "$NEW" ${CEXP:+--expect-compute "$CEXP"} || LIVE_OK=0; }
+LRUN="l-$SHA-$(date +%s)"; : > "$WT/.manifest-live"
+[ $LIVE_OK = 1 ] && { smoke_twice "live" --expect "$NEW" ${CEXP:+--expect-compute "$CEXP"} $(gate_args "$LRUN" "$WT/.manifest-live") || LIVE_OK=0; }
+# real traffic for O11Y_LIVE_S s after promotion: a new error signature (one the previous version did not show) rolls back
+[ $LIVE_OK = 1 ] && { o11y_gate ephem "$NEW" "$PREV" "$T0ISO" "$LRUN" "$WT/.manifest-live" --live "$O11Y_LIVE_S" || LIVE_OK=0; }
 if [ $LIVE_OK = 0 ]; then
   TR=$(now); route ephem "rollback: smoke failed for $NEW [git $SHA]" "$PREV:100"
   echo "ROLLBACK: deployment back to $PREV created in $(since "$TR")s"
@@ -286,7 +326,7 @@ if [ $LIVE_OK = 0 ]; then
   PREV_SMOKE="$WT/scripts/smoke.sh"
   [ -n "$LAST" ] && git -C "$ROOT" show "$LAST:scripts/smoke.sh" > "$WT/scripts/.smoke-prev.sh" 2>/dev/null && PREV_SMOKE="$WT/scripts/.smoke-prev.sh"
   echo "ROLLBACK: re-smoke of $PREV ($([ "$PREV_SMOKE" = "$WT/scripts/smoke.sh" ] && echo "this commit's" || echo "$LAST's") smoke.sh): $(bash "$PREV_SMOKE" "$B" --expect "$PREV" 2>&1 | tail -1)"
-  echo "SMOKE FAILED on $NEW (twice): rolled back to $PREV. Not tagged." >&2; exit 1
+  echo "LIVE CHECK FAILED on $NEW (smoke twice, or the telemetry gate): rolled back to $PREV. Not tagged." >&2; exit 1
 fi
 git -C "$ROOT" tag -f "deployed/$(date -u +%Y%m%dT%H%M%SZ)" "$SHA" >/dev/null
 echo "== deployed ephem $SHA ($NEW)"

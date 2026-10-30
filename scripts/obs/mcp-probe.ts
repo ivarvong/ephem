@@ -11,11 +11,17 @@ const run = `p${Date.now().toString(36)}`
 // EPHEM_COMPUTE_VERSION=<uuid>: also pin ephem-compute (the front door forwards the header over the service binding).
 const PIN = process.env.EPHEM_VERSION || undefined, CPIN = process.env.EPHEM_COMPUTE_VERSION || undefined, offPin: string[] = []
 const OVR = [PIN && `ephem="${PIN}"`, CPIN && `ephem-compute="${CPIN}"`].filter(Boolean).join(", ")
-if (OVR) {
+// EPHEM_SMOKE_RUN=<id>: send x-ephem-smoke: <id> (scripts/obs/canary-gate.py selects the smoke's invocations by it);
+// EPHEM_SMOKE_MANIFEST=<file>: append `<cf-ray> <status> <method> <path> mcp-probe` per request (smoke.sh --manifest).
+const RUN = process.env.EPHEM_SMOKE_RUN || undefined, MANIFEST = process.env.EPHEM_SMOKE_MANIFEST || undefined, isoErr: string[] = []
+if (OVR || RUN || MANIFEST) {
   const f = globalThis.fetch
+  const { appendFileSync } = await import("node:fs")
   globalThis.fetch = (async (u: string | URL | Request, init: RequestInit = {}) => {
-    const r = await f(u, { ...init, headers: { ...(init.headers as Record<string, string> | undefined), "cloudflare-workers-version-overrides": OVR } })
+    const r = await f(u, { ...init, headers: { ...(init.headers as Record<string, string> | undefined), ...(OVR ? { "cloudflare-workers-version-overrides": OVR } : {}), ...(RUN ? { "x-ephem-smoke": RUN } : {}) } })
     const v = r.headers.get("x-ephem-version"); if (PIN && v !== PIN) offPin.push(`${String(u).replace(base, "")} → ${v}`)
+    const er = r.headers.get("x-ephem-errors"); if (PIN && RUN && er && er !== "0") isoErr.push(`${String(u).replace(base, "")} → ${er}`)
+    if (MANIFEST) appendFileSync(MANIFEST, `${r.headers.get("cf-ray") || "-"} ${r.status} ${init.method ?? "GET"} ${new URL(String(u)).pathname} mcp-probe\n`)
     return r
   }) as typeof fetch
 }
@@ -136,6 +142,7 @@ const w = Math.max(...rows.map(r => r.step.length)), we = Math.max(...rows.map(r
 console.log(`mcp-probe ${run} → ${base}/mcp   (jsonrpc ids: ${run}-<step>)\n`)
 console.log(`${"step".padEnd(w)}  ${"expect".padEnd(we)}  ok    ms    ray               got`)
 for (const r of rows) console.log(`${r.step.padEnd(w)}  ${r.expect.padEnd(we)}  ${r.ok ? "PASS" : "FAIL"} ${r.ms.toFixed(0).padStart(5)}  ${r.ray.padEnd(16)}  ${r.got}`)
+if (PIN && RUN) rows.push({ step: "isolate.errors", expect: "x-ephem-errors 0 on every response", got: isoErr.length ? `${isoErr.length} non-zero: ${isoErr[0]}` : "all 0", ok: isoErr.length === 0, ms: 0, ray: "" })
 if (PIN) rows.push({ step: "version.pinned", expect: `every response from ${PIN.slice(0, 8)}`, got: offPin.length ? `${offPin.length} off: ${offPin[0]}` : "all", ok: offPin.length === 0, ms: 0, ray: "" })
 const failed = rows.filter(r => !r.ok).length
 console.log(`\n${rows.length - failed}/${rows.length} passed`)
