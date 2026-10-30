@@ -20,3 +20,5 @@ reference/geoid/inputs/*.npy
 .wrangler/
 .DS_Store
 .env*
+# written by `cf workers check`
+*.cpuprofile
