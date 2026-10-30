@@ -38,7 +38,23 @@ export const geoidAcross = ([lo, hi]: [number, number], ...extra: number[]) => {
 /** Run a pure computation over prefetched blocks (and whatever `pre` loads concurrently: the observer's geoid bands),
  *  timing it and attaching diagnostics; spans carry cache tiers and work counts. */
 export const compute = <A, E = never, R = never>(name: string, blocks: ReadonlyArray<number>, f: (src: Parameters<typeof instrumented>[0]) => A, attrs: (out: A) => Attrs = () => ({}),
-  pre: Effect.Effect<void, E, R> = Effect.void as Effect.Effect<void, E, R>) => Effect.gen(function* () {
+  pre: Effect.Effect<void, E, R> = Effect.void as Effect.Effect<void, E, R>) => computeWith(name, blocks, src => Effect.sync(() => f(src)), attrs, pre)
+
+/** A macrotask: lets the isolate run other requests' events (a microtask would not). */
+const macrotask = Effect.promise(() => new Promise<void>(resolve => setTimeout(resolve, 0)))
+/** compute for a step generator (core searchWindowRequestSteps): hands the JS thread back between slices, so a 50–300 ms
+ *  window computation never holds the isolate in one piece; `ephem.slices` on the compute span counts them. */
+export const computeSliced = <A, E = never, R = never>(name: string, blocks: ReadonlyArray<number>, f: (src: Parameters<typeof instrumented>[0]) => Generator<void, A>, attrs: (out: A) => Attrs = () => ({}),
+  pre: Effect.Effect<void, E, R> = Effect.void as Effect.Effect<void, E, R>) => {
+  let slices = 0
+  return computeWith(name, blocks, src => Effect.gen(function* () {
+    const it = f(src)
+    for (;;) { const r = it.next(); slices++; if (r.done) return r.value; yield* macrotask }
+  }), out => ({ ...attrs(out), "ephem.slices": slices }), pre)
+}
+
+const computeWith = <A, E = never, R = never>(name: string, blocks: ReadonlyArray<number>, run: (src: Parameters<typeof instrumented>[0]) => Effect.Effect<A>, attrs: (out: A) => Attrs,
+  pre: Effect.Effect<void, E, R>) => Effect.gen(function* () {
   const { load } = yield* Blocks
   const blocksLoad = load(blocks).pipe(
     Effect.tap(l => Effect.annotateCurrentSpan({ ...prefix("cache.", l.stats), "ephem.blocks_cache": blocksCache(l.stats) })),
@@ -46,7 +62,7 @@ export const compute = <A, E = never, R = never>(name: string, blocks: ReadonlyA
   const [loaded] = yield* Effect.all([blocksLoad, pre], { concurrency: 2 })
   const { src, stats } = instrumented(loaded.src)
   const t0 = performance.now()
-  const out = yield* Effect.sync(() => f(src)).pipe(
+  const out = yield* run(src).pipe(
     Effect.tap(o => Effect.annotateCurrentSpan({ "ephem.block_reads": stats.reads, "ephem.blocks": stats.blocks.size, ...attrs(o) })),
     Effect.withSpan(`compute.${name}`))
   const computeMs = performance.now() - t0

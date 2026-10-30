@@ -42,6 +42,7 @@ export const SEARCH = {
   maxElevationDeg: 60,
   minDistanceM: 10,
   maxDistanceKm: 100,
+  sliceEvaluations: 200,         // searchWindowSteps yields after about this many evaluations (~5 ms of prod CPU): see below
 } as const
 
 const R_MIN_M = 6_335_439          // smallest WGS-84 radius of curvature (meridian at the equator): bounds the tilt of the vertical
@@ -142,8 +143,17 @@ export interface SearchCounters {
 interface Sample { readonly t: number; readonly x: number; readonly y: number; readonly lat: number; readonly lon: number; readonly seed: Seed }
 interface Seg { enter: number; exit: number; enterAt: Crossing | undefined; exitAt: Crossing | undefined; truncated: boolean }
 
+export type SearchWindowResult = { geometry: SearchGeometry; passes: SearchPass[]; counters: SearchCounters } | { error: string }
+/** Run a step generator to completion (no yielding to anyone). */
+export const drain = <A>(it: Generator<void, A>): A => { for (;;) { const r = it.next(); if (r.done) return r.value } }
+
 /** Passes whose first entry lies in [startMs, endMs). Pure; reads only the blocks for [start − lookback, end + lookahead]. */
-export const searchWindow = (src: BlockSource, inp: SearchInput): { geometry: SearchGeometry; passes: SearchPass[]; counters: SearchCounters } | { error: string } => {
+export const searchWindow = (src: BlockSource, inp: SearchInput): SearchWindowResult => drain(searchWindowSteps(src, inp))
+
+/** searchWindow as a generator that yields every ~SEARCH.sliceEvaluations evaluations, so a caller can hand the JS thread
+ *  back between slices (the worker awaits a macrotask). Same evaluations in the same order: identical output. A window is
+ *  50–300 ms of CPU in one piece otherwise, and on Workers it shares its isolate with every other request of the Worker. */
+export function* searchWindowSteps(src: BlockSource, inp: SearchInput): Generator<void, SearchWindowResult> {
   const geo = searchGeometry(inp)
   if ("error" in geo) return geo
   const T = inp.temperature ?? 10, Pr = inp.pressure ?? 1010, dut1 = inp.dut1 ?? 0
@@ -152,7 +162,8 @@ export const searchWindow = (src: BlockSource, inp: SearchInput): { geometry: Se
   const { trueAltitudeMin: hLo, trueAltitudeMax: hHi } = geo.band
   const az0 = geo.band.azimuthMin, azW = (geo.band.azimuthMax - geo.band.azimuthMin + 360) % 360
   const lAlt = SEARCH.altRateDegPerH / 3.6e6, lAz = SEARCH.azRateDegPerH / Math.cos(Math.min(hHi + 1, 85) * DEG) / 3.6e6   // °/ms
-  let lt = 0
+  let lt = 0, nextSlice = SEARCH.sliceEvaluations
+  const due = () => { const n = c.scanEvaluations + c.trackEvaluations + c.refineEvaluations; if (n < nextSlice) return false; nextSlice = n + SEARCH.sliceEvaluations; return true }
   const look = (ms: number) => {
     c.scanEvaluations++
     const f = frameAt(src, instant(ms, dut1), ref), a = apparent(src, f, inp.body, lt), tp = topocentric(f, a.v)
@@ -174,6 +185,7 @@ export const searchWindow = (src: BlockSource, inp: SearchInput): { geometry: Se
       else if (open) { spans.push(open); open = undefined }
     }
     prev = { t, ...l }
+    if (due()) yield
     const jump = l.da / lAlt
     t += jump > step ? jump : step
   }
@@ -198,6 +210,7 @@ export const searchWindow = (src: BlockSource, inp: SearchInput): { geometry: Se
         if (last) { const v = Math.hypot(s.x - last.x, s.y - last.y) / (s.t - last.t); dtMs = Math.min(30_000, Math.max(100, SEARCH.chordM / Math.max(v, 1e-9))) }
         last = s; xs.push(s)
       } else { xs.push({ t, gap: true }); Object.assign(seed, { P: undefined }) ; last = null }
+      if (due()) yield
       if (t >= b) break
     }
     for (let pass = 0; pass < 8; pass++) {
@@ -211,6 +224,7 @@ export const searchWindow = (src: BlockSource, inp: SearchInput): { geometry: Se
           const m0 = sampleAt((p0.t + p1.t) / 2, { ...p0.seed }), m1 = sampleAt((p1.t + p2.t) / 2, { ...p1.seed })
           xs.splice(i + 1, 0, m1 ?? { t: (p1.t + p2.t) / 2, gap: true }); xs.splice(i, 0, m0 ?? { t: (p0.t + p1.t) / 2, gap: true })
           i += 2; inserted = true
+          if (due()) yield
         }
       }
       if (!inserted) break
@@ -254,6 +268,7 @@ export const searchWindow = (src: BlockSource, inp: SearchInput): { geometry: Se
             if (fc * fb < 0) { ta = tb; fa = fb } else fa /= 2
             tb = tc; fb = fc
             if (Math.abs(tb - ta) < SEARCH.crossingTolS * 1000) { g((ta + tb) / 2); break }
+            if (due()) yield
           }
         }
         cuts.push({ t: best.t, at: { time: isoMs(best.t), lat: best.lat, lon: best.lon } })
