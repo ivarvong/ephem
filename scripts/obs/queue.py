@@ -45,6 +45,6 @@ for d in sp.values():
 waits.sort()
 p = lambda q: waits[min(len(waits) - 1, int(len(waits) * q))] if waits else None  # noqa: E731
 print(f"{a.path} n={len(waits)} wait p50/p90/p99/max {p(.5)}/{p(.9)}/{p(.99)}/{waits[-1] if waits else None} ms; > {a.over:g} ms: {len(slow)} ({100 * len(slow) / max(1, len(waits)):.1f}%)")
-for s in sorted(slow, reverse=True)[:30]:
+for s in sorted(slow, key=lambda s: s[0], reverse=True)[:30]:
     kind = "new isolate" if s[3] and s[3] != "L1" else ("busy isolate" if s[3] == "L1" else "")
     print(f"  wait {s[0]:>4} ms  cpu {s[1]}  isolate_computes {s[2]}  blocks {s[3]}  geoid {s[4]}  {kind:12}  ray {s[5]}")

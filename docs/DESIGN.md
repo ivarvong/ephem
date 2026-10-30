@@ -38,7 +38,8 @@ reference/oracle/crosscheck.py  diffs any two implementations field by field
 | --- | --- | --- |
 | `@ephem/core` | `block` (DE440 record evaluator) · `time` · `linalg` · `frames` · `ephemeris` · `observe` · `geodesic` · `position` · `day` · `alignment` | nothing |
 | `@ephem/api` | `EphemApi` (groups `sky`, `meta`), request/response schemas, tagged errors, `CONVENTIONS` | `effect` |
-| `@ephem/worker` | `handlers` (decode → block set → load → core → diagnostics) · `blocks` (cache tiers) · `app` (router, CORS, explained 400s, `/docs`) · `ingest` + `admin` (JPL → R2 RPC) · `index` (Workers entry) · `dev` (Node server) · `ops/` (local-only RPC caller) | core, api, effect |
+| `@ephem/worker` | `handlers` (decode → block set → load → core → diagnostics) · `blocks` (cache tiers) · `router` (shared /v1 router, CORS, explained 400s) · `app` (front door: + home, `/docs`, MCP) · `ingest` + `admin` (JPL → R2 RPC) · `index` (ephem entry) · `compute` (ephem-compute entry, §12.0) · `dev` (Node server) · `ops/` (local-only RPC caller) | core, api, effect |
+| `@ephem/compute` | ephem-compute's config + a one-line entry re-exporting `@ephem/worker/src/compute.ts` | worker |
 
 The dependency rule is one-way and mechanical: core's `package.json` lists no dependencies; `tsc -p packages/core` fails
 if anything else is imported. Core is runtime-agnostic (Workers, Node, browsers, Bun, Deno) because it does no I/O: the
@@ -432,6 +433,38 @@ gap p50 117 → 99 ms, first-request CPU unchanged (docs/telemetry_and_profiling
 **Local.** `node --experimental-strip-types packages/worker/src/dev.ts 8787` runs the identical handler on Node with
 blocks range-read from a local copy of the DE440 file (`data/jpl/`) with the same `makeBlocks` and the same offsets
 as R2; this is what the cross-check harness targets.
+
+### 12.0 Two Workers: front door and compute (2026-10-30)
+
+```
+eyeball ─▶ ephem (default, cache OFF; always runs: traces, Basin row, request.cf)
+             ├─ /, /docs, /llms.txt, /openapi.json, /mcp, /healthz, live position / magnetic, /v1/weather (MetarFeed, own ctx.exports)
+             ├─ POST /v1/alignment/search: validate, fan out the window GETs, merge (no astronomy)
+             └─ deterministic GET /v1/* and every search window ─▶ env.COMPUTE (service binding)
+                    ephem-compute Api (cache ON: Workers Caching of the callee, cf.cacheKey = /v<CACHE_VERSION><path?sorted query>)
+                        └─ blocks / geoid ─▶ ctx.exports.BlockStore (cache ON) ─▶ R2
+             live routes' blocks / geoid ─▶ env.STORE (service binding) ─▶ ephem-compute BlockStore (cache ON) ─▶ R2
+```
+
+Why: a Worker's entrypoints share one isolate pool. While Api window misses ran inside `ephem`, heavy compute made the
+platform start more `ephem` isolates, and a live request sometimes landed on a fresh one (~100–230 ms start-up before the
+handler; telemetry guide "Position tail under scan load"). `ephem-compute` (packages/compute; code in
+`packages/worker/src/compute.ts`, router `src/router.ts makeApiHandler`: the /v1 routes without homepage, docs or MCP) has its
+own pool. BlockStore moved with it: compute's block and geoid fetches stay same-Worker, and R2 range reads stay off front-door
+isolates; MetarFeed stayed: only the front door's weather reads it.
+
+Rules that carry over unchanged: Workers Caching only; every cross-entrypoint or cross-Worker fetch goes through
+`src/loopback.ts` (`resolveBindings`: a service binding when the Worker has one, else its own `ctx.exports`), keyed with
+CACHE_VERSION; crossVersionCache is on in both Workers. The two caches are separate (a cache belongs to a Worker), so the
+split started ephem-compute's Api and BlockStore caches empty. The front door forwards `cf-ray` (as `x-ephem-ray`) and
+`Cloudflare-Workers-Version-Overrides` with every forward, so ephem-compute's 0% canary can be pinned from the eyeball;
+neither header is in the cache key. Interface rule: ephem-compute deploys first (scripts/deploy.sh does) and must keep
+answering the previous front door, because rolling ephem back does not roll compute back.
+
+Measured (2026-10-30, ephem 121b7984 + ephem-compute bb0a1127 vs 647f5bbc; telemetry guide "Compute split"): the binding
+costs ≤ 1 ms (a forwarded HIT is 4 ms either way), Api windows wait less before running (p90 109 → 73 ms) and cold
+12-month scans got ~50–90 ms faster at p50, but the live-position tail it was built for did not move (0.35 % of probes
+waited on a new front-door isolate before and after). Kept for the faster scans and independent deploys.
 
 ### 12.1 Storage sizes, and why R2 rather than a Durable Object
 
