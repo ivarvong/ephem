@@ -3,7 +3,8 @@ import type { BlockSource, BodyName } from "./ephemeris.ts"
 import { type Epoch, type Geodetic, type Topocentric, angularRadius, apparent, epochAt, frameAt, topocentric } from "./observe.ts"
 import { type Limb, P_DEFAULT, REFRACTION_FLOOR, T_DEFAULT, limbSign, refraction } from "./horizon.ts"
 import { instant, isoMs } from "./time.ts"
-import { DEG } from "./linalg.ts"
+import { type Vec3, DEG, wrap360 } from "./linalg.ts"
+import { aimVector } from "./aim.ts"
 
 export type EventKind =
   | "rise" | "set" | "transit"
@@ -175,21 +176,35 @@ export type CrossingTarget =
 export interface CrossingInput {
   readonly startMs: number; readonly endMs: number; readonly geo: Geodetic; readonly dut1?: number | undefined
   readonly body: BodyName; readonly limb: Limb; readonly direction: "rise" | "set" | "either"; readonly target: CrossingTarget
+  /** litCentroid: the Moon's lit-area centroid (aim.ts) crosses instead of `limb` (which must then be center). */
+  readonly aim?: "litCentroid" | undefined
 }
 export const MAX_CROSSING_WINDOW_MS = 31 * 86_400_000
 export const RATE_STEP_MS = 10_000
 export const crossing = (src: BlockSource, input: CrossingInput) => {
   const look = looker(src, input.geo, input.dut1 ?? 0), s = limbSign(input.limb), tg = input.target, body = input.body
-  const f = tg.kind === "true" ? (ms: number) => { const l = look(body, ms); return l.tp.altitude + s * angularRadius(body, l.dist) - tg.altitude }
+  // True altitude and azimuth of the point that crosses: the chosen limb along the vertical, or the lit-area centroid.
+  const enu = (l: { tp: Topocentric; dist: number }): Vec3 => {
+    const a = l.tp.altitude * DEG, z = l.tp.azimuth * DEG
+    return [l.dist * Math.cos(a) * Math.sin(z), l.dist * Math.cos(a) * Math.cos(z), l.dist * Math.sin(a)]
+  }
+  const point = input.aim === "litCentroid"
+    ? (ms: number) => {
+      const l = look(body, ms), x = aimVector("litCentroid", enu(l), [0, 0, 1], angularRadius(body, l.dist), enu(look("sun", ms)))
+      return { alt: Math.asin(x.dir[2]) / DEG, az: wrap360(Math.atan2(x.dir[0], x.dir[1]) / DEG), offset: x.offset, angle: x.angleFromVertical }
+    }
+    : (ms: number) => { const l = look(body, ms); return { alt: l.tp.altitude + s * angularRadius(body, l.dist), az: l.tp.azimuth, offset: 0, angle: null } }
+  const f = tg.kind === "true" ? (ms: number) => point(ms).alt - tg.altitude
     : tg.kind === "apparent" ? (() => { const thr = tg.altitude - refraction(tg.altitude, tg.temperature, tg.pressure)
-      return (ms: number) => { const l = look(body, ms); return l.tp.altitude + s * angularRadius(body, l.dist) - thr } })()
-    : (ms: number) => { const l = look(body, ms), A = profileAt(tg.profile, l.tp.azimuth); return l.tp.altitude + s * angularRadius(body, l.dist) - (A - refraction(A, tg.temperature, tg.pressure)) }
+      return (ms: number) => point(ms).alt - thr })()
+    : (ms: number) => { const p = point(ms), A = profileAt(tg.profile, p.az); return p.alt - (A - refraction(A, tg.temperature, tg.pressure)) }
   const out = crossings(f, input.startMs, input.endMs, SAMPLE_MS)
     .filter(c => input.direction === "either" || (input.direction === "rise") === c.rising)
     .map(c => {
       const ms = Math.round(c.ms), l = look(body, ms)
       const rate = (look(body, ms + RATE_STEP_MS).tp.altitude - look(body, ms - RATE_STEP_MS).tp.altitude) / (2 * RATE_STEP_MS / 60_000)
-      return { time: isoMs(c.ms), direction: c.rising ? "rise" as const : "set" as const, azimuth: l.tp.azimuth, altitude: l.tp.altitude, altitudeRate: rate }
+      const aimOut = input.aim ? (() => { const p = point(c.ms); return { aimOffset: p.offset, aimAngle: p.angle } })() : {}
+      return { time: isoMs(c.ms), direction: c.rising ? "rise" as const : "set" as const, azimuth: l.tp.azimuth, altitude: l.tp.altitude, altitudeRate: rate, ...aimOut }
     })
   return { crossings: out }
 }

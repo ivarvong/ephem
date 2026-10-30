@@ -15,7 +15,7 @@ const dayConv = { riseSet: { limb: "upper" as const, definition: "", horizon, re
 const Sky = HttpApiBuilder.group(EphemApi, "sky", h => h
   .handle("position", ({ query }) => Effect.succeed({
     time: { utc: query.time ?? "2026-10-28T11:51:00Z", jdTT: 0, jdUT1: 0, dut1: query.dut1 ?? 0, deltaT: 0 }, observer: obs(query),
-    sun: stubBody, moon: { ...stubBody, phase: { phaseAngle: 1, illuminatedFraction: 0.5, elongation: 90, brightLimbAngle: 270, name: "first quarter" as const } }, conventions: posConv, provenance: prov }))
+    sun: stubBody, moon: { ...stubBody, phase: { phaseAngle: 1, illuminatedFraction: 0.5, elongation: 90, brightLimbAngle: 270, name: "first quarter" as const }, brightLimbAngleFromVertical: 0 }, conventions: posConv, provenance: prov }))
   .handle("day", ({ query }) => Effect.succeed({ date: query.date, tz: query.tz, start: "2026-10-28T04:00:00Z", end: "2026-10-29T04:00:00Z", observer: obs(query), events: [], conventions: dayConv, provenance: prov }))
   .handle("crossing", ({ query }) => Effect.succeed({ body: query.body, start: "2026-10-28T04:00:00Z", end: "2026-10-29T04:00:00Z", observer: obs(query), crossings: [],
     conventions: { definition: "", limb: "center" as const, altitudeType: "true" as const, trueLimbAltitude: 0, refraction: null, horizon: null, geoid }, provenance: prov }))

@@ -9,6 +9,7 @@ import { type HorizonProfile, DAY_THRESHOLDS, MAX_CROSSING_WINDOW_MS, crossing, 
 import { isoMs } from "./time.ts"
 import { track } from "./track.ts"
 import { CONTEXT_CONVENTIONS, type Include, contextAt } from "./context.ts"
+import { type Aim, AIM_DEFINITIONS } from "./aim.ts"
 
 export interface SkyObserverInput { readonly lat: number; readonly lon: number; readonly height?: number | undefined; readonly heightRef?: HeightRef | undefined }
 const geoOf = (o: SkyObserverInput) => {
@@ -120,6 +121,7 @@ export interface CrossingRequest extends SkyObserverInput {
   readonly limb?: Limb | undefined; readonly direction?: "rise" | "set" | "either" | undefined
   readonly temperature?: number | undefined; readonly pressure?: number | undefined; readonly dut1?: number | undefined
   readonly include?: ReadonlySet<Include> | undefined   // sun, phase: context per crossing
+  readonly aim?: Aim | undefined                        // instead of limb; litCentroid for the Moon only
 }
 /** Window from start/end or from a local date + tz; validation messages are the API's. */
 export const crossingWindow = (q: { start?: string | undefined; end?: string | undefined; date?: string | undefined; tz?: string | undefined }): SkyResult<{ startMs: number; endMs: number }> => {
@@ -136,7 +138,10 @@ export const crossingWindow = (q: { start?: string | undefined; end?: string | u
   return { ok: { startMs: localMidnight(q.date, q.tz), endMs: localMidnight(nextDate(q.date), q.tz) } }
 }
 export const crossingRequest = (src: BlockSource, q: CrossingRequest): SkyResult<ReturnType<typeof crossingOut>> => {
-  const { h, geo } = geoOf(q), T = q.temperature ?? T_DEFAULT, P = q.pressure ?? P_DEFAULT, limb = q.limb ?? "center"
+  if (q.aim !== undefined && q.limb !== undefined) return { error: "pass limb or aim, not both (aim=upper|lower|center is the same as limb)" }
+  if (q.aim === "litCentroid" && q.body !== "moon") return { error: "aim=litCentroid is the Moon's lit-area centroid: body must be moon" }
+  const { h, geo } = geoOf(q), T = q.temperature ?? T_DEFAULT, P = q.pressure ?? P_DEFAULT
+  const limb: Limb = q.limb ?? (q.aim === undefined || q.aim === "litCentroid" ? "center" : q.aim)
   if ((q.altitude === undefined) === (q.horizonProfile === undefined)) return { error: "give altitude or horizonProfile (exactly one)" }
   let target: Parameters<typeof crossing>[1]["target"], profile: HorizonProfile | undefined
   if (q.horizonProfile !== undefined) {
@@ -147,13 +152,14 @@ export const crossingRequest = (src: BlockSource, q: CrossingRequest): SkyResult
     if (q.altitude! < REFRACTION_FLOOR || q.altitude! > REFRACTION_CEIL) return { error: `an apparent altitude must lie in [${REFRACTION_FLOOR.toFixed(4)}, ${REFRACTION_CEIL}]° (the refraction model's range)` }
     target = { kind: "apparent", altitude: q.altitude!, temperature: T, pressure: P }
   } else target = { kind: "true", altitude: q.altitude! }
-  const r = crossing(src, { startMs: q.startMs, endMs: q.endMs, geo, dut1: q.dut1, body: q.body, limb, direction: q.direction ?? "either", target })
+  const r = crossing(src, { startMs: q.startMs, endMs: q.endMs, geo, dut1: q.dut1, body: q.body, limb, direction: q.direction ?? "either", target,
+    ...(q.aim === "litCentroid" ? { aim: "litCentroid" as const } : {}) })
   const inc = q.include ?? new Set<Include>()
   const withCtx = inc.size === 0 ? r : { crossings: r.crossings.map(c => ({ ...c, ...contextAt(src, inc, geo, h.heightMsl, Date.parse(c.time), { dut1: q.dut1, temperature: T, pressure: P }) })) }
   return { ok: crossingOut(q, h, withCtx, target, limb, profile, T, P) }
 }
 const crossingOut = (q: CrossingRequest, h: ObserverHeights, r: { crossings: ReadonlyArray<ReturnType<typeof crossing>["crossings"][number] & ReturnType<typeof contextAt>> }, target: Parameters<typeof crossing>[1]["target"], limb: Limb, profile: HorizonProfile | undefined, T: number, P: number) => {
-  const what = limb === "center" ? "centre" : `${limb} limb`
+  const what = q.aim === "litCentroid" ? "lit-area centroid" : limb === "center" ? "centre" : `${limb} limb`
   const trueLimb = target.kind === "true" ? target.altitude : target.kind === "apparent" ? target.altitude - refraction(target.altitude, T, P) : null
   return {
     body: q.body, start: isoMs(q.startMs), end: isoMs(q.endMs), observer: observerOut(q, h), crossings: r.crossings,
@@ -166,6 +172,7 @@ const crossingOut = (q: CrossingRequest, h: ObserverHeights, r: { crossings: Rea
       horizon: profile ? horizonOut({ kind: "profile", profile }) : null,
       geoid: geoidOut,
       ...(q.include && q.include.size ? { include: CONTEXT_CONVENTIONS } : {}),
+      ...(q.aim !== undefined ? { aim: { point: q.aim, definition: AIM_DEFINITIONS[q.aim] } } : {}),
     },
   }
 }

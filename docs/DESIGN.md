@@ -261,6 +261,31 @@ from that point at that instant, and `phase` = the Moon's geocentric phase, both
 (worker test). Replaces the customer's per-pass /v1/position calls. Answers without `include` are unchanged (no
 CACHE_VERSION bump).
 
+**Aim points (`aim`, `aim.ts`, 2026-10-30).** Which point of the disc is put on the target (alignment) or on the altitude
+(crossing): `center` (default), `upper` / `lower` (the limb along the local vertical: the centre moved by the topocentric
+angular radius asin(1737.4 km / topocentric distance), so diurnal parallax is in it), or `litCentroid`. Offsets are applied
+to the direction vector in the true sky (exact rotation by ρ, not a small-angle az/alt sum), and the aim point's altitude is
+then refracted; in the alignment solver the aim vector is rebuilt at every candidate point from the carried body (and Sun)
+vectors, so the solve still has no ephemeris call in its inner loop. With `aim=center` the code path and answers are
+bit-identical to before (golden unchanged).
+
+*Lit-area centroid.* Orthographic disc of radius r, parallel sunlight, phase angle i (topocentric: angle Sun–Moon–eye). With
+x towards the bright limb, the lit region is −cos i·√(r² − y²) ≤ x ≤ √(r² − y²): area (1 + cos i)πr²/2, first moment
+(2/3)r³ sin² i, so **x̄ = (4r/3π)(1 − cos i)** (0 at full, 0.424 r at quarter, → 0.849 r for a thin crescent). Direction: the
+Sun's direction from the Moon projected on the sky plane at the Moon; the projection of Sun − Moon equals the Sun's own
+(Moon − eye is along the line of sight), so it is exact. Validation: `reference/oracle/litcentroid.py` (Skyfield + DE440s,
+2 M equal-area points on the lunar sphere, visible ∧ sunlit, weighted by solid angle at the eye, centroid on the gnomonic
+sky plane) at four instants (crescent 9 %, 46 %, 45 %, gibbous 82 %): offsets agree to ≤ 0.028′ (0.19 % of r, the
+orthographic approximation), angles to ≤ 0.006° (`core/test/aim.test.ts`). **Customer check** (Nov 16 2026 EST, 47 %):
+ours 6.844′ at 155.70° clockwise from the vertical (brute force 6.847′, 155.70°); their 6.75′ is exactly the closed form
+with the *geocentric* illuminated fraction 46.9 % instead of the topocentric 46.15 % (parallax moves the phase angle ≈ 0.9°).
+On the track, the spot where the centroid is on the statue at 03:45:19 gets the centre 36.8 s later, 4.5 m to the side
+(customer: 40 s, 4.9 m). Crossing with litCentroid: the set moves by offset·cos(angle)/rate (test, ≤ 2 s).
+
+*Bright limb from the vertical.* /v1/position `moon.brightLimbAngleFromVertical`: the same direction, degrees clockwise from
+the local vertical as seen from the eye (towards increasing azimuth), topocentric. Checked against 360° − (χ − q), Meeus'
+position angle from topocentric RA/Dec minus the parallactic angle, to < 0.01° (spherical trig vs vectors).
+
 **Converse ("from here, when").** With `observerLat/Lon`: the azimuth to the target and its apparent elevation are fixed;
 find the instants where the body's azimuth − target azimuth crosses zero (2-min sampling, ±180° wrap crossings
 discarded), and report `altitudeOffset` = body apparent altitude − target elevation. Negative means the body centre is

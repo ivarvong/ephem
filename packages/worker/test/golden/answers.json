@@ -1,6 +1,6 @@
 {
-  "cacheVersion": 4,
-  "recorded": "2026-10-30T12:35:43.030Z",
+  "cacheVersion": 5,
+  "recorded": "2026-10-30T12:46:53.453Z",
   "requests": {
     "day.nyc": "/v1/day?date=2026-10-28&tz=America/New_York&lat=40.7127&lon=-74.0059&height=10",
     "day.tromso": "/v1/day?date=2026-11-15&tz=Europe/Oslo&lat=69.6492&lon=18.9553",
@@ -16,9 +16,9 @@
   "answers": {
     "day.nyc": "2a4ab89f11974eeb7ae52f0fb3c37908",
     "day.tromso": "26c824c2a48b360294ff9f2b58c8907b",
-    "position.nyc": "5a4933f83f9422d2328612902ca00b3b",
-    "position.sydney.refraction": "2882dff905f858b23892de3b1265afc5",
-    "alignment.moon.liberty": "db456c835fd1842ea4a30aacb020f419",
+    "position.nyc": "1deed3c207eae3aa1f1e5b8e460e904e",
+    "position.sydney.refraction": "80427b975b3ff24b3ee9b1686b284c99",
+    "alignment.moon.liberty": "b13cf19e7c60b0778cb8bc1a3e6d8232",
     "crossing.sun.civil": "700c114a796c6fee11e9f3d4ddeb5196",
     "crossing.moon.apparent": "f002be8c5ffbd8c4f7751bb3c5d8b1c3",
     "track.nyc": "7f9acae6c726ff78ec44b87d189f662d",

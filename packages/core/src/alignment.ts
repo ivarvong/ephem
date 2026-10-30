@@ -14,6 +14,7 @@ import { RATE_STEP_S } from "./position.ts"
 
 import { type HeightRef, K_TERRESTRIAL, R_MEAN_M, refractTrue as refract } from "./horizon.ts"
 import { geoidUndulation } from "./geoid.ts"
+import { type Aim, aimVector } from "./aim.ts"
 export { K_TERRESTRIAL, R_MEAN_M }
 
 /** Apparent elevation (deg) of the point at ITRS `Tx` from P, `s` metres away along the ground. */
@@ -38,11 +39,16 @@ export interface AlignmentInput {
   readonly maxDistanceKm: number
   readonly temperature?: number | undefined; readonly pressure?: number | undefined; readonly dut1?: number | undefined
   readonly observer?: { lat: number; lon: number } | undefined   // optional fixed spot for the converse question
+  /** Which point of the disc sits on the target (default center): upper / lower limb along the local vertical, or the
+   *  Moon's lit-area centroid (aim.ts). Applied in the true sky; the aim point's altitude is then refracted. */
+  readonly aim?: Aim | undefined
 }
 export interface AlignmentPoint {
   readonly time: string; readonly lat: number; readonly lon: number
   readonly distanceKm: number; readonly azimuth: number; readonly apparentAltitude: number; readonly angularRadius: number
   readonly heightEllipsoid: number        // the eye's height above WGS-84 at this standing point, metres
+  readonly aimOffset: number              // degrees from the disc centre to the aim point (0 for center)
+  readonly aimAngle: number | null        // degrees clockwise from the local vertical, centre → aim point (null for center)
   readonly iterations: number
 }
 /** The eye's ellipsoidal height at (lat, lon). */
@@ -94,15 +100,23 @@ export interface Seed { P?: Geodetic | undefined; backAz: number; az: number; di
 export const standingPoint = (src: BlockSource, inp: AlignmentInput, utcMs: number, seed: Seed = { backAz: 0, az: 0, dist: 0, slope: 0, lt: 0 }): AlignmentPoint | null => {
   const t = instant(utcMs, inp.dut1 ?? 0), T = inp.temperature ?? 10, Pr = inp.pressure ?? 1010, ep = epochAt(src, t)
   let lt = seed.lt   // light time changes by ~1e-9 d per minute: the previous instant's is a close start
+  const aim = inp.aim ?? "center"
   const look = (g: Geodetic) => {
     const f = frameAt(src, t, g, ep), a = apparent(src, f, inp.body, lt), tp = topocentric(f, a.v)
     lt = a.lt
-    return { az: tp.azimuth, alt: tp.altitude, app: refract(tp.altitude, T, Pr), radius: angularRadius(inp.body, a.distanceKm), v: mxv(ep.eo.C, a.v), r: itrsOf(g) }
+    return { az: tp.azimuth, alt: tp.altitude, app: refract(tp.altitude, T, Pr), radius: angularRadius(inp.body, a.distanceKm), v: mxv(ep.eo.C, a.v), r: itrsOf(g),
+      sv: aim === "litCentroid" ? mxv(ep.eo.C, apparent(src, f, "sun").v) : undefined }
   }
   // The body seen from a point Q near b's observer: shift the origin of b's apparent ITRS vector to Q. This carries the tilt of
   // the vertical (≈ s/R, comparable to the altitude itself at grazing angles) and parallax into the solve; only aberration is left over.
   type Look = ReturnType<typeof look>
-  const seen = (b: Look, r: Vec3) => sub(b.v, sub(r, b.r))
+  const seenBody = (b: Look, r: Vec3) => sub(b.v, sub(r, b.r))
+  // The aim point's direction from Q (the body centre's for center, unchanged); its offset and angle for the output.
+  let aimOff = 0, aimAng: number | null = null
+  const seen = aim === "center" ? seenBody : (b: Look, r: Vec3, up: Vec3) => {
+    const x = aimVector(aim, seenBody(b, r), up, b.radius, b.sv ? sub(b.sv, sub(r, b.r)) : undefined)
+    aimOff = x.offset; aimAng = x.angleFromVertical; return x.dir
+  }
   const warm = seed.P !== undefined, eye = eyeHeight(inp)
   let P: Geodetic = seed.P ?? { lat: inp.target.lat, lon: inp.target.lon, height: eye(inp.target.lat, inp.target.lon) }
   let backAz = 0, it = 0, b = look(P), dist = seed.dist
@@ -121,7 +135,7 @@ export const standingPoint = (src: BlockSource, inp: AlignmentInput, utcMs: numb
       const place = (dm: number): Geodetic => { const d = line(dm); return { lat: d.lat, lon: d.lon, height: eye(d.lat, d.lon) } }
       const bv = b
       const g = (dm: number) => {                     // place(dm) is dm from T along the geodesic
-        const Q = place(dm), r = itrsOf(Q), { up } = enuOf(Q), e = sub(Tx, r), w = seen(bv, r)
+        const Q = place(dm), r = itrsOf(Q), { up } = enuOf(Q), e = sub(Tx, r), w = seen(bv, r, up)
         return Math.asin(dot(e, up) / norm(e)) / DEG + (K_TERRESTRIAL * (dm / R_MEAN_M) / 2) / DEG - refract(Math.asin(dot(w, up) / norm(w)) / DEG, T, Pr)
       }
       const d = it === 1 && k === 0 && !warm ? fullRoot(g, lo, hi) : secantRoot(g, dist, seed, lo, hi)
@@ -129,7 +143,7 @@ export const standingPoint = (src: BlockSource, inp: AlignmentInput, utcMs: numb
       dist = d; Pn = place(d)
       // (1): the forward azimuth Pn → T must equal the body azimuth seen from Pn; correct the back-azimuth by the residual.
       const fwd = inverse(Pn.lat, Pn.lon, inp.target.lat, inp.target.lon).azimuth
-      const r = itrsOf(Pn), w = seen(b, r), { up, north, east } = enuOf(Pn)
+      const r = itrsOf(Pn), { up, north, east } = enuOf(Pn), w = seen(b, r, up)
       az = wrap360(Math.atan2(dot(w, east), dot(w, north)) / DEG); app = refract(Math.asin(dot(w, up) / norm(w)) / DEG, T, Pr)
       const dAz = ((az - fwd + 540) % 360) - 180
       // Within ~100 m of the target Vincenty's azimuth is only good to a few 1e-9°, so also accept a sub-1e-8 m lateral residual.
@@ -146,7 +160,7 @@ export const standingPoint = (src: BlockSource, inp: AlignmentInput, utcMs: numb
   }
   const e = targetElevation(P, inp.target)
   seed.P = P
-  return { time: isoMs(utcMs), lat: P.lat, lon: P.lon, distanceKm: e.distanceM / 1000, azimuth: az, apparentAltitude: app, angularRadius: b.radius, heightEllipsoid: P.height, iterations: it }
+  return { time: isoMs(utcMs), lat: P.lat, lon: P.lon, distanceKm: e.distanceM / 1000, azimuth: az, apparentAltitude: app, angularRadius: b.radius, heightEllipsoid: P.height, aimOffset: aimOff, aimAngle: aimAng, iterations: it }
 }
 
 /** d(true altitude)/dt and d(azimuth)/dt of the body seen from a fixed point, degrees per minute: the symmetric difference
@@ -164,9 +178,12 @@ export interface FromObserver { readonly azimuthToTarget: number; readonly dista
 export const fromObserver = (src: BlockSource, inp: AlignmentInput, obs: { lat: number; lon: number }): FromObserver => {
   const P: Geodetic = { lat: obs.lat, lon: obs.lon, height: eyeHeight(inp)(obs.lat, obs.lon) }
   const e = targetElevation(P, inp.target), T = inp.temperature ?? 10, Pr = inp.pressure ?? 1010
+  const aim = inp.aim ?? "center", { up, north, east } = enuOf(P)
   const look = (ms: number) => {
-    const f = frameAt(src, instant(ms, inp.dut1 ?? 0), P), a = apparent(src, f, inp.body), tp = topocentric(f, a.v)
-    return { az: tp.azimuth, app: refract(tp.altitude, T, Pr), radius: angularRadius(inp.body, a.distanceKm) }
+    const f = frameAt(src, instant(ms, inp.dut1 ?? 0), P), a = apparent(src, f, inp.body), radius = angularRadius(inp.body, a.distanceKm)
+    if (aim === "center") { const tp = topocentric(f, a.v); return { az: tp.azimuth, app: refract(tp.altitude, T, Pr), radius } }
+    const C = f.eo.C, x = aimVector(aim, mxv(C, a.v), up, radius, aim === "litCentroid" ? mxv(C, apparent(src, f, "sun").v) : undefined)
+    return { az: wrap360(Math.atan2(dot(x.dir, east), dot(x.dir, north)) / DEG), app: refract(Math.asin(dot(x.dir, up)) / DEG, T, Pr), radius }
   }
   const dAz = (ms: number) => ((look(ms).az - e.azimuth + 540) % 360) - 180
   const passes = crossings(dAz, inp.startMs, inp.endMs, 120_000)

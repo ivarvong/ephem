@@ -19,7 +19,8 @@ export const CONVENTIONS = {
   goldenHour: "Sun centre true altitude between −4° and +6°.",
   blueHour: "Sun centre true altitude between −6° and −4°.",
   phase: "Geocentric: phase angle Sun–Moon–Earth, illuminated fraction (1 + cos i)/2, elongation = λ☾ − λ☉ in [0, 360).",
-  brightLimb: "Position angle of the Moon's bright limb, measured from celestial north through east (Meeus 48.5).",
+  brightLimb: "Position angle of the Moon's bright limb, measured from celestial north through east (Meeus 48.5), geocentric (phase.brightLimbAngle). moon.brightLimbAngleFromVertical is the same limb seen from the observer, degrees clockwise from the local vertical (towards increasing azimuth).",
+  aim: "aim (alignment, crossing): which point of the disc is put on the target / altitude. center (default); upper / lower = the limb along the local vertical (topocentric angular radius, asin(1737.4 km / topocentric distance), so parallax is included); litCentroid = the centroid of the Moon's illuminated area: (4r/3π)·(1 − cos i) from the centre towards the bright limb, i the topocentric phase angle, r the angular radius (orthographic disc, parallel sunlight). Offsets are applied in the true sky and the aim point's altitude is then refracted.",
   supportedRange: "1972-01-01T00:00:00Z to 2149-12-31T23:59:59Z (UTC with leap seconds; DE440 coverage).",
   ut1: "UT1 = UTC + dut1 (request parameter, default 0). No polar motion.",
   alignment: "Standing point P solves: body azimuth at P = forward geodesic azimuth P→target, and body apparent altitude at P = target apparent elevation = geometric elevation (exact, WGS-84 ECEF) + k·θ/2 with k = 0.13, θ = geodesic distance / 6 371 008.8 m. Track points are omitted when the body is below −1° or no P lies within maxDistanceKm. Geodesics: WGS-84 (Vincenty/Karney agree to 1 mm here). Heights: observerHeight (heightRef) and targetHeight (targetHeightRef) are above the ellipsoid by default, above the EGM96 geoid with msl; no observerHeight = the eye on the geoid. Every response carries a conventions block (terrestrial refraction, azimuth, refraction, heights, rates).",
@@ -132,7 +133,8 @@ export const PositionConventions = S.Struct({
 export const PositionResponse = S.Struct({
   time: TimeInfo, observer: SkyObserver,
   sun: BodyPosition,
-  moon: S.Struct({ ...BodyPosition.fields, phase: MoonPhase }),
+  moon: S.Struct({ ...BodyPosition.fields, phase: MoonPhase,
+    brightLimbAngleFromVertical: S.NullOr(Degrees).annotate(d0("Bright limb seen from this observer: degrees clockwise from the local vertical (the direction towards the zenith) as the observer sees the sky, i.e. towards increasing azimuth; topocentric (phase.brightLimbAngle is geocentric, from celestial north through east). = 360° − (χ − q) with χ the topocentric bright-limb position angle and q the parallactic angle. null at the zenith.")) }),
   conventions: PositionConventions,
   provenance: Provenance,
 })
@@ -176,6 +178,11 @@ export const DayResponse = S.Struct({
 })
 
 // ─────────────────────────────── include=sun,phase (context on crossings and alignments) ───────────────────────────────
+export const AimParam = S.Literals(["center", "upper", "lower", "litCentroid"])
+const aimFields = {
+  aimOffset: S.optionalKey(Degrees.annotate(d0("With aim: angular distance from the disc centre to the aim point, degrees (the angular radius for a limb)."))),
+  aimAngle: S.optionalKey(S.NullOr(Degrees).annotate(d0("With aim: direction centre → aim point, degrees clockwise from the local vertical as the observer sees it (0 = upper limb, 180 = lower; litCentroid = the bright limb's direction)."))),
+}
 /** Comma-separated: sun, phase. */
 export const IncludeParam = S.String.check(S.isPattern(/^(sun|phase)(,(sun|phase))?$/))
 export const SunContext = S.Struct({
@@ -200,12 +207,13 @@ export const CrossingQuery = {
   date: S.optionalKey(DateString), tz: S.optionalKey(S.String),                     // one local day, like /v1/day
   temperature: optNum(Temperature), pressure: optNum(Pressure), dut1: optNum(Dut1),
   include: S.optionalKey(IncludeParam),                                             // sun,phase: context per crossing
+  aim: S.optionalKey(AimParam),                                                     // instead of limb: center | upper | lower | litCentroid (Moon)
 }
 export const Crossing = S.Struct({
   time: UtcString, direction: S.Literals(["rise", "set"]),
   azimuth: Degrees, altitude: Degrees.annotate(d0("True altitude of the body centre at the crossing.")),
   altitudeRate: S.Finite.annotate(d0("d(true altitude)/dt at the crossing, degrees per minute (±10 s symmetric difference).")),
-  ...contextFields,
+  ...contextFields, ...aimFields,
 })
 export const CrossingConventions = S.Struct({
   definition: S.String,
@@ -215,6 +223,7 @@ export const CrossingConventions = S.Struct({
   horizon: S.NullOr(HorizonConventions),
   geoid: GeoidConventions,
   include: S.optionalKey(S.String),
+  aim: S.optionalKey(S.Struct({ point: AimParam, definition: S.String })),
 })
 export const CrossingResponse = S.Struct({
   body: S.Literals(["sun", "moon"]), start: UtcString, end: UtcString, observer: SkyObserver,
@@ -237,6 +246,7 @@ export const AlignmentQuery = {
   temperature: optNum(S.Finite), pressure: optNum(S.Finite), dut1: optNum(Dut1),
   observerLat: optNum(Lat), observerLon: optNum(Lon),   // both or neither: a fixed spot for the converse question
   include: S.optionalKey(IncludeParam),                 // sun,phase: context per track point and per pass
+  aim: S.optionalKey(AimParam),                         // which point of the disc sits on the target; default center
 }
 export const AlignmentPoint = S.Struct({
   time: UtcString,
@@ -250,7 +260,7 @@ export const AlignmentPoint = S.Struct({
   heightEllipsoid: S.Finite.annotate(d0("The eye's height above WGS-84 at this standing point, metres.")),
   heightMsl: S.Finite.annotate(d0("The eye's height above the EGM96 geoid at this standing point, metres.")),
   geoidUndulation: S.Finite.annotate(d0("EGM96 N at this standing point, metres: heightEllipsoid = heightMsl + geoidUndulation.")),
-  ...contextFields,
+  ...contextFields, ...aimFields,
 })
 export const Pass = S.Struct({
   time: UtcString,
@@ -268,6 +278,7 @@ export const AlignmentConventions = S.Struct({
   definition: S.String, azimuth: S.String, apparentAltitude: S.String,
   terrestrialRefraction: S.String.annotate(d0("Whether and how refraction along the sight line (eye → target) is modelled.")),
   heights: S.String, rates: S.String, include: S.optionalKey(S.String),
+  aim: S.optionalKey(S.Struct({ point: AimParam, definition: S.String })),
   observerHeightRef: S.Literals(["ellipsoid", "msl", "default"]).annotate(d0("What observerHeight was measured from; default = no observerHeight, the eye is on the geoid.")),
   targetHeightRef: HeightRef,
   terrestrialRefractionK: S.Finite,
@@ -404,6 +415,7 @@ export const API_DESCRIPTION = [
   "Changes on 2026-10-30 (round-2 feedback):",
   "6. /v1/alignment: `heightRef` (observer) and `targetHeightRef`, each ellipsoid (default) | msl, as on /v1/crossing; `target` echoes the target's heights and geoid undulation; every track point has `altitudeRate`, `azimuthRate` (°/min, as /v1/position), `heightEllipsoid`, `heightMsl`, `geoidUndulation`; a `conventions` block. BEHAVIOUR CHANGE: without `observerHeight` the eye is now on the geoid (heightMsl 0, as on every other endpoint); it used to be 0 m above the ellipsoid (≈ 33 m below sea level in New York).",
   "7. `include=sun,phase` on /v1/alignment (per track point and pass) and /v1/crossing (per crossing): the Sun's azimuth, true and apparent altitude seen from that point, and the Moon's phase.",
+  "8. `aim=center|upper|lower|litCentroid` on /v1/alignment and /v1/crossing (litCentroid: the Moon's lit-area centroid, (4r/3π)(1 − cos i) towards the bright limb), with aimOffset/aimAngle per point; /v1/position moon.brightLimbAngleFromVertical (clockwise from the local vertical, topocentric). BEHAVIOUR CHANGE: none for existing queries (aim defaults to center).",
 ].join("\n")
 
 /** Unknown query parameters are an error, not silently ignored (a dropped `temperature` changes nothing and says nothing). */

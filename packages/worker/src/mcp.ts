@@ -92,7 +92,8 @@ export const TOOLS: ReadonlyArray<ToolDef> = [
       horizonProfile: "Instead of altitude: " + POS_DOCS.horizonProfile, limb: "upper, center (default) or lower limb.", direction: "rise, set or either (default).",
       start: "Window start, UTC ISO-8601 with Z (with end; at most 31 days).", end: "Window end, UTC ISO-8601 with Z.", date: "Instead of start/end: a local date, YYYY-MM-DD (with tz).", tz: "IANA time zone for date.",
       temperature: POS_DOCS.temperature, pressure: POS_DOCS.pressure, dut1: POS_DOCS.dut1,
-      include: "Optional context per crossing: sun (Sun azimuth, true and apparent altitude), phase (Moon phase), or sun,phase." },
+      include: "Optional context per crossing: sun (Sun azimuth, true and apparent altitude), phase (Moon phase), or sun,phase.",
+      aim: "Instead of limb: center, upper, lower, or litCentroid (the centroid of the Moon's lit area; body moon)." },
     description: "Every instant in a window (start/end, or one local date) when the Sun's or Moon's upper limb, centre or lower limb reaches a given true or apparent altitude, or a skyline profile, with direction, azimuth and altitude rate. Same as GET /v1/crossing." },
   { name: "alignment", title: "Where to stand to frame a target against the Sun or Moon", path: "/v1/alignment", query: AlignmentQuery, success: AlignmentResponse,
     docs: {
@@ -104,6 +105,7 @@ export const TOOLS: ReadonlyArray<ToolDef> = [
       start: "Window start, UTC ISO-8601 with Z.", end: "Window end, UTC ISO-8601 with Z (after start).", stepSeconds: "Sampling step, seconds (1–3600, at most 2000 steps). Default 60.",
       maxDistanceKm: "Farthest standing point to report, km. Default 20.", temperature: POS_DOCS.temperature, pressure: POS_DOCS.pressure, dut1: POS_DOCS.dut1,
       include: "Optional context per track point and pass: sun (Sun azimuth, true and apparent altitude there), phase (Moon phase, illuminated fraction), or sun,phase.",
+      aim: "Which point of the disc to put on the target: center (default), upper or lower limb (along the local vertical), or litCentroid (the centroid of the Moon's lit area, for a partial Moon).",
       observerLat: "Optional fixed observer latitude (with observerLon): also report when the body passes behind the target from there.", observerLon: "Optional fixed observer longitude (with observerLat).",
     },
     description: "For each instant in [start, end], the ground point from which the Sun or Moon centre sits exactly on top of a target (azimuth and apparent altitude match), with distance, bearing, the body's altitude/azimuth rates and the eye's heights (ellipsoid, sea level, geoid undulation); a conventions block states the refraction, terrestrial refraction (k = 0.13) and height references. With observerLat/observerLon, also the instants the body passes the target from that spot. Same as GET /v1/alignment." },

@@ -108,3 +108,43 @@ describe("include=sun,phase (round-2 #5)", () => {
       expect((await handler(new Request(`http://x/v1/crossing?body=moon&lat=40.7&lon=-74&altitude=0&date=2026-11-16&tz=America/New_York&${bad}`))).status, bad).toBe(400)
   })
 })
+
+describe("aim (round-2 #3)", () => {
+  it("litCentroid: the aim point sits on the target (geometry re-checked), ~37 s earlier than the centre at the same spot", async () => {
+    const c = (await get(MSL)).j, l = (await get(`${MSL}&aim=litCentroid`)).j
+    expect(l.conventions.aim).toMatchObject({ point: "litCentroid" })
+    expect(c.track[0].aimOffset).toBeUndefined()
+    for (const p of l.track) {
+      expect(p.aimOffset * 60).toBeGreaterThan(6.8); expect(p.aimOffset * 60).toBeLessThan(6.9)   // 6.84′ (numeric integration: 6.85′)
+      expect(p.aimAngle).toBeGreaterThan(155.5); expect(p.aimAngle).toBeLessThan(156)
+    }
+    // the centroid is below and right of the centre, so the line of standing points moves: at the spot where the centroid is
+    // on the statue at 03:45:20 the centre gets there later. Locate it on the centre track (5 s samples, ~12 m/s).
+    const p = l.track.find((x: any) => x.time === "2026-11-17T03:45:20.000Z")
+    const xy = (q: any): [number, number] => [q.lon * 111320 * Math.cos(40.7 * Math.PI / 180), q.lat * 111132]
+    const [px, py] = xy(p)
+    let best = 0, bestD = Infinity
+    c.track.forEach((q: any, i: number) => { const [x, y] = xy(q), dd = Math.hypot(x - px, y - py); if (dd < bestD) { bestD = dd; best = i } })
+    const dt = (Date.parse(c.track[best].time) - Date.parse(p.time)) / 1000
+    expect(dt).toBeGreaterThan(30); expect(dt).toBeLessThan(45)
+  })
+  it("upper / lower: offset = the angular radius along the vertical; litCentroid needs the Moon", async () => {
+    const u = (await get(`${ELLIPSOID}&aim=upper`)).j, lo = (await get(`${ELLIPSOID}&aim=lower`)).j
+    for (const [t, ang] of [[u, 0], [lo, 180]] as const) for (const p of t.track) { expect(p.aimOffset).toBeCloseTo(p.angularRadius, 12); expect(p.aimAngle).toBe(ang) }
+    const s = await get("body=sun&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&start=2026-11-17T21:00:00Z&end=2026-11-17T21:10:00Z&aim=litCentroid")
+    expect(s.status).toBe(422)
+    expect((await get(`${ELLIPSOID}&aim=rim`)).status).toBe(400)
+  })
+  it("crossing: aim=upper is limb=upper; litCentroid moves the moonset by offset·cos(angle) / rate; aim with limb is refused", async () => {
+    const C = "http://x/v1/crossing?body=moon&lat=40.6985&lon=-73.999&height=5&heightRef=msl&altitude=0.87&altitudeType=apparent&direction=set&start=2026-11-16T00:00:00Z&end=2026-11-18T00:00:00Z"
+    const j = async (q: string) => { const r = await handler(new Request(C + q)); return { status: r.status, j: await r.json() as any } }
+    const up = await j("&aim=upper"), lim = await j("&limb=upper")
+    expect(up.j.crossings.map((x: any) => x.time)).toEqual(lim.j.crossings.map((x: any) => x.time))
+    const ctr = await j(""), lit = await j("&aim=litCentroid")
+    const a = ctr.j.crossings.find((x: any) => x.time.startsWith("2026-11-17T03")), b = lit.j.crossings.find((x: any) => x.time.startsWith("2026-11-17T03"))
+    const expectS = b.aimOffset * Math.cos(b.aimAngle * Math.PI / 180) / a.altitudeRate * 60   // offset is below the centre: negative / negative rate
+    expect(Math.abs((Date.parse(a.time) - Date.parse(b.time)) / 1000 - expectS)).toBeLessThan(2)
+    expect(lit.j.conventions.aim.point).toBe("litCentroid")
+    expect((await j("&aim=upper&limb=upper")).status).toBe(422)
+  })
+})

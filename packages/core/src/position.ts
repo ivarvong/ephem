@@ -1,8 +1,9 @@
 // /v1/position, as a pure function of (blocks, request). Output shape = @ephem/api PositionResponse minus provenance.
 import { type BlockSource, type BodyName, bodySsb, earthSsb } from "./ephemeris.ts"
-import { type Frame, type Geodetic, angularRadius, apparent, astrometric, ecliptic, frameAt, geocentricFrame, topocentric } from "./observe.ts"
+import { type Frame, type Geodetic, angularRadius, apparent, astrometric, ecliptic, enuOf, frameAt, geocentricFrame, topocentric } from "./observe.ts"
+import { litGeometry } from "./aim.ts"
 import { apparentAltitudeOf } from "./horizon.ts"
-import { DEG, add, dot, norm, sub, wrap360 } from "./linalg.ts"
+import { DEG, add, dot, mxv, norm, sub, wrap360 } from "./linalg.ts"
 import { type Instant, instant, isoMs } from "./time.ts"
 
 export interface PositionInput {
@@ -57,6 +58,13 @@ const topoRaDec = (f: Frame, v: readonly [number, number, number]) => {
   const tp = topocentric(f, v); return { a: tp.rightAscension * 15 * DEG, d: tp.declination * DEG }
 }
 
+/** Bright-limb direction seen from this observer, degrees clockwise from the local vertical (towards increasing azimuth):
+ *  the Sun's direction from the Moon projected on the sky (topocentric, aim.ts). null with the Moon at the zenith or nadir. */
+export const brightLimbFromVertical = (src: BlockSource, f: Frame): number | null => {
+  const m = apparent(src, f, "moon"), s = apparent(src, f, "sun")
+  return litGeometry(mxv(f.eo.C, m.v), mxv(f.eo.C, s.v), enuOf(f.geo).up, angularRadius("moon", m.distanceKm)).brightLimbAngleFromVertical
+}
+
 export const position = (src: BlockSource, input: PositionInput) => {
   const t = instant(input.utcMs, input.dut1 ?? 0)
   const T = input.temperature ?? 10, P = input.pressure ?? 1010, H = input.horizon ?? 0
@@ -65,6 +73,6 @@ export const position = (src: BlockSource, input: PositionInput) => {
     time: { utc: isoMs(t.utcMs), jdTT: t.jdTT, jdUT1: t.jdUT1, dut1: t.dut1, deltaT: t.deltaT },
     observer: { lat: input.geo.lat, lon: input.geo.lon, height: input.geo.height },
     sun: bodyPosition(src, f, g, "sun", T, P, H),
-    moon: { ...bodyPosition(src, f, g, "moon", T, P, H), phase: moonPhase(src, t) },
+    moon: { ...bodyPosition(src, f, g, "moon", T, P, H), phase: moonPhase(src, t), brightLimbAngleFromVertical: brightLimbFromVertical(src, f) },
   }
 }

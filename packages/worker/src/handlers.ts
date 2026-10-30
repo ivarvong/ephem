@@ -81,7 +81,7 @@ export const SkyLive = HttpApiBuilder.group(EphemApi, "sky", h => h
     if (startMs < SUPPORTED.fromMs || endMs >= SUPPORTED.toMs) return yield* new OutOfRange({ message: "the window is outside 1972-01-01 … 2149-12-31 UTC" })
     const { out, provenance } = yield* compute("crossing", blocksFor(jd(startMs), jd(endMs)), src =>
       crossingRequest(src, { startMs, endMs, lat: q.lat, lon: q.lon, height: q.height, heightRef: q.heightRef, body: q.body, altitude: q.altitude, altitudeType: q.altitudeType,
-        horizonProfile: q.horizonProfile, limb: q.limb, direction: q.direction, temperature: q.temperature, pressure: q.pressure, dut1: q.dut1, include: parseInclude(q.include) ?? undefined }),
+        horizonProfile: q.horizonProfile, limb: q.limb, direction: q.direction, temperature: q.temperature, pressure: q.pressure, dut1: q.dut1, include: parseInclude(q.include) ?? undefined, aim: q.aim }),
       o => ("ok" in o ? { "ephem.crossings": o.ok.crossings.length } : {}), geoidAt(q.lat))
     if ("error" in out) return yield* new InvalidInput({ message: out.error })
     return { ...out.ok, provenance }
@@ -91,12 +91,13 @@ export const SkyLive = HttpApiBuilder.group(EphemApi, "sky", h => h
     if (end <= start) return yield* new InvalidInput({ message: "end must be after start" })
     if ((end - start) / 1000 / step > 2000) return yield* new InvalidInput({ message: "at most 2000 steps per request" })
     if ((q.observerLat === undefined) !== (q.observerLon === undefined)) return yield* new InvalidInput({ message: "observerLat and observerLon go together" })
+    if (q.aim === "litCentroid" && q.body !== "moon") return yield* new InvalidInput({ message: "aim=litCentroid is the Moon's lit-area centroid: body must be moon" })
     const maxDistanceKm = q.maxDistanceKm ?? 20
     const observer = q.observerLat !== undefined && q.observerLon !== undefined ? { lat: q.observerLat, lon: q.observerLon } : undefined
     const { out, provenance } = yield* compute("alignment", blocksFor(jd(start), jd(end)), src =>
       alignmentRequest(src, { body: q.body, targetLat: q.targetLat, targetLon: q.targetLon, targetHeight: q.targetHeight, targetHeightRef: q.targetHeightRef,
         observerHeight: q.observerHeight, heightRef: q.heightRef, startMs: start, endMs: end, stepSeconds: step, maxDistanceKm,
-        temperature: q.temperature, pressure: q.pressure, dut1: q.dut1, observer, include: parseInclude(q.include) ?? undefined }),
+        temperature: q.temperature, pressure: q.pressure, dut1: q.dut1, observer, include: parseInclude(q.include) ?? undefined, aim: q.aim }),
       o => ({ "ephem.instants": Math.floor((end - start) / 1000 / step) + 1, "ephem.track_points": o.track.length, "ephem.iterations": o.track.reduce((s, p) => s + p.iterations, 0), "ephem.passes": o.fromObserver?.passes.length }),
       geoidAcross(alignmentLatRange(q.targetLat, maxDistanceKm), ...(observer ? [observer.lat] : [])))
     const track = out.track.map(({ iterations: _i, ...p }) => p)

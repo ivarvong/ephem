@@ -3,7 +3,7 @@
  "info": {
   "title": "Api",
   "version": "0.0.1",
-  "description": "Sun and Moon positions, day events, crossings and alignments from JPL DE440. Every response carries provenance (implementation, ephemeris, DE440 blocks read, compute time, cache tiers) and, for /v1/position, /v1/day, /v1/crossing and /v1/alignment, a conventions block with every threshold, horizon, refraction input and geoid value used.\n\nChanges on 2026-10-29 (API correctness pass):\n1. /v1/day rise and set now depend on height. An explicit `height` is metres above the WGS-84 ellipsoid (unchanged meaning), and the sea-horizon dip is taken from the height above mean sea level (EGM96). Example: in New York `height=0` is ≈ 33 m above sea level, so sunrise is ≈ 1 min earlier and sunset ≈ 1 min later than before. Pass `heightRef=msl` for a height above sea level (iOS `altitude`, maps); omit `height` to stand at sea level, which gives the previous times (Sun within 1 ms).\n2. `apparentAltitude` in /v1/position is now `number | null`: refraction is applied down to the observer's horizon (default the sea horizon, −dip) and the value is null below it or below −1.6963°. It used to repeat the true altitude below −1°. One refraction model now serves every endpoint (34′ at the horizon), so apparent altitudes are 1.3 % of the refraction lower than Skyfield's Bennett (0.45′ at 0°, 0.07′ at 10°), and /v1/crossing at apparent 0° (upper limb) equals /v1/day's sunrise.\n3. Unknown query parameters are rejected with 400 InvalidRequest (kind UnknownParameter, with the allowed list). They used to be ignored.\n4. New: /v1/crossing; on /v1/day `temperature`, `pressure`, `horizon` (sea | geometric | degrees), `horizonProfile`, `limb`; `heightRef` everywhere; `altitudeRate` and `azimuthRate` (°/min) in positions; observer heightMsl and geoidUndulation.\n5. New (2026-10-29): /v1/track, the sampled Sun and Moon azimuth / altitude / apparent altitude over a UTC grid in one immutable answer (what the homepage draws its paths from).\n\nChanges on 2026-10-30 (round-2 feedback):\n6. /v1/alignment: `heightRef` (observer) and `targetHeightRef`, each ellipsoid (default) | msl, as on /v1/crossing; `target` echoes the target's heights and geoid undulation; every track point has `altitudeRate`, `azimuthRate` (°/min, as /v1/position), `heightEllipsoid`, `heightMsl`, `geoidUndulation`; a `conventions` block. BEHAVIOUR CHANGE: without `observerHeight` the eye is now on the geoid (heightMsl 0, as on every other endpoint); it used to be 0 m above the ellipsoid (≈ 33 m below sea level in New York).\n7. `include=sun,phase` on /v1/alignment (per track point and pass) and /v1/crossing (per crossing): the Sun's azimuth, true and apparent altitude seen from that point, and the Moon's phase."
+  "description": "Sun and Moon positions, day events, crossings and alignments from JPL DE440. Every response carries provenance (implementation, ephemeris, DE440 blocks read, compute time, cache tiers) and, for /v1/position, /v1/day, /v1/crossing and /v1/alignment, a conventions block with every threshold, horizon, refraction input and geoid value used.\n\nChanges on 2026-10-29 (API correctness pass):\n1. /v1/day rise and set now depend on height. An explicit `height` is metres above the WGS-84 ellipsoid (unchanged meaning), and the sea-horizon dip is taken from the height above mean sea level (EGM96). Example: in New York `height=0` is ≈ 33 m above sea level, so sunrise is ≈ 1 min earlier and sunset ≈ 1 min later than before. Pass `heightRef=msl` for a height above sea level (iOS `altitude`, maps); omit `height` to stand at sea level, which gives the previous times (Sun within 1 ms).\n2. `apparentAltitude` in /v1/position is now `number | null`: refraction is applied down to the observer's horizon (default the sea horizon, −dip) and the value is null below it or below −1.6963°. It used to repeat the true altitude below −1°. One refraction model now serves every endpoint (34′ at the horizon), so apparent altitudes are 1.3 % of the refraction lower than Skyfield's Bennett (0.45′ at 0°, 0.07′ at 10°), and /v1/crossing at apparent 0° (upper limb) equals /v1/day's sunrise.\n3. Unknown query parameters are rejected with 400 InvalidRequest (kind UnknownParameter, with the allowed list). They used to be ignored.\n4. New: /v1/crossing; on /v1/day `temperature`, `pressure`, `horizon` (sea | geometric | degrees), `horizonProfile`, `limb`; `heightRef` everywhere; `altitudeRate` and `azimuthRate` (°/min) in positions; observer heightMsl and geoidUndulation.\n5. New (2026-10-29): /v1/track, the sampled Sun and Moon azimuth / altitude / apparent altitude over a UTC grid in one immutable answer (what the homepage draws its paths from).\n\nChanges on 2026-10-30 (round-2 feedback):\n6. /v1/alignment: `heightRef` (observer) and `targetHeightRef`, each ellipsoid (default) | msl, as on /v1/crossing; `target` echoes the target's heights and geoid undulation; every track point has `altitudeRate`, `azimuthRate` (°/min, as /v1/position), `heightEllipsoid`, `heightMsl`, `geoidUndulation`; a `conventions` block. BEHAVIOUR CHANGE: without `observerHeight` the eye is now on the geoid (heightMsl 0, as on every other endpoint); it used to be 0 m above the ellipsoid (≈ 33 m below sea level in New York).\n7. `include=sun,phase` on /v1/alignment (per track point and pass) and /v1/crossing (per crossing): the Sun's azimuth, true and apparent altitude seen from that point, and the Moon's phase.\n8. `aim=center|upper|lower|litCentroid` on /v1/alignment and /v1/crossing (litCentroid: the Moon's lit-area centroid, (4r/3π)(1 − cos i) towards the bright limb), with aimOffset/aimAngle per point; /v1/position moon.brightLimbAngleFromVertical (clockwise from the local vertical, topocentric). BEHAVIOUR CHANGE: none for existing queries (aim defaults to center)."
  },
  "paths": {
   "/v1/position": {
@@ -332,6 +332,17 @@
               "name"
              ],
              "additionalProperties": false
+            },
+            "brightLimbAngleFromVertical": {
+             "anyOf": [
+              {
+               "type": "number"
+              },
+              {
+               "type": "null"
+              }
+             ],
+             "description": "Bright limb seen from this observer: degrees clockwise from the local vertical (the direction towards the zenith) as the observer sees the sky, i.e. towards increasing azimuth; topocentric (phase.brightLimbAngle is geocentric, from celestial north through east). = 360° − (χ − q) with χ the topocentric bright-limb position angle and q the parallactic angle. null at the zenith."
             }
            },
            "required": [
@@ -346,7 +357,8 @@
             "angularRadius",
             "eclipticLongitude",
             "eclipticLatitude",
-            "phase"
+            "phase",
+            "brightLimbAngleFromVertical"
            ],
            "additionalProperties": false
           },
@@ -1376,6 +1388,20 @@
        "type": "string"
       },
       "required": false
+     },
+     {
+      "name": "aim",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "center",
+        "upper",
+        "lower",
+        "litCentroid"
+       ]
+      },
+      "required": false
      }
     ],
     "security": [],
@@ -1543,6 +1569,21 @@
               ],
               "additionalProperties": false,
               "description": "include=phase: the Moon's geocentric phase at this instant, as /v1/position."
+             },
+             "aimOffset": {
+              "type": "number",
+              "description": "With aim: angular distance from the disc centre to the aim point, degrees (the angular radius for a limb)."
+             },
+             "aimAngle": {
+              "anyOf": [
+               {
+                "type": "number"
+               },
+               {
+                "type": "null"
+               }
+              ],
+              "description": "With aim: direction centre → aim point, degrees clockwise from the local vertical as the observer sees it (0 = upper limb, 180 = lower; litCentroid = the bright limb's direction)."
              }
             },
             "required": [
@@ -1737,6 +1778,28 @@
             },
             "include": {
              "type": "string"
+            },
+            "aim": {
+             "type": "object",
+             "properties": {
+              "point": {
+               "type": "string",
+               "enum": [
+                "center",
+                "upper",
+                "lower",
+                "litCentroid"
+               ]
+              },
+              "definition": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "point",
+              "definition"
+             ],
+             "additionalProperties": false
             }
            },
            "required": [
@@ -1998,6 +2061,20 @@
        "type": "string"
       },
       "required": false
+     },
+     {
+      "name": "aim",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "center",
+        "upper",
+        "lower",
+        "litCentroid"
+       ]
+      },
+      "required": false
      }
     ],
     "security": [],
@@ -2186,6 +2263,21 @@
               ],
               "additionalProperties": false,
               "description": "include=phase: the Moon's geocentric phase at this instant, as /v1/position."
+             },
+             "aimOffset": {
+              "type": "number",
+              "description": "With aim: angular distance from the disc centre to the aim point, degrees (the angular radius for a limb)."
+             },
+             "aimAngle": {
+              "anyOf": [
+               {
+                "type": "number"
+               },
+               {
+                "type": "null"
+               }
+              ],
+              "description": "With aim: direction centre → aim point, degrees clockwise from the local vertical as the observer sees it (0 = upper limb, 180 = lower; litCentroid = the bright limb's direction)."
              }
             },
             "required": [
@@ -2396,6 +2488,28 @@
             },
             "include": {
              "type": "string"
+            },
+            "aim": {
+             "type": "object",
+             "properties": {
+              "point": {
+               "type": "string",
+               "enum": [
+                "center",
+                "upper",
+                "lower",
+                "litCentroid"
+               ]
+              },
+              "definition": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "point",
+              "definition"
+             ],
+             "additionalProperties": false
             },
             "observerHeightRef": {
              "type": "string",

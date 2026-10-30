@@ -3,5 +3,5 @@
 // or a loopback response format changes. test/golden.test.ts fails if answers change while this does not
 // (`npm run golden:record` re-records after a bump). It scopes every loopback key (src/loopback.ts):
 //   Api /v<N>/<path?sorted query> · BlockStore /block/v<N>/<sha16>/<i> · MetarFeed /feed/v<N>/metars.cache.csv.gz
-export const CACHE_VERSION = 4   // 2: one refraction model (34′-anchored) for every endpoint · 3: live bump→MISS check (answers unchanged) · 4: alignment heightRef/targetHeightRef, conventions, rates, eye on the geoid by default
+export const CACHE_VERSION = 5   // 2: one refraction model (34′-anchored) for every endpoint · 3: live bump→MISS check (answers unchanged) · 4: alignment heightRef/targetHeightRef, conventions, rates, eye on the geoid by default · 5: position moon.brightLimbAngleFromVertical
 export const CACHE_TAG = `v${CACHE_VERSION}`
