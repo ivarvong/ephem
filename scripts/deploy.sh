@@ -13,7 +13,16 @@ cleanup() { git -C "$ROOT" worktree remove --force "$WT" >/dev/null 2>&1 || true
 trap cleanup EXIT
 
 git -C "$ROOT" worktree add --detach -q "$WT" "$SHA"
-ln -s "$ROOT/node_modules" "$WT/node_modules"
+# node_modules: link every package from the main checkout EXCEPT the workspace packages (@ephem/*). Those are relative
+# symlinks (../../packages/core), so linking the whole directory resolved @ephem/core and @ephem/api to the shared tree's
+# uncommitted files (found 2026-10-30); here they point at this worktree's packages.
+mkdir "$WT/node_modules"
+for e in "$ROOT"/node_modules/* "$ROOT"/node_modules/.[!.]*; do
+  [ -e "$e" ] || continue; n=$(basename "$e"); [ "$n" = "@ephem" ] && continue
+  ln -s "$e" "$WT/node_modules/$n"
+done
+mkdir "$WT/node_modules/@ephem"
+for e in "$ROOT"/node_modules/@ephem/*; do n=$(basename "$e"); ln -s "$WT/packages/$n" "$WT/node_modules/@ephem/$n"; done
 for p in "$ROOT"/packages/*/; do
   n=$(basename "$p"); [ -d "$p/node_modules" ] || continue
   mkdir -p "$WT/packages/$n/node_modules/.bin"
