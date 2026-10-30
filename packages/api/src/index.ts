@@ -1,7 +1,10 @@
 // @ephem/api — the contract. A value, not a server: implementations (the Worker, the Skyfield oracle)
 // conform to it, and the cross-check harness compares them field by field.
-import { Schema as S } from "effect"
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api"
+import * as S from "effect/Schema"
+import * as HttpApi from "effect/http-api/HttpApi"
+import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint"
+import * as HttpApiGroup from "effect/http-api/HttpApiGroup"
+import * as OpenApi from "effect/http-api/OpenApi"
 
 // ─────────────────────────────── shared conventions ───────────────────────────────
 export const CONVENTIONS = {

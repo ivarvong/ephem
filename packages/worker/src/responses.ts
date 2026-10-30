@@ -8,8 +8,11 @@
 //                 └─ live (position / magnetic without time): computed here; caching an answer about "now" buys nothing
 //
 // The same router runs in both entrypoints; the Edge role says which side of the loopback this is.
-import { Context, Effect } from "effect"
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
+import * as Context from "effect/Context"
+import * as Effect from "effect/Effect"
+import * as HttpRouter from "effect/http/HttpRouter"
+import * as HttpServerRequest from "effect/http/HttpServerRequest"
+import * as HttpServerResponse from "effect/http/HttpServerResponse"
 
 export const IMMUTABLE = "public, max-age=31536000, immutable"
 const NO_STORE = "no-store"

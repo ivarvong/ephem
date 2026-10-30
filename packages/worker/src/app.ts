@@ -1,7 +1,12 @@
 // Assemble the HTTP app from the contract, the handlers, and a Blocks implementation; expose a fetch-style handler.
-import { Context, Effect, FileSystem, Layer, Path } from "effect"
-import { Etag, HttpPlatform, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
-import { HttpApiBuilder, HttpApiError } from "effect/http-api"
+import * as Context from "effect/Context"
+import * as Effect from "effect/Effect"
+import * as Layer from "effect/Layer"
+import * as HttpRouter from "effect/http/HttpRouter"
+import * as HttpServerRequest from "effect/http/HttpServerRequest"
+import * as HttpServerResponse from "effect/http/HttpServerResponse"
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder"
+import * as HttpApiError from "effect/http-api/HttpApiError"
 import { EphemApi, QUERY_PARAMS } from "@ephem/api"
 import { HandlersLive } from "./handlers.ts"
 import type { Blocks } from "./blocks.ts"
@@ -13,7 +18,8 @@ import { WeatherNone, type Weather } from "./weather.ts"
 import { Mcp } from "./mcp.ts"
 import { RequestLog, RequestLogging, type RequestLogSink } from "./requestlog.ts"
 
-const PlatformWeb = Layer.mergeAll(HttpPlatform.layer, FileSystem.layerNoop({}), Path.layer, Etag.layerWeak).pipe(Layer.provideMerge(FileSystem.layerNoop({})))
+// No HttpPlatform / FileSystem / Path / Etag layers (HttpServer.layerServices): only file responses and on-disk multipart
+// need them, and nothing here serves files. Providing them kept mime tables, Path and FileSystem in the bundle (2026-10-30).
 
 /** CORS + Server-Timing on every response: the API is meant to be called from browsers and compared across deployments. */
 const CORS = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, POST, OPTIONS", "access-control-allow-headers": "*", "access-control-max-age": "86400" } as const
@@ -51,7 +57,7 @@ export const makeApp = (blocks: Layer.Layer<Blocks>, edge: Role = { role: "local
     Gateway,
     Mcp,
     TracerLive,
-  ).pipe(Layer.provide(ExplainSchemaErrors.layer), Layer.provide(HandlersLive), Layer.provide(weather), Layer.provide(blocks), Layer.provide(geoid), Layer.provide(Layer.succeed(Edge, edge)), Layer.provide(PlatformWeb))
+  ).pipe(Layer.provide(ExplainSchemaErrors.layer), Layer.provide(HandlersLive), Layer.provide(weather), Layer.provide(blocks), Layer.provide(geoid), Layer.provide(Layer.succeed(Edge, edge)))
 
 export const makeHandler = (blocks: Layer.Layer<Blocks>, edge?: Role, weather?: Layer.Layer<Weather>, geoid?: Layer.Layer<Geoid>) => {
   const { handler } = HttpRouter.toWebHandler(makeApp(blocks, edge, weather, geoid) as Layer.Layer<never, never, HttpRouter.HttpRouter>, { disableLogger: true })

@@ -3,7 +3,10 @@
 // Workers can only nest a span under the one active at creation (enterSpan callbacks), which does not fit fibers; so each Effect
 // span becomes a startSpan child of the request span, carrying effect.span_id / effect.parent_id / effect.parent to rebuild the tree.
 // Timers do not advance during pure compute in Workers, so compute spans read 0 ms: their attributes carry deterministic work counts.
-import { Exit, Layer, Option, Tracer } from "effect"
+import * as Exit from "effect/Exit"
+import * as Layer from "effect/Layer"
+import * as Option from "effect/Option"
+import * as Tracer from "effect/Tracer"
 
 interface WSpan { readonly isTraced: boolean; setAttribute(k: string, v: string | number | boolean): unknown; setStatus(s: { code: "ok" | "error" }): unknown; end(): void }
 export interface Tracing { startSpan(name: string): WSpan }

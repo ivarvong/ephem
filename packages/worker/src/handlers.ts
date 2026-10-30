@@ -1,6 +1,8 @@
 // HttpApi handlers: decode → compute block set → load → pure core → response with diagnostics.
-import { Clock, Effect, Layer } from "effect"
-import { HttpApiBuilder } from "effect/http-api"
+import * as Clock from "effect/Clock"
+import * as Effect from "effect/Effect"
+import * as Layer from "effect/Layer"
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder"
 import { EphemApi, InvalidInput, OutOfRange } from "@ephem/api"
 import { SUPPORTED, TRACK_DEFAULT_STEP_S, alignment, blocksFor, crossingRequest, crossingWindow, dayRequest, instant, instrumented, isValidZone, localMidnight, nextDate, positionRequest, trackRequest, trackWindowError } from "@ephem/core"
 import { Blocks, blocksCache } from "./blocks.ts"

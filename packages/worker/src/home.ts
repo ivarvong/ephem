@@ -1,7 +1,10 @@
 // GET /: the live sky over wherever the visitor is. Location comes from Cloudflare (request.cf) unless ?lat&lon override it;
 // every number on the page comes from this Worker's own /v1 API, fetched by the page from the same origin.
-import { Effect, Option } from "effect"
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
+import * as Effect from "effect/Effect"
+import * as Option from "effect/Option"
+import * as HttpRouter from "effect/http/HttpRouter"
+import * as HttpServerRequest from "effect/http/HttpServerRequest"
+import * as HttpServerResponse from "effect/http/HttpServerResponse"
 import { isValidZone } from "@ephem/core"
 
 interface CfLocation {

@@ -5,8 +5,15 @@
 // changes a column (test/requestlog.test.ts pins them).
 //
 // Privacy: no IP, no raw path or query string, no full user agent. lat/lon are rounded to 0.01° (~1 km).
-import { Cause, Context, Effect, Exit, Option, Tracer } from "effect"
-import { HttpRouter, HttpServerError, HttpServerRequest } from "effect/http"
+import * as Cause from "effect/Cause"
+import * as Context from "effect/Context"
+import * as Effect from "effect/Effect"
+import * as Exit from "effect/Exit"
+import * as Option from "effect/Option"
+import * as Tracer from "effect/Tracer"
+import * as HttpRouter from "effect/http/HttpRouter"
+import * as HttpServerError from "effect/http/HttpServerError"
+import * as HttpServerRequest from "effect/http/HttpServerRequest"
 
 declare const __EPHEM_BUILD__: string
 const BUILD = typeof __EPHEM_BUILD__ === "string" ? __EPHEM_BUILD__ : "dev"

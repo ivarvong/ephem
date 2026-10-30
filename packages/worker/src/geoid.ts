@@ -3,7 +3,9 @@
 // needs (geoidBandsFor), fetched through the BlockStore loopback: Workers Caching (immutable) in front of an exact R2 range
 // read of the one sha-addressed object in bucket ephem-geoid (scripts/geoid-r2.ts). Every band is checked against its
 // sha256 in egm96-bands.ts before it is cached or used; any failure is GeoidUnavailable (503), never a guessed height.
-import { Context, Effect, Layer } from "effect"
+import * as Context from "effect/Context"
+import * as Effect from "effect/Effect"
+import * as Layer from "effect/Layer"
 import { EGM96_BANDS, GEOID_BANDS, geoidBandsFor, setGeoidSource } from "@ephem/core"
 import { GeoidUnavailable } from "@ephem/api"
 import { CACHE_TAG } from "./cache-version.ts"

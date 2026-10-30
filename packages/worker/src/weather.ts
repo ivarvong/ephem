@@ -1,7 +1,10 @@
 // /v1/weather and /v1/magnetic. The weather lookup is a plain Effect service (Weather.nearest), so any front end (the HTTP
 // handler, an MCP tool) gets the same cache tiers, span attributes and log line.
-import { Clock, Context, Effect, Layer } from "effect"
-import { HttpApiBuilder } from "effect/http-api"
+import * as Clock from "effect/Clock"
+import * as Context from "effect/Context"
+import * as Effect from "effect/Effect"
+import * as Layer from "effect/Layer"
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder"
 import { EphemApi, InvalidInput, OutOfRange, WeatherUnavailable, type WeatherResponse } from "@ephem/api"
 import { SUPPORTED, WMM_VALID, decimalYear, wmm } from "@ephem/core"
 import { nearest, type Metar } from "./metar.ts"

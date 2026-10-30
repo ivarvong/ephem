@@ -2,7 +2,9 @@
 //   L1 in-isolate LRU · then one fetch per missing block from a BlockFetch. In prod that is the BlockStore entrypoint over
 //   ctx.exports, i.e. Workers Caching (lower tier → upper tier) in front of an exact R2 range read; tests and the dev
 //   server read the bytes directly. The pure core never sees any of this.
-import { Context, Effect, Layer } from "effect"
+import * as Context from "effect/Context"
+import * as Effect from "effect/Effect"
+import * as Layer from "effect/Layer"
 import { DE440, type BlockSource } from "@ephem/core"
 import { CACHE_TAG } from "./cache-version.ts"
 

@@ -11,8 +11,12 @@
 // Tools are the REST endpoints: arguments are decoded with the Type side of the endpoint's own query schema (so inputSchema is
 // generated from it and cannot drift), encoded back to the query string with the same schema, and run through the router's own
 // /v1/* handler in this fiber, so tools/call nests the handler, compute.* and blocks.load spans and shares the response cache.
-import { Data, Effect, Schema as S } from "effect"
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
+import * as Data from "effect/Data"
+import * as Effect from "effect/Effect"
+import * as S from "effect/Schema"
+import * as HttpRouter from "effect/http/HttpRouter"
+import * as HttpServerRequest from "effect/http/HttpServerRequest"
+import * as HttpServerResponse from "effect/http/HttpServerResponse"
 import {
   AlignmentQuery, AlignmentResponse, CrossingQuery, CrossingResponse, DayQuery, DayResponse, PositionQuery, PositionResponse, TrackQuery, TrackResponse, WeatherQuery, WeatherResponse,
 } from "@ephem/api"
