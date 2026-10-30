@@ -458,6 +458,13 @@ independent implementation), then core/worker; then regenerate fixtures and run 
 
 ## 17. Open items
 
+- **Target extent (customer round-2 #4), designed, not built:** target = vertical segment base..top with half-width w
+  perpendicular to the sight line → for a fixed observer an angular box az ∈ A ± atan(w/D), apparent elevation
+  [e_base, e_top]; contact / clear = first / last instant the disc (aim point, radius r) is within r of the box. "Full overlap"
+  needs the customer's definition (disc inside the box is impossible for the Statue of Liberty, 0.14° wide vs a 0.5° disc;
+  the box's width inside the disc at the target's height is the silhouette case). It belongs with /v1/alignment/search,
+  where intervals are per standing segment, so it waits for that endpoint.
+
 - `GET /v1/time` with server UTC, current DUT1 and the leap table, for client clock sync (NTP-style min-RTT exchange over
   HTTPS) — the device clock is now the largest input error for a real-time client. Natural host: a Durable Object that
   refreshes IERS data by alarm (§12.1).
