@@ -26,7 +26,7 @@ export class Edge extends Context.Service<Edge, Role>()("@ephem/worker/Edge") {}
 
 /** A pure function of the query (and CACHE_VERSION, which is in the Api's cache key), so a year is safe. */
 export const deterministic = (url: URL): boolean =>
-  url.pathname === "/v1/day" || url.pathname === "/v1/alignment" || url.pathname === "/v1/track" ||
+  url.pathname === "/v1/day" || url.pathname === "/v1/alignment" || url.pathname === "/v1/track" || url.pathname === "/v1/sightline" ||
   (url.pathname === "/v1/crossing" && (url.searchParams.has("start") || url.searchParams.has("date"))) ||
   ((url.pathname === "/v1/position" || url.pathname === "/v1/magnetic") && url.searchParams.has("time"))
 

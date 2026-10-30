@@ -30,6 +30,7 @@ export const CONVENTIONS = {
   rates: "altitudeRate, azimuthRate: degrees per minute, symmetric difference over ±10 s.",
   unknownParameters: "Every endpoint rejects query parameters it does not define with 400 InvalidRequest, listing the allowed ones.",
   track: "/v1/track: the Sun's and Moon's azimuth, true altitude and apparent altitude at every point of a UTC grid (start, end on multiples of stepSeconds since 1970-01-01T00:00Z), columnar; each sample equals /v1/position's values at that instant bit for bit. Bounded: stepSeconds 60–3600, at most 8 days and 1 441 samples.",
+  sightline: "/v1/sightline: the sight line's height above sea level against ground distance from an eye to a target (straight chord between WGS-84 ECEF points, so Earth's curvature is included; and the refracted ray with k = 0.13, which runs k·s₁·s₂/(2R) higher), plus each obstacle point's clearance. Terrestrial refraction is modelled as that constant coefficient only.",
   passes: "With observerLat/Lon: instants when the body's azimuth equals the azimuth to the target (±180° wraps excluded); altitudeOffset tells whether it is above (+) or behind (−) the target top.",
 } as const
 
@@ -294,6 +295,44 @@ export const AlignmentResponse = S.Struct({
   provenance: Provenance,
 })
 
+// ─────────────────────────────── /v1/sightline ───────────────────────────────
+/** "lat:lon:heightMsl,…" (degrees, degrees, metres above sea level), at most 100 points. */
+export const ObstaclesParam = S.String.check(S.isPattern(/^\s*-?\d+(\.\d+)?:-?\d+(\.\d+)?:-?\d+(\.\d+)?(\s*,\s*-?\d+(\.\d+)?:-?\d+(\.\d+)?:-?\d+(\.\d+)?){0,99}\s*$/))
+export const SightlineQuery = {
+  observerLat: num(Lat), observerLon: num(Lon),
+  observerHeight: optNum(Height),            // eye height, metres (heightRef); default: the eye on the geoid (heightMsl 0)
+  heightRef: S.optionalKey(HeightRef),       // default ellipsoid
+  targetLat: num(Lat), targetLon: num(Lon),
+  targetHeight: num(Height),                 // metres (targetHeightRef)
+  targetHeightRef: S.optionalKey(HeightRef), // default ellipsoid
+  samples: S.optionalKey(S.FiniteFromString.pipe(S.decodeTo(S.Int.check(S.isBetween({ minimum: 2, maximum: 1001 }))))),   // default 101
+  obstacles: S.optionalKey(ObstaclesParam),  // lat:lon:heightMsl,… (≤ 100): clearance of the line over each
+}
+export const SightlinePoint = S.Struct({
+  distanceKm: S.Finite.annotate(d0("Geodesic ground distance from the observer to the foot of this point.")),
+  lat: Lat, lon: Lon,
+  heightMsl: S.Finite.annotate(d0("The straight (unrefracted) sight line's height above the EGM96 geoid here, metres; Earth's curvature included.")),
+  refractedHeightMsl: S.Finite.annotate(d0("The refracted ray's height here (terrestrial refraction k = 0.13): heightMsl + k·s₁·s₂/(2R).")),
+  heightEllipsoid: S.Finite.annotate(d0("The straight line's WGS-84 geodetic height here, metres.")),
+  geoidUndulation: S.Finite.annotate(d0("EGM96 N at the foot: heightEllipsoid = heightMsl + geoidUndulation.")),
+})
+export const SightlineObstacle = S.Struct({
+  lat: Lat, lon: Lon, heightMsl: S.Finite,
+  distanceKm: S.Finite.annotate(d0("Along the line from the observer (projection).")),
+  crossTrackM: S.Finite.annotate(d0("Offset from the line, metres, positive to the right looking at the target.")),
+  lineHeightMsl: S.NullOr(S.Finite), refractedLineHeightMsl: S.NullOr(S.Finite),
+  clearanceM: S.NullOr(S.Finite).annotate(d0("Straight line − obstacle height, metres; negative = the obstacle is above the line. Null when not between the ends.")),
+  refractedClearanceM: S.NullOr(S.Finite),
+  blocks: S.NullOr(S.Boolean).annotate(d0("refractedClearanceM < 0.")),
+})
+export const SightlineResponse = S.Struct({
+  observer: SkyObserver, target: SkyObserver,
+  distanceKm: S.Finite, azimuth: Degrees.annotate(d0("Forward geodesic azimuth observer → target.")),
+  samples: S.Int, profile: S.Array(SightlinePoint), obstacles: S.Array(SightlineObstacle),
+  conventions: S.Struct({ definition: S.String, terrestrialRefraction: S.String, obstacles: S.String, heights: S.String, terrestrialRefractionK: S.Finite, geoid: GeoidConventions }),
+  provenance: Provenance,
+})
+
 // ─────────────────────────────── /v1/track ───────────────────────────────
 export const TrackQuery = {
   ...skyObserverQuery,
@@ -393,6 +432,7 @@ export const SkyGroup = HttpApiGroup.make("sky").add(
   HttpApiEndpoint.get("day", "/v1/day", { query: DayQuery, success: DayResponse, error: [OutOfRange, InvalidInput, GeoidUnavailable] }),
   HttpApiEndpoint.get("crossing", "/v1/crossing", { query: CrossingQuery, success: CrossingResponse, error: [OutOfRange, InvalidInput, GeoidUnavailable] }),
   HttpApiEndpoint.get("alignment", "/v1/alignment", { query: AlignmentQuery, success: AlignmentResponse, error: [OutOfRange, InvalidInput, GeoidUnavailable] }),
+  HttpApiEndpoint.get("sightline", "/v1/sightline", { query: SightlineQuery, success: SightlineResponse, error: [InvalidInput, GeoidUnavailable] }),
   HttpApiEndpoint.get("track", "/v1/track", { query: TrackQuery, success: TrackResponse, error: [OutOfRange, InvalidInput, GeoidUnavailable] }),
 )
 export const EarthGroup = HttpApiGroup.make("earth").add(
@@ -416,6 +456,7 @@ export const API_DESCRIPTION = [
   "6. /v1/alignment: `heightRef` (observer) and `targetHeightRef`, each ellipsoid (default) | msl, as on /v1/crossing; `target` echoes the target's heights and geoid undulation; every track point has `altitudeRate`, `azimuthRate` (°/min, as /v1/position), `heightEllipsoid`, `heightMsl`, `geoidUndulation`; a `conventions` block. BEHAVIOUR CHANGE: without `observerHeight` the eye is now on the geoid (heightMsl 0, as on every other endpoint); it used to be 0 m above the ellipsoid (≈ 33 m below sea level in New York).",
   "7. `include=sun,phase` on /v1/alignment (per track point and pass) and /v1/crossing (per crossing): the Sun's azimuth, true and apparent altitude seen from that point, and the Moon's phase.",
   "8. `aim=center|upper|lower|litCentroid` on /v1/alignment and /v1/crossing (litCentroid: the Moon's lit-area centroid, (4r/3π)(1 − cos i) towards the bright limb), with aimOffset/aimAngle per point; /v1/position moon.brightLimbAngleFromVertical (clockwise from the local vertical, topocentric). BEHAVIOUR CHANGE: none for existing queries (aim defaults to center).",
+  "9. New: /v1/sightline (the sight line's height above sea level against distance, with Earth curvature and k = 0.13 refraction, and obstacle clearances). /docs is plain HTML (no JavaScript needed); /llms.txt; the Scalar reference moved to /docs/interactive.",
 ].join("\n")
 
 /** Unknown query parameters are an error, not silently ignored (a dropped `temperature` changes nothing and says nothing). */
@@ -425,13 +466,14 @@ export const EphemApi = HttpApi.make("ephem").add(SkyGroup, EarthGroup, MetaGrou
 /** The allowed query parameters per path, from the endpoint schemas (for error messages). */
 export const QUERY_PARAMS: Readonly<Record<string, ReadonlyArray<string>>> = {
   "/v1/position": Object.keys(PositionQuery), "/v1/day": Object.keys(DayQuery), "/v1/crossing": Object.keys(CrossingQuery),
-  "/v1/alignment": Object.keys(AlignmentQuery), "/v1/track": Object.keys(TrackQuery), "/v1/magnetic": Object.keys(MagneticQuery), "/v1/weather": Object.keys(WeatherQuery), "/healthz": [],
+  "/v1/alignment": Object.keys(AlignmentQuery), "/v1/sightline": Object.keys(SightlineQuery), "/v1/track": Object.keys(TrackQuery), "/v1/magnetic": Object.keys(MagneticQuery), "/v1/weather": Object.keys(WeatherQuery), "/healthz": [],
 }
 
 export type PositionResponse = typeof PositionResponse.Type
 export type DayResponse = typeof DayResponse.Type
 export type CrossingResponse = typeof CrossingResponse.Type
 export type AlignmentResponse = typeof AlignmentResponse.Type
+export type SightlineResponse = typeof SightlineResponse.Type
 export type TrackResponse = typeof TrackResponse.Type
 export type BodyPosition = typeof BodyPosition.Type
 export type WeatherResponse = typeof WeatherResponse.Type

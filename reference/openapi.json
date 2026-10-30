@@ -3,7 +3,7 @@
  "info": {
   "title": "Api",
   "version": "0.0.1",
-  "description": "Sun and Moon positions, day events, crossings and alignments from JPL DE440. Every response carries provenance (implementation, ephemeris, DE440 blocks read, compute time, cache tiers) and, for /v1/position, /v1/day, /v1/crossing and /v1/alignment, a conventions block with every threshold, horizon, refraction input and geoid value used.\n\nChanges on 2026-10-29 (API correctness pass):\n1. /v1/day rise and set now depend on height. An explicit `height` is metres above the WGS-84 ellipsoid (unchanged meaning), and the sea-horizon dip is taken from the height above mean sea level (EGM96). Example: in New York `height=0` is ≈ 33 m above sea level, so sunrise is ≈ 1 min earlier and sunset ≈ 1 min later than before. Pass `heightRef=msl` for a height above sea level (iOS `altitude`, maps); omit `height` to stand at sea level, which gives the previous times (Sun within 1 ms).\n2. `apparentAltitude` in /v1/position is now `number | null`: refraction is applied down to the observer's horizon (default the sea horizon, −dip) and the value is null below it or below −1.6963°. It used to repeat the true altitude below −1°. One refraction model now serves every endpoint (34′ at the horizon), so apparent altitudes are 1.3 % of the refraction lower than Skyfield's Bennett (0.45′ at 0°, 0.07′ at 10°), and /v1/crossing at apparent 0° (upper limb) equals /v1/day's sunrise.\n3. Unknown query parameters are rejected with 400 InvalidRequest (kind UnknownParameter, with the allowed list). They used to be ignored.\n4. New: /v1/crossing; on /v1/day `temperature`, `pressure`, `horizon` (sea | geometric | degrees), `horizonProfile`, `limb`; `heightRef` everywhere; `altitudeRate` and `azimuthRate` (°/min) in positions; observer heightMsl and geoidUndulation.\n5. New (2026-10-29): /v1/track, the sampled Sun and Moon azimuth / altitude / apparent altitude over a UTC grid in one immutable answer (what the homepage draws its paths from).\n\nChanges on 2026-10-30 (round-2 feedback):\n6. /v1/alignment: `heightRef` (observer) and `targetHeightRef`, each ellipsoid (default) | msl, as on /v1/crossing; `target` echoes the target's heights and geoid undulation; every track point has `altitudeRate`, `azimuthRate` (°/min, as /v1/position), `heightEllipsoid`, `heightMsl`, `geoidUndulation`; a `conventions` block. BEHAVIOUR CHANGE: without `observerHeight` the eye is now on the geoid (heightMsl 0, as on every other endpoint); it used to be 0 m above the ellipsoid (≈ 33 m below sea level in New York).\n7. `include=sun,phase` on /v1/alignment (per track point and pass) and /v1/crossing (per crossing): the Sun's azimuth, true and apparent altitude seen from that point, and the Moon's phase.\n8. `aim=center|upper|lower|litCentroid` on /v1/alignment and /v1/crossing (litCentroid: the Moon's lit-area centroid, (4r/3π)(1 − cos i) towards the bright limb), with aimOffset/aimAngle per point; /v1/position moon.brightLimbAngleFromVertical (clockwise from the local vertical, topocentric). BEHAVIOUR CHANGE: none for existing queries (aim defaults to center)."
+  "description": "Sun and Moon positions, day events, crossings and alignments from JPL DE440. Every response carries provenance (implementation, ephemeris, DE440 blocks read, compute time, cache tiers) and, for /v1/position, /v1/day, /v1/crossing and /v1/alignment, a conventions block with every threshold, horizon, refraction input and geoid value used.\n\nChanges on 2026-10-29 (API correctness pass):\n1. /v1/day rise and set now depend on height. An explicit `height` is metres above the WGS-84 ellipsoid (unchanged meaning), and the sea-horizon dip is taken from the height above mean sea level (EGM96). Example: in New York `height=0` is ≈ 33 m above sea level, so sunrise is ≈ 1 min earlier and sunset ≈ 1 min later than before. Pass `heightRef=msl` for a height above sea level (iOS `altitude`, maps); omit `height` to stand at sea level, which gives the previous times (Sun within 1 ms).\n2. `apparentAltitude` in /v1/position is now `number | null`: refraction is applied down to the observer's horizon (default the sea horizon, −dip) and the value is null below it or below −1.6963°. It used to repeat the true altitude below −1°. One refraction model now serves every endpoint (34′ at the horizon), so apparent altitudes are 1.3 % of the refraction lower than Skyfield's Bennett (0.45′ at 0°, 0.07′ at 10°), and /v1/crossing at apparent 0° (upper limb) equals /v1/day's sunrise.\n3. Unknown query parameters are rejected with 400 InvalidRequest (kind UnknownParameter, with the allowed list). They used to be ignored.\n4. New: /v1/crossing; on /v1/day `temperature`, `pressure`, `horizon` (sea | geometric | degrees), `horizonProfile`, `limb`; `heightRef` everywhere; `altitudeRate` and `azimuthRate` (°/min) in positions; observer heightMsl and geoidUndulation.\n5. New (2026-10-29): /v1/track, the sampled Sun and Moon azimuth / altitude / apparent altitude over a UTC grid in one immutable answer (what the homepage draws its paths from).\n\nChanges on 2026-10-30 (round-2 feedback):\n6. /v1/alignment: `heightRef` (observer) and `targetHeightRef`, each ellipsoid (default) | msl, as on /v1/crossing; `target` echoes the target's heights and geoid undulation; every track point has `altitudeRate`, `azimuthRate` (°/min, as /v1/position), `heightEllipsoid`, `heightMsl`, `geoidUndulation`; a `conventions` block. BEHAVIOUR CHANGE: without `observerHeight` the eye is now on the geoid (heightMsl 0, as on every other endpoint); it used to be 0 m above the ellipsoid (≈ 33 m below sea level in New York).\n7. `include=sun,phase` on /v1/alignment (per track point and pass) and /v1/crossing (per crossing): the Sun's azimuth, true and apparent altitude seen from that point, and the Moon's phase.\n8. `aim=center|upper|lower|litCentroid` on /v1/alignment and /v1/crossing (litCentroid: the Moon's lit-area centroid, (4r/3π)(1 − cos i) towards the bright limb), with aimOffset/aimAngle per point; /v1/position moon.brightLimbAngleFromVertical (clockwise from the local vertical, topocentric). BEHAVIOUR CHANGE: none for existing queries (aim defaults to center).\n9. New: /v1/sightline (the sight line's height above sea level against distance, with Earth curvature and k = 0.13 refraction, and obstacle clearances). /docs is plain HTML (no JavaScript needed); /llms.txt; the Scalar reference moved to /docs/interactive."
  },
  "paths": {
   "/v1/position": {
@@ -2681,6 +2681,521 @@
            "$ref": "#/components/schemas/InvalidInputEncoded"
           }
          ]
+        }
+       }
+      }
+     },
+     "503": {
+      "description": "GeoidUnavailable",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/GeoidUnavailableEncoded"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/sightline": {
+   "get": {
+    "tags": [
+     "sky"
+    ],
+    "operationId": "sky.sightline",
+    "parameters": [
+     {
+      "name": "observerLat",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "observerLon",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "observerHeight",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "heightRef",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "ellipsoid",
+        "msl"
+       ]
+      },
+      "required": false
+     },
+     {
+      "name": "targetLat",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "targetLon",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "targetHeight",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": true
+     },
+     {
+      "name": "targetHeightRef",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "ellipsoid",
+        "msl"
+       ]
+      },
+      "required": false
+     },
+     {
+      "name": "samples",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     },
+     {
+      "name": "obstacles",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "required": false
+     }
+    ],
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "Success",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "observer": {
+           "type": "object",
+           "properties": {
+            "lat": {
+             "type": "number",
+             "minimum": -90,
+             "maximum": 90
+            },
+            "lon": {
+             "type": "number",
+             "minimum": -180,
+             "maximum": 180
+            },
+            "height": {
+             "type": "number",
+             "description": "Metres above the WGS-84 ellipsoid (same as heightEllipsoid; kept for compatibility)."
+            },
+            "heightEllipsoid": {
+             "type": "number"
+            },
+            "heightMsl": {
+             "type": "number",
+             "description": "Metres above the EGM96 geoid (≈ mean sea level)."
+            },
+            "geoidUndulation": {
+             "type": "number",
+             "description": "EGM96 N, metres: heightEllipsoid = heightMsl + geoidUndulation."
+            },
+            "heightRef": {
+             "type": "string",
+             "enum": [
+              "ellipsoid",
+              "msl",
+              "default"
+             ],
+             "description": "What the request's height was measured from; default = no height given, the observer is on the geoid."
+            }
+           },
+           "required": [
+            "lat",
+            "lon",
+            "height",
+            "heightEllipsoid",
+            "heightMsl",
+            "geoidUndulation",
+            "heightRef"
+           ],
+           "additionalProperties": false
+          },
+          "target": {
+           "type": "object",
+           "properties": {
+            "lat": {
+             "type": "number",
+             "minimum": -90,
+             "maximum": 90
+            },
+            "lon": {
+             "type": "number",
+             "minimum": -180,
+             "maximum": 180
+            },
+            "height": {
+             "type": "number",
+             "description": "Metres above the WGS-84 ellipsoid (same as heightEllipsoid; kept for compatibility)."
+            },
+            "heightEllipsoid": {
+             "type": "number"
+            },
+            "heightMsl": {
+             "type": "number",
+             "description": "Metres above the EGM96 geoid (≈ mean sea level)."
+            },
+            "geoidUndulation": {
+             "type": "number",
+             "description": "EGM96 N, metres: heightEllipsoid = heightMsl + geoidUndulation."
+            },
+            "heightRef": {
+             "type": "string",
+             "enum": [
+              "ellipsoid",
+              "msl",
+              "default"
+             ],
+             "description": "What the request's height was measured from; default = no height given, the observer is on the geoid."
+            }
+           },
+           "required": [
+            "lat",
+            "lon",
+            "height",
+            "heightEllipsoid",
+            "heightMsl",
+            "geoidUndulation",
+            "heightRef"
+           ],
+           "additionalProperties": false
+          },
+          "distanceKm": {
+           "type": "number"
+          },
+          "azimuth": {
+           "type": "number",
+           "description": "Forward geodesic azimuth observer → target."
+          },
+          "samples": {
+           "type": "integer",
+           "minimum": -9007199254740991,
+           "maximum": 9007199254740991
+          },
+          "profile": {
+           "type": "array",
+           "items": {
+            "type": "object",
+            "properties": {
+             "distanceKm": {
+              "type": "number",
+              "description": "Geodesic ground distance from the observer to the foot of this point."
+             },
+             "lat": {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90
+             },
+             "lon": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180
+             },
+             "heightMsl": {
+              "type": "number",
+              "description": "The straight (unrefracted) sight line's height above the EGM96 geoid here, metres; Earth's curvature included."
+             },
+             "refractedHeightMsl": {
+              "type": "number",
+              "description": "The refracted ray's height here (terrestrial refraction k = 0.13): heightMsl + k·s₁·s₂/(2R)."
+             },
+             "heightEllipsoid": {
+              "type": "number",
+              "description": "The straight line's WGS-84 geodetic height here, metres."
+             },
+             "geoidUndulation": {
+              "type": "number",
+              "description": "EGM96 N at the foot: heightEllipsoid = heightMsl + geoidUndulation."
+             }
+            },
+            "required": [
+             "distanceKm",
+             "lat",
+             "lon",
+             "heightMsl",
+             "refractedHeightMsl",
+             "heightEllipsoid",
+             "geoidUndulation"
+            ],
+            "additionalProperties": false
+           }
+          },
+          "obstacles": {
+           "type": "array",
+           "items": {
+            "type": "object",
+            "properties": {
+             "lat": {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90
+             },
+             "lon": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180
+             },
+             "heightMsl": {
+              "type": "number"
+             },
+             "distanceKm": {
+              "type": "number",
+              "description": "Along the line from the observer (projection)."
+             },
+             "crossTrackM": {
+              "type": "number",
+              "description": "Offset from the line, metres, positive to the right looking at the target."
+             },
+             "lineHeightMsl": {
+              "anyOf": [
+               {
+                "type": "number"
+               },
+               {
+                "type": "null"
+               }
+              ]
+             },
+             "refractedLineHeightMsl": {
+              "anyOf": [
+               {
+                "type": "number"
+               },
+               {
+                "type": "null"
+               }
+              ]
+             },
+             "clearanceM": {
+              "anyOf": [
+               {
+                "type": "number"
+               },
+               {
+                "type": "null"
+               }
+              ],
+              "description": "Straight line − obstacle height, metres; negative = the obstacle is above the line. Null when not between the ends."
+             },
+             "refractedClearanceM": {
+              "anyOf": [
+               {
+                "type": "number"
+               },
+               {
+                "type": "null"
+               }
+              ]
+             },
+             "blocks": {
+              "anyOf": [
+               {
+                "type": "boolean"
+               },
+               {
+                "type": "null"
+               }
+              ],
+              "description": "refractedClearanceM < 0."
+             }
+            },
+            "required": [
+             "lat",
+             "lon",
+             "heightMsl",
+             "distanceKm",
+             "crossTrackM",
+             "lineHeightMsl",
+             "refractedLineHeightMsl",
+             "clearanceM",
+             "refractedClearanceM",
+             "blocks"
+            ],
+            "additionalProperties": false
+           }
+          },
+          "conventions": {
+           "type": "object",
+           "properties": {
+            "definition": {
+             "type": "string"
+            },
+            "terrestrialRefraction": {
+             "type": "string"
+            },
+            "obstacles": {
+             "type": "string"
+            },
+            "heights": {
+             "type": "string"
+            },
+            "terrestrialRefractionK": {
+             "type": "number"
+            },
+            "geoid": {
+             "type": "object",
+             "properties": {
+              "model": {
+               "type": "string",
+               "enum": [
+                "EGM96"
+               ]
+              },
+              "source": {
+               "type": "string"
+              },
+              "interpolationErrorM": {
+               "type": "object",
+               "properties": {
+                "rms": {
+                 "type": "number"
+                },
+                "p99": {
+                 "type": "number"
+                },
+                "max": {
+                 "type": "number"
+                }
+               },
+               "required": [
+                "rms",
+                "p99",
+                "max"
+               ],
+               "additionalProperties": false
+              }
+             },
+             "required": [
+              "model",
+              "source",
+              "interpolationErrorM"
+             ],
+             "additionalProperties": false
+            }
+           },
+           "required": [
+            "definition",
+            "terrestrialRefraction",
+            "obstacles",
+            "heights",
+            "terrestrialRefractionK",
+            "geoid"
+           ],
+           "additionalProperties": false
+          },
+          "provenance": {
+           "type": "object",
+           "properties": {
+            "implementation": {
+             "type": "string"
+            },
+            "version": {
+             "type": "string"
+            },
+            "ephemeris": {
+             "type": "string"
+            },
+            "diagnostics": {
+             "type": "object",
+             "properties": {
+              "blocks": {
+               "type": "array",
+               "items": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+               }
+              },
+              "computeMs": {
+               "type": "number"
+              },
+              "cache": {
+               "type": "object",
+               "additionalProperties": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+               }
+              }
+             },
+             "required": [
+              "blocks",
+              "computeMs"
+             ],
+             "additionalProperties": false
+            }
+           },
+           "required": [
+            "implementation",
+            "version",
+            "ephemeris"
+           ],
+           "additionalProperties": false
+          }
+         },
+         "required": [
+          "observer",
+          "target",
+          "distanceKm",
+          "azimuth",
+          "samples",
+          "profile",
+          "obstacles",
+          "conventions",
+          "provenance"
+         ],
+         "additionalProperties": false
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "InvalidInput",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/InvalidInputEncoded"
         }
        }
       }

@@ -18,7 +18,7 @@ import * as HttpRouter from "effect/http/HttpRouter"
 import * as HttpServerRequest from "effect/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/http/HttpServerResponse"
 import {
-  AlignmentQuery, AlignmentResponse, CrossingQuery, CrossingResponse, DayQuery, DayResponse, PositionQuery, PositionResponse, TrackQuery, TrackResponse, WeatherQuery, WeatherResponse,
+  AlignmentQuery, AlignmentResponse, SightlineQuery, SightlineResponse, CrossingQuery, CrossingResponse, DayQuery, DayResponse, PositionQuery, PositionResponse, TrackQuery, TrackResponse, WeatherQuery, WeatherResponse,
 } from "@ephem/api"
 import { VERSION } from "./handlers.ts"
 
@@ -28,7 +28,7 @@ export const SUPPORTED_VERSIONS: ReadonlyArray<string> = [LATEST, ...LEGACY]
 const NO_HEADER_VERSION = "2025-03-26"   // Streamable HTTP: a request without MCP-Protocol-Version MAY be treated as 2025-03-26
 const META = "io.modelcontextprotocol/"
 export const SERVER_INFO = { name: "ephem", title: "ephem: Sun and Moon ephemeris (JPL DE440)", version: VERSION }
-const INSTRUCTIONS = "Topocentric Sun and Moon positions, rise/set/twilight events and photo alignments computed from JPL DE440, plus the nearest METAR weather. Times are UTC ISO-8601 with a trailing Z; heights are metres above the WGS-84 ellipsoid unless heightRef=msl; unknown arguments are rejected; every response's conventions block states the thresholds, horizon, refraction and geoid used. Every tool returns the same JSON as the matching /v1 REST endpoint (https://ephem.ivar.workers.dev/docs)."
+const INSTRUCTIONS = "Topocentric Sun and Moon positions, rise/set/twilight events photo alignments and sight-line clearance computed from JPL DE440, plus the nearest METAR weather. Times are UTC ISO-8601 with a trailing Z; heights are metres above the WGS-84 ellipsoid unless heightRef=msl; unknown arguments are rejected; every response's conventions block states the thresholds, horizon, refraction and geoid used. Every tool returns the same JSON as the matching /v1 REST endpoint (https://ephem.ivar.workers.dev/docs)."
 const MAX_BODY = 1 << 20
 
 // ─────────────────────────────── JSON-RPC errors (typed) ───────────────────────────────
@@ -119,6 +119,16 @@ export const TOOLS: ReadonlyArray<ToolDef> = [
       stepSeconds: "Sampling step, integer seconds 60–3600, at most 1441 samples. Default 1200 (20 min).",
       temperature: POS_DOCS.temperature, pressure: POS_DOCS.pressure, horizon: POS_DOCS.horizon, dut1: POS_DOCS.dut1 },
     description: "The Sun's and Moon's azimuth, true altitude and apparent (refracted) altitude at every step of a UTC window, as parallel arrays; each sample equals sun_moon_position at that instant. For plotting paths or finding when a body is up. Same as GET /v1/track." },
+  { name: "sight_line", title: "Sight-line height and obstacle clearance", path: "/v1/sightline", query: SightlineQuery, success: SightlineResponse,
+    docs: {
+      observerLat: "Eye latitude, degrees north.", observerLon: "Eye longitude, degrees east.",
+      observerHeight: "Eye height, metres above the ellipsoid, or above sea level with heightRef=msl. Default: at sea level.", heightRef: "What observerHeight is measured from: ellipsoid (default) or msl.",
+      targetLat: "Target latitude, degrees north.", targetLon: "Target longitude, degrees east.",
+      targetHeight: "Target height, metres above the ellipsoid, or above sea level with targetHeightRef=msl.", targetHeightRef: "What targetHeight is measured from: ellipsoid (default) or msl.",
+      samples: "Points along the line, 2–1001. Default 101.",
+      obstacles: "Optional obstacle points 'lat:lon:heightMsl,…' (up to 100; heights above sea level): the clearance of the line over each.",
+    },
+    description: "The height above sea level of the sight line from an eye to a target against ground distance (Earth curvature included; straight and with terrestrial refraction k = 0.13), and the clearance over given obstacle points (negative = the obstacle hides the target). Same as GET /v1/sightline." },
 ]
 
 const jsonSchema = (schema: S.Top) => {

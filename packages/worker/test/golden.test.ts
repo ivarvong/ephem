@@ -26,6 +26,7 @@ export const GOLDEN: Record<string, string> = {
   "crossing.moon.apparent": "/v1/crossing?body=moon&altitude=0&altitudeType=apparent&lat=51.5&lon=-0.12&start=2026-10-27T00:00:00Z&end=2026-10-30T00:00:00Z",
   "track.nyc": "/v1/track?lat=40.7127&lon=-74.0059&height=-22.6&start=2026-10-27T12:00:00Z&end=2026-10-29T12:00:00Z",
   "track.tromso.step": "/v1/track?lat=69.6492&lon=18.9553&start=2026-11-15T00:00:00Z&end=2026-11-16T00:00:00Z&stepSeconds=600&temperature=-15&pressure=1020&horizon=geometric",
+  "sightline.pier6": "/v1/sightline?observerLat=40.6935&observerLon=-74.0017&observerHeight=5&heightRef=msl&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&samples=21&obstacles=40.6894:-74.0166:25",
   "magnetic.nyc": "/v1/magnetic?lat=40.7&lon=-74&time=2026-10-29T12:00:00Z",
 }
 

@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder"
 import { EphemApi, InvalidInput, OutOfRange } from "@ephem/api"
-import { SUPPORTED, TRACK_DEFAULT_STEP_S, alignmentLatRange, alignmentRequest, blocksFor, parseInclude, crossingRequest, crossingWindow, dayRequest, instant, instrumented, isValidZone, localMidnight, nextDate, positionRequest, trackRequest, trackWindowError } from "@ephem/core"
+import { SUPPORTED, TRACK_DEFAULT_STEP_S, alignmentLatRange, alignmentRequest, blocksFor, parseInclude, parseObstacles, sightline, SIGHTLINE_CONVENTIONS, MAX_SIGHTLINE_KM, inverse, K_TERRESTRIAL, GEOID, crossingRequest, crossingWindow, dayRequest, instant, instrumented, isValidZone, localMidnight, nextDate, positionRequest, trackRequest, trackWindowError } from "@ephem/core"
 import { Blocks, blocksCache } from "./blocks.ts"
 import { Geoid, geoidCache } from "./geoid.ts"
 import { EarthLive } from "./weather.ts"
@@ -103,6 +103,21 @@ export const SkyLive = HttpApiBuilder.group(EphemApi, "sky", h => h
     const track = out.track.map(({ iterations: _i, ...p }) => p)
     return { ...out, track, provenance }
   }).pipe(Effect.withSpan("alignment")))
+  .handle("sightline", ({ query: q }) => Effect.gen(function* () {
+    const obstacles = parseObstacles(q.obstacles)
+    if (typeof obstacles === "string") return yield* new InvalidInput({ message: obstacles })
+    const km = inverse(q.observerLat, q.observerLon, q.targetLat, q.targetLon).distanceM / 1000
+    if (km > MAX_SIGHTLINE_KM) return yield* new InvalidInput({ message: `observer and target are ${km.toFixed(1)} km apart; at most ${MAX_SIGHTLINE_KM} km` })
+    if (km < 0.001) return yield* new InvalidInput({ message: "observer and target are at the same place" })
+    // Geoid bands for every latitude the line and the obstacles touch.
+    const lats = [q.observerLat, q.targetLat, ...obstacles.map(o => o.lat)], lo = Math.min(...lats), hi = Math.max(...lats)
+    const { out, provenance } = yield* compute("sightline", [], () => sightline({
+      observer: q.observerHeight === undefined ? { lat: q.observerLat, lon: q.observerLon, height: 0, heightRef: "msl" } : { lat: q.observerLat, lon: q.observerLon, height: q.observerHeight, heightRef: q.heightRef },
+      target: { lat: q.targetLat, lon: q.targetLon, height: q.targetHeight, heightRef: q.targetHeightRef },
+      samples: q.samples ?? 101, obstacles }), o => ({ "ephem.instants": o.samples, "ephem.obstacles": o.obstacles.length }), geoidAcross([lo, hi]))
+    const observer = { ...out.observer, heightRef: q.observerHeight === undefined ? "default" as const : out.observer.heightRef }
+    return { ...out, observer, conventions: { ...SIGHTLINE_CONVENTIONS, terrestrialRefractionK: K_TERRESTRIAL, geoid: { model: GEOID.model, source: GEOID.source, interpolationErrorM: GEOID.interpolationErrorM } }, provenance }
+  }).pipe(Effect.withSpan("sightline")))
   .handle("track", ({ query: q }) => Effect.gen(function* () {
     const start = yield* parseUtc(q.start), end = yield* parseUtc(q.end), step = q.stepSeconds ?? TRACK_DEFAULT_STEP_S
     const bad = trackWindowError(start, end, step)

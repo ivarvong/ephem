@@ -291,6 +291,18 @@ find the instants where the body's azimuth − target azimuth crosses zero (2-mi
 discarded), and report `altitudeOffset` = body apparent altitude − target elevation. Negative means the body centre is
 below the target's top, i.e. behind it; compare with `angularRadius` for partial occultation.
 
+**Sight line (`/v1/sightline`, `sightline.ts`, 2026-10-30).** For a fixed eye → target: the line's height above MSL
+against ground distance, and clearance over obstacle points `lat:lon:heightMsl` (≤ 100). A separate endpoint rather than an
+alignment parameter: it is time-independent pure geometry (no DE440 blocks, no window), so it caches as one immutable entry
+per (eye, target, obstacles) instead of once per alignment window, and an alignment *track* has a different eye at every
+instant (ask it for the spots you shortlist). Geometric line: the chord between exact WGS-84 ECEF points (curvature by
+construction), each sample's geodetic height minus N at the foot; distance = geodesic to the foot. Refracted line: the ray
+of curvature k/R (k = 0.13, as alignment) through both ends, k·s₁·s₂/(2R) above the chord (0.034 m mid-way over 3.6 km);
+stated in conventions. Obstacles are projected on the line (along, cross-track: a local flat projection, so crossTrackM is
+approximate at tens of km), clearance = line − obstacle, `blocks` = refracted clearance < 0. Evidence: PROJ (EPSG
+4978→4979) + GeographicLib on a 3.6 km and a 152 km line: heightEllipsoid ≤ 1.5e-7 m, distance ≤ 2.6e-7 m; midpoint drop
+= s₁s₂/2R to ±5 cm (N varies); Pier 6 → statue figure crosses Governors Island at ~28 m MSL (customer: 22–28 m).
+
 ## 11. The contract (`@ephem/api`)
 
 `EphemApi = HttpApi.make("ephem").add(sky, meta)` with `GET /v1/position`, `GET /v1/day`, `GET /v1/alignment`,

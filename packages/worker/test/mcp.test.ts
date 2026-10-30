@@ -71,7 +71,7 @@ describe("MCP handshake and discovery", () => {
   })
   it("tools/list: deterministic, schemas generated from the REST contract, every property documented", async () => {
     const r = await modern("tools/list"), tools = r.body.result.tools
-    expect(tools.map((t: any) => t.name)).toEqual(["sun_moon_position", "day_events", "crossing", "alignment", "weather_nearest", "sun_moon_track"])
+    expect(tools.map((t: any) => t.name)).toEqual(["sun_moon_position", "day_events", "crossing", "alignment", "weather_nearest", "sun_moon_track", "sight_line"])
     expect((await legacy("tools/list")).body.result.tools).toEqual(tools)
     const pos = tools[0]
     expect(pos.inputSchema).toMatchObject({ type: "object", required: ["lat", "lon"], additionalProperties: false,

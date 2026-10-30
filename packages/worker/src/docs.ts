@@ -16,6 +16,8 @@ export const ENDPOINTS: ReadonlyArray<Endpoint> = [
     required: ["lat", "lon", "body"], example: "/v1/crossing?body=moon&lat=40.6985&lon=-73.999&height=5&heightRef=msl&altitude=0.87&altitudeType=apparent&direction=set&start=2026-11-16T00:00:00Z&end=2026-11-18T00:00:00Z" },
   { path: "/v1/alignment", summary: "Where to stand so the Sun or Moon (centre, a limb, or the Moon's lit-area centroid: aim) sits on a landmark, per instant; with observerLat/Lon also when it passes the landmark from a fixed spot. Heights in ellipsoid or msl (heightRef, targetHeightRef), per-point rates, include=sun,phase.",
     required: ["body", "targetLat", "targetLon", "targetHeight", "start", "end"], example: "/v1/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&observerHeight=5&heightRef=msl&start=2026-11-17T03:44:30Z&end=2026-11-17T03:46:00Z&stepSeconds=5&maxDistanceKm=8" },
+  { path: "/v1/sightline", summary: "The sight line's height above sea level against ground distance from an eye to a target (Earth curvature; straight and refracted with k = 0.13), and the clearance over obstacle points lat:lon:heightMsl.",
+    required: ["observerLat", "observerLon", "targetLat", "targetLon", "targetHeight"], example: "/v1/sightline?observerLat=40.6935&observerLon=-74.0017&observerHeight=5&heightRef=msl&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&samples=11&obstacles=40.6894:-74.0166:25" },
   { path: "/v1/track", summary: "Sun and Moon azimuth, true and apparent altitude on a UTC grid (≤ 8 days, ≤ 1 441 samples), columnar.",
     required: ["lat", "lon", "start", "end"], example: "/v1/track?lat=40.7&lon=-74&start=2026-11-16T00:00:00Z&end=2026-11-17T00:00:00Z" },
   { path: "/v1/magnetic", summary: "WMM2025 magnetic declination, inclination and intensity.", required: ["lat", "lon"], example: "/v1/magnetic?lat=40.7&lon=-74" },
@@ -23,7 +25,7 @@ export const ENDPOINTS: ReadonlyArray<Endpoint> = [
   { path: "/healthz", summary: "Liveness.", required: [], example: "/healthz" },
 ]
 
-const CONVENTION_KEYS: ReadonlyArray<keyof typeof CONVENTIONS> = ["frame", "trueAltitude", "apparentAltitude", "height", "rise", "crossing", "alignment", "aim", "passes", "rates", "brightLimb", "phase", "twilight", "goldenHour", "blueHour", "track", "supportedRange", "ut1", "magnetic", "weather", "unknownParameters"]
+const CONVENTION_KEYS: ReadonlyArray<keyof typeof CONVENTIONS> = ["frame", "trueAltitude", "apparentAltitude", "height", "rise", "crossing", "alignment", "aim", "passes", "rates", "brightLimb", "phase", "twilight", "goldenHour", "blueHour", "track", "sightline", "supportedRange", "ut1", "magnetic", "weather", "unknownParameters"]
 const RULES = [
   "Times are UTC ISO-8601 with a trailing Z (e.g. 2026-11-17T03:45:00Z); supported 1972-01-01 to 2149-12-31.",
   "Angles are degrees; azimuth from true north through east, [0, 360). Rates are degrees per minute.",
@@ -43,7 +45,7 @@ export const llmsTxt = (): string => [
   "",
   "## Machine-readable",
   `- OpenAPI 3.1: ${BASE}/openapi.json`,
-  `- MCP (Streamable HTTP, no auth): ${BASE}/mcp (tools: sun_moon_position, day_events, crossing, alignment, sun_moon_track, weather_nearest; each returns the same JSON as its REST route)`,
+  `- MCP (Streamable HTTP, no auth): ${BASE}/mcp (tools: sun_moon_position, day_events, crossing, alignment, sight_line, sun_moon_track, weather_nearest; each returns the same JSON as its REST route)`,
   `- Human docs (plain HTML): ${BASE}/docs`,
   "",
   "## Rules",

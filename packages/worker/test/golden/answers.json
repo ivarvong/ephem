@@ -1,6 +1,6 @@
 {
-  "cacheVersion": 5,
-  "recorded": "2026-10-30T12:46:53.453Z",
+  "cacheVersion": 6,
+  "recorded": "2026-10-30T12:54:04.692Z",
   "requests": {
     "day.nyc": "/v1/day?date=2026-10-28&tz=America/New_York&lat=40.7127&lon=-74.0059&height=10",
     "day.tromso": "/v1/day?date=2026-11-15&tz=Europe/Oslo&lat=69.6492&lon=18.9553",
@@ -11,6 +11,7 @@
     "crossing.moon.apparent": "/v1/crossing?body=moon&altitude=0&altitudeType=apparent&lat=51.5&lon=-0.12&start=2026-10-27T00:00:00Z&end=2026-10-30T00:00:00Z",
     "track.nyc": "/v1/track?lat=40.7127&lon=-74.0059&height=-22.6&start=2026-10-27T12:00:00Z&end=2026-10-29T12:00:00Z",
     "track.tromso.step": "/v1/track?lat=69.6492&lon=18.9553&start=2026-11-15T00:00:00Z&end=2026-11-16T00:00:00Z&stepSeconds=600&temperature=-15&pressure=1020&horizon=geometric",
+    "sightline.pier6": "/v1/sightline?observerLat=40.6935&observerLon=-74.0017&observerHeight=5&heightRef=msl&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&samples=21&obstacles=40.6894:-74.0166:25",
     "magnetic.nyc": "/v1/magnetic?lat=40.7&lon=-74&time=2026-10-29T12:00:00Z"
   },
   "answers": {
@@ -23,6 +24,7 @@
     "crossing.moon.apparent": "f002be8c5ffbd8c4f7751bb3c5d8b1c3",
     "track.nyc": "7f9acae6c726ff78ec44b87d189f662d",
     "track.tromso.step": "996e668c5aaebd830a030f3aca6da6b3",
+    "sightline.pier6": "f12bfcf96b29962660f09d6f3be080e2",
     "magnetic.nyc": "ef703ff8d3120e4fce346168bf792918"
   }
 }

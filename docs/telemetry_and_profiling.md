@@ -25,7 +25,7 @@ Every number you report carries its version id (and trace id or profile file). L
 | `python3 scripts/obs/cold-split.py --from ISO --to ISO [--route track] [--json out.json]` | Api CPU by isolate warmth: each Api invocation of the route joined to its handler span's `ephem.isolate_computes` (1 = the isolate's first computation), p50/p90/p99 and CPU sum per bucket, and the runtime-GET → Effect-GET gap (isolate start-up before the router). Versions before the attribute fall back to "L1 empty" as the cold proxy. |
 | `python3 scripts/obs/metar-cache.py [--minutes 30] [--version 80f5b087] [--slice 2]` | METAR feed cache: per (version, tier) request count, share, wall and CPU p50/p99, parses, data age; upstream calls (MetarFeed's `{"evt":"metar.upstream"}`) by status, conditional, and per minute. Joins each `{"evt":"metar"}` log line to its invocation on `$metadata.requestId`. |
 | `python3 scripts/obs/cache-probe.py [base] --mode repeat\|unique\|burst [--keys 10] [--repeats 5] [--burst 50] [--routes day,…]` | Client-side cross-check of Workers Caching: per request `x-ephem-cache` (the Api's cf-cache-status relayed by the front door), client and server-timing latency; p50/p99 by (route, status). `burst` fires N concurrent identical cold requests (collapsing test); count Api invocations for that key with a `starts_with` filter on `$workers.event.request.url = https://api.internal/<path>?<sorted query>`. |
-| `node --experimental-strip-types scripts/obs/mcp-probe.ts [base]` | Full MCP client session against `/mcp` (legacy handshake + modern 2026-07-28 flow + error cases); every tool call (5 tools, incl. `crossing`) is checked equal to its REST endpoint, plus the REST 400 UnknownParameter and a null `apparentAltitude` case. Pass/fail table with latency and cf-ray. Run after every deploy. |
+| `node --experimental-strip-types scripts/obs/mcp-probe.ts [base]` | Full MCP client session against `/mcp` (legacy handshake + modern 2026-07-28 flow + error cases); every tool call (7 tools, incl. `crossing` and `sight_line`; the alignment call uses heightRef/targetHeightRef=msl, aim=litCentroid, include=sun,phase) is checked equal to its REST endpoint, plus the REST 400 UnknownParameter and a null `apparentAltitude` case. Pass/fail table with latency and cf-ray. Run after every deploy. |
 | `python3 scripts/obs/trace.py --jsonrpc-id <id>` | The trace of one MCP message (the probe's ids are `<run>-<step>`). |
 | `python3 scripts/obs/symbolize.py in.pb [out.pb]` | Replaces minified function names in a prod pprof with names read from the source (see "Source maps"). |
 
@@ -47,8 +47,8 @@ this.
 | --- | --- | --- |
 | `GET` (Effect, front door) | HttpRouter | `http.route`, `ephem.api_cache` (the Api's cf-cache-status: HIT / MISS / EXPIRED / UPDATING / STALE / BYPASS; `LOCAL` when computed in the front door; `LOOPBACK_ERROR`) |
 | `api.fetch` | src/responses.ts | `ephem.api_key` (path + sorted query), `ephem.api_cache`, `http.status_code` — real ms: the whole loopback incl. tier lookups |
-| `alignment` / `day` / `position` / `track` / `crossing` | handlers (Api invocation) | `blocks`, `reads`, `l1`, `blocks_<status>`, `fetchedBytes`, `ephem.isolate_computes` (computations this isolate has run, this one included: 1 = fresh isolate) |
-| `compute.<endpoint>` | handlers | `ephem.block_reads`, `ephem.instants`, `ephem.iterations`, `ephem.track_points`, `ephem.events`, `ephem.crossings` (compute.crossing) |
+| `alignment` / `day` / `position` / `track` / `crossing` / `sightline` | handlers (Api invocation) | `blocks`, `reads`, `l1`, `blocks_<status>`, `fetchedBytes`, `ephem.isolate_computes` (computations this isolate has run, this one included: 1 = fresh isolate) |
+| `compute.<endpoint>` | handlers | `ephem.block_reads`, `ephem.instants`, `ephem.iterations`, `ephem.track_points`, `ephem.events`, `ephem.crossings` (compute.crossing), `ephem.obstacles` (compute.sightline; `ephem.instants` = samples) |
 | `geoid.load` | src/geoid.ts (position, day, crossing, track: every route with an observer; alignment: one per band its standing points can reach, target lat ± maxDistanceKm, plus observerLat) | `geoid.bands` (1, or 2 at a band edge), `geoid.l1`, `geoid.<status>` per fetched band (`geoid.hit`, `geoid.miss`, …), `geoid.fetchedBytes`, `ephem.geoid_cache` (`L1`, or `HIT:1`). Runs concurrently with `blocks.load`. See "Geoid bands (EGM96 from R2)" |
 | `blocks.load` | src/blocks.ts | `blocks.count`, `ephem.blocks_cache` (`L1`, or `HIT:2,MISS:1`: BlockStore loopback statuses), `cache.l1`, `cache.blocks_hit` / `cache.blocks_miss` / …, `cache.fetchedBytes`; `cache.originReads/originBytes` only for in-process reads (tests, dev) |
 | `GET` (runtime) | workerd | `cpu_time_ms`, `wall_time_ms`, geo |
@@ -84,7 +84,7 @@ the entrypoints whose `exports` entry enables it (`cloudflare.config.ts`), drive
 
 ```
 eyeball ─▶ default (cache OFF: always runs → every request has its trace, Basin row, request.cf; `/` and `/mcp` live here)
-             ├─ GET /v1/day, /v1/alignment, /v1/track, /v1/crossing, /v1/position|magnetic with time
+             ├─ GET /v1/day, /v1/alignment, /v1/track, /v1/sightline, /v1/crossing, /v1/position|magnetic with time
              │     ─▶ loopback.ts api: Api.fetch(path + sorted query, { cf: { cacheKey: "/v<CACHE_VERSION>" + path + query } })
              │        Api (cache ON) ─▶ blocks: loopback.ts block  GET /block/v<N>/<sha16>/<i>  (BlockStore, cache ON) ─▶ R2 range read
              │                      ├▶ geoid:  loopback.ts geoid  GET /geoid/v<N>/<sha16>/<band> (BlockStore, cache ON) ─▶ R2 range read (ephem-geoid)
@@ -100,7 +100,7 @@ records the Api's `cf-cache-status` as `ephem.api_cache` (span) / `api_cache` (B
 
 | Route | Api (what Workers Caching stores) | Outward (browsers) | Why |
 | --- | --- | --- | --- |
-| `/v1/day`, `/v1/alignment`, `/v1/track`, `/v1/crossing` (window or date), `/v1/position` + `time`, `/v1/magnetic` + `time` | `public, max-age=31536000, immutable` | same | pure function of the query; CACHE_VERSION is in the key and is bumped when answers change |
+| `/v1/day`, `/v1/alignment`, `/v1/track`, `/v1/sightline`, `/v1/crossing` (window or date), `/v1/position` + `time`, `/v1/magnetic` + `time` | `public, max-age=31536000, immutable` | same | pure function of the query; CACHE_VERSION is in the key and is bumped when answers change |
 | `/v1/weather` | computed in the front door (feed via MetarFeed loopback); `API_WEATHER` = `public, max-age=0, stale-while-revalidate=300, stale-if-error=3600` only if called directly | `private, max-age=30` | keys almost never repeat, and forwarding paid the tier-colo round trip (see "Why forwarded weather is slower") |
 | `/v1/position`, `/v1/magnetic` without `time` | not forwarded (`API_LIVE` = `public, max-age=0` if called directly) | `no-store` / `public, max-age=3600` | max-age=0 forwarding measured +35 ms server p50 with no sequential hits (below) |
 | any non-200 from the Api, or no Cache-Control | `no-store` | `no-store` | errors are never cached (a router 404 was heuristically cached for 3 min on fd72f501) |
@@ -226,7 +226,7 @@ Unauthenticated, stateless MCP over Streamable HTTP, written in Effect (no SDK).
 **2025-11-25 / 2025-06-18 / 2025-03-26** (`initialize` negotiates; `ping`; notifications → 202; no `Mcp-Session-Id` is
 minted; a request without `MCP-Protocol-Version` is 2025-03-26, the only version where batches are accepted). GET/DELETE
 → 405. Origin: absent (non-browser) or any https origin passes; plain http only from loopback or the same host; `null`,
-`file:`, extension and malformed origins → 403. Tools (`sun_moon_position`, `day_events`, `alignment`, `weather_nearest`)
+`file:`, extension and malformed origins → 403. Tools (`sun_moon_position`, `day_events`, `crossing`, `alignment`, `sight_line`, `sun_moon_track`, `weather_nearest`)
 decode arguments with the Type side of the REST query schema, encode them back to a query string with the same schema and
 run the router's own `/v1/*` route in-process, so `inputSchema` / `outputSchema` are generated from `@ephem/api` and the
 math is the REST code path (including the forward to the cached Api entrypoint).

@@ -22,6 +22,9 @@ const Sky = HttpApiBuilder.group(EphemApi, "sky", h => h
   .handle("alignment", ({ query }) => Effect.succeed({ body: query.body, target: obs({ lat: query.targetLat, lon: query.targetLon, height: query.targetHeight }), track: [],
     conventions: { definition: "", azimuth: "", apparentAltitude: "", terrestrialRefraction: "", heights: "", rates: "", observerHeightRef: "default" as const, targetHeightRef: "ellipsoid" as const,
       terrestrialRefractionK: 0.13, refraction: { model: "", temperatureC: 10, pressureHpa: 1010 }, geoid }, provenance: prov }))
+  .handle("sightline", ({ query }) => Effect.succeed({ observer: obs({ lat: query.observerLat, lon: query.observerLon }), target: obs({ lat: query.targetLat, lon: query.targetLon, height: query.targetHeight }),
+    distanceKm: 1, azimuth: 0, samples: query.samples ?? 101, profile: [], obstacles: [],
+    conventions: { definition: "", terrestrialRefraction: "", obstacles: "", heights: "", terrestrialRefractionK: 0.13, geoid }, provenance: prov }))
   .handle("track", ({ query }) => Effect.succeed({ start: query.start, end: query.end, stepSeconds: query.stepSeconds ?? 1200, count: 1, observer: obs(query),
     sun: { azimuth: [1], altitude: [2], apparentAltitude: [null] }, moon: { azimuth: [3], altitude: [4], apparentAltitude: [4.2] },
     conventions: { refraction: posConv.refraction, horizon, geoid }, provenance: prov })))
