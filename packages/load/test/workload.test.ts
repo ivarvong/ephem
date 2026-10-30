@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
 import { add, hist, kindStats, mergeHist, quantile, record } from "../src/stats.ts"
-import { KINDS, LIMITS, MIXED, ORIGIN, WARM_KEYS, build, headers, mulberry32, picker, plan, rayColo, searchRate, target, validate } from "../src/workload.ts"
+import { KINDS, LIMITS, MIXED, ORIGIN, WARM_KEYS, build, endOf, measureFrom, headers, mulberry32, picker, plan, rayColo, searchRate, target, validate } from "../src/workload.ts"
 import park from "../src/park.json" with { type: "json" }
 
 const NOW = Date.parse("2026-10-30T12:00:00Z")
@@ -15,7 +15,10 @@ const refused = (b: unknown) => { const v = validate(b, NOW, () => 0.5); return 
 describe("limits (the Worker refuses anything outside them)", () => {
   it("accepts the validation run", () => {
     const s = ok({ mode: "mixed", rate: 60, duration: 60, regions: ["enam", "weur", "apac"] })
-    expect(s).toMatchObject({ mode: "mixed", rate: 60, durationS: 60, seed: 1, pin: null, startAt: NOW + LIMITS.startLeadMs })
+    expect(s).toMatchObject({ mode: "mixed", rate: 60, durationS: 60, warmupS: LIMITS.defaultWarmupS, seed: 1, pin: null, startAt: NOW + LIMITS.startLeadMs })
+    expect(endOf(s) - measureFrom(s)).toBe(60_000); expect(measureFrom(s) - s.startAt).toBe(LIMITS.defaultWarmupS * 1000)
+    expect(refused({ mode: "position", rate: 1, duration: 1, regions: ["enam"], warmup: LIMITS.maxWarmupS + 1 })).toMatch(/warmup/)
+    expect(refused({ mode: "position", rate: 250, duration: 230, warmup: 20, regions: ["enam", "wnam", "weur", "apac"] })).toMatch(/warmup \+ duration/)
     expect(s.runId).toMatch(/^L20261030T120000Z-/)
   })
   it("refuses any field that could aim it elsewhere", () => {

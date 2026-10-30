@@ -38,8 +38,8 @@ export interface KindStats {
   hist: Hist; sample: Array<[string, number, number, number]>
 }
 export const kindStats = (): KindStats => ({ offered: 0, dropped: 0, completed: 0, ok: 0, status: {}, errors: {}, cache: {}, served: {}, versions: {}, pinMiss: 0, hist: hist(), sample: [] })
-export type ShardStats = { kinds: Record<Kind, KindStats>; maxLagMs: number; late: number; prewarm: { sent: number; ok: number } }
-export const shardStats = (): ShardStats => ({ kinds: Object.fromEntries(KINDS.map(k => [k, kindStats()])) as Record<Kind, KindStats>, maxLagMs: 0, late: 0, prewarm: { sent: 0, ok: 0 } })
+export type ShardStats = { kinds: Record<Kind, KindStats>; maxLagMs: number; late: number; prewarm: { sent: number; ok: number }; warmup: { sent: number; ok: number } }
+export const shardStats = (): ShardStats => ({ kinds: Object.fromEntries(KINDS.map(k => [k, kindStats()])) as Record<Kind, KindStats>, maxLagMs: 0, late: 0, prewarm: { sent: 0, ok: 0 }, warmup: { sent: 0, ok: 0 } })
 
 export interface Outcome { status: number; ms: number; at: number; ray: string | null; colo: string; cache: string | null; version: string | null; error?: string }
 /** Record one completed request. A pinned run counts every answer not from the pinned version. `sample` is a uniform

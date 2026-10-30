@@ -1,7 +1,7 @@
 // Remote load: drive ephem from ephem-load's Generator Durable Objects in several regions (guide "Remote load").
 //   node --experimental-strip-types scripts/obs/load-remote.ts --mode mixed --rate 60 --duration 60 --regions enam,weur,apac
 //        [--pin ephem=<version id>] [--seed 1] [--mix position=40,warm=30,track=15,weather=14,search=1] [--run-id <id>]
-//        [--shards N per region (more than the plan needs)] [--plan] [--json] [--quiet] [--base https://ephem-load.ivar.workers.dev]
+//        [--warmup 10 s before the measured window, sent on the same schedule, counted apart] [--shards N per region (more than the plan needs)] [--plan] [--json] [--quiet] [--base https://ephem-load.ivar.workers.dev]
 // --mode   position | warm | track | weather | search | mixed       --rate  total req/s over all regions ("120/min" also works)
 // --pin    every request carries Cloudflare-Workers-Version-Overrides: ephem="<id>"; the table counts answers from any other version
 // --plan   print the validated spec and shard plan; start nothing
@@ -21,7 +21,7 @@ for (let i = 0; i < argv.length; i++) {
   const k = a.slice(2), v = argv[i + 1]
   if (v === undefined || v.startsWith("--")) flags.set(k, "1"); else { flags.set(k, v); i++ }
 }
-const known = new Set(["mode", "rate", "duration", "regions", "pin", "seed", "mix", "run-id", "plan", "json", "quiet", "base", "shards"])
+const known = new Set(["mode", "rate", "duration", "regions", "pin", "seed", "mix", "run-id", "plan", "json", "quiet", "base", "shards", "warmup"])
 for (const k of flags.keys()) if (!known.has(k)) { console.error(`unknown flag --${k}`); process.exit(2) }
 const need = (k: string) => { const v = flags.get(k); if (v === undefined) { console.error(`--${k} is required (usage: head of ${path.basename(import.meta.filename)})`); process.exit(2) } return v }
 
@@ -41,6 +41,7 @@ const body = {
   ...(mix !== undefined ? { mix: Object.fromEntries(mix.split(",").map(p => { const [k, w] = p.split("="); return [k!.trim(), Number(w)] })) } : {}),
   ...(flags.has("run-id") ? { runId: flags.get("run-id") } : {}),
   ...(flags.has("shards") ? { shards: Number(flags.get("shards")) } : {}),
+  ...(flags.has("warmup") ? { warmup: Number(flags.get("warmup")) } : {}),
 }
 const quiet = flags.has("quiet")
 const log = (s: string) => { if (!quiet) console.error(s) }
@@ -97,16 +98,16 @@ if (flags.has("plan")) {
 }
 const start = await call("POST", "/run", body).catch((e: Error) => { console.error(e.message); process.exit(1) })
 const runId: string = start.runId
-const endAt = new Date(Date.parse(start.startAt) + body.duration * 1000).toISOString()
-console.log(`run ${runId}: ${body.mode} ${body.rate} req/s x ${body.duration} s from ${body.regions.join(",")} (${start.shardsPerRegion} shards/region, via ${start.viaColo})${pin ? ` pinned ephem=${pin}` : ""}`)
-console.log(`window ${start.startAt} .. ${endAt}`)
+const endAt: string = start.endAt
+console.log(`run ${runId}: ${body.mode} ${body.rate} req/s x ${body.duration} s (after ${start.spec.warmupS} s warmup from ${start.warmupAt}) from ${body.regions.join(",")} (${start.shardsPerRegion} shards/region, via ${start.viaColo})${pin ? ` pinned ephem=${pin}` : ""}`)
+console.log(`window ${start.startAt} .. ${endAt}   (measured; use it for queue.py / cpu-by-version.py --from/--to)`)
 let stopping = false
 process.on("SIGINT", () => {
   if (stopping) process.exit(130)
   stopping = true; console.error(`\nstopping ${runId} on every shard…`)
   call("POST", `/run/${runId}/stop`).then(r => console.error(`stopped ${r.stopped} shards`), e => console.error(String(e)))
 })
-await new Promise(r => setTimeout(r, Math.max(0, Date.parse(start.startAt) - Date.now())))
+await new Promise(r => setTimeout(r, Math.max(0, Date.parse(start.warmupAt) - Date.now())))
 let rep: any
 for (;;) {
   await new Promise(r => setTimeout(r, 5000))
@@ -125,6 +126,8 @@ if (flags.has("json")) console.log(JSON.stringify(rep))
 else console.log(table(rep))
 const errs = rep.regions.flatMap((r: any) => r.errors.map((e: string) => `${r.region}/${e}`))
 if (errs.length) console.log(`shard errors: ${errs.join("; ")}`)
+const wu = rep.regions.reduce((a: { sent: number; ok: number }, r: any) => ({ sent: a.sent + (r.warmup?.sent ?? 0), ok: a.ok + (r.warmup?.ok ?? 0) }), { sent: 0, ok: 0 })
+console.log(`warmup (not in the table): ${wu.ok}/${wu.sent} ok; prewarm of the warm keys: ${rep.regions.reduce((a: number, r: any) => a + r.prewarm.ok, 0)}/${rep.regions.reduce((a: number, r: any) => a + r.prewarm.sent, 0)} ok`)
 const lag = Math.max(...rep.regions.map((r: any) => r.maxLagMs)), late = rep.regions.reduce((a: number, r: any) => a + (r.late ?? 0), 0)
 const totals = Object.values(rep.totals as Record<string, Summary>)
 const bad = totals.reduce((a, s) => a + sumErr(s), 0), miss = totals.reduce((a, s) => a + s.pinMiss, 0), drop = totals.reduce((a, s) => a + s.dropped, 0)

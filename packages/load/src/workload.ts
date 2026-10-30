@@ -43,6 +43,8 @@ export const LIMITS = {
   inflightPerShard: 6,
   timeoutMs: { search: 30_000, other: 10_000 } as const,
   samplePerKind: 150, // rays kept per shard and kind (client ms + ray, for the server-side join)
+  defaultWarmupS: 10, // the 2026-10-30 validation run (no warmup): 52 of the 71 requests with > 200 ms client-side overhead were in its first 5 s
+  maxWarmupS: 60,
   startLeadMs: 8_000, // every shard starts at the same instant, this far after POST /run (prewarm happens before it)
   lateMs: 50, // an arrival sent this much after its scheduled instant counts as late (generator-side lag, not ephem's)
 } as const
@@ -53,16 +55,22 @@ export interface RunSpec {
   readonly mix: Mix
   /** Total offered rate, req/s, split evenly over the regions. */
   readonly rate: number
+  /** Measured seconds, after the warmup. */
   readonly durationS: number
+  /** Seconds of the same schedule before the measured window, counted apart (new connections, cold isolates in each colo). */
+  readonly warmupS: number
   readonly regions: readonly Region[]
   readonly seed: number
   /** ephem version id pinned with Cloudflare-Workers-Version-Overrides, or null. */
   readonly pin: string | null
-  /** Epoch ms at which every shard starts its open-loop schedule. */
+  /** Epoch ms at which every shard starts its open-loop schedule (the warmup); the measured window is measureFrom(spec) on. */
   readonly startAt: number
   /** Shards per region asked for (never fewer than the plan needs), or null for the plan's own count. */
   readonly shards: number | null
 }
+
+export const measureFrom = (spec: Pick<RunSpec, "startAt" | "warmupS">): number => spec.startAt + spec.warmupS * 1000
+export const endOf = (spec: Pick<RunSpec, "startAt" | "warmupS" | "durationS">): number => measureFrom(spec) + spec.durationS * 1000
 
 export const RUN_ID = /^[0-9A-Za-z_-]{1,48}$/
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
@@ -80,7 +88,7 @@ const fail = (reason: string) => ({ ok: false as const, reason })
 export const validate = (body: unknown, now: number, rand: () => number): { ok: true; spec: RunSpec } | { ok: false; reason: string } => {
   if (body === null || typeof body !== "object" || Array.isArray(body)) return fail("body must be a JSON object")
   const b = body as Record<string, unknown>
-  const known = new Set(["runId", "mode", "mix", "rate", "duration", "regions", "seed", "pin", "shards"])
+  const known = new Set(["runId", "mode", "mix", "rate", "duration", "warmup", "regions", "seed", "pin", "shards"])
   const extra = Object.keys(b).filter(k => !known.has(k))
   if (extra.length) return fail(`unknown field(s) ${extra.join(", ")} (there is no target, host, path or header field: the target is fixed)`)
   const mode = b.mode
@@ -103,7 +111,9 @@ export const validate = (body: unknown, now: number, rand: () => number): { ok: 
   if (rate > LIMITS.maxRate) return fail(`rate ${rate} req/s is over the cap of ${LIMITS.maxRate} req/s`)
   if (typeof duration !== "number" || !Number.isInteger(duration) || duration < 1) return fail("duration must be a positive integer (s)")
   if (duration > LIMITS.maxDurationS) return fail(`duration ${duration} s is over the cap of ${LIMITS.maxDurationS} s`)
-  if (rate * duration > LIMITS.maxRequestsPerRun) return fail(`rate x duration = ${Math.round(rate * duration)} requests is over the per-run cap of ${LIMITS.maxRequestsPerRun}`)
+  const warmup = b.warmup ?? LIMITS.defaultWarmupS
+  if (typeof warmup !== "number" || !Number.isInteger(warmup) || warmup < 0 || warmup > LIMITS.maxWarmupS) return fail(`warmup must be an integer 0..${LIMITS.maxWarmupS} (s)`)
+  if (rate * (duration + warmup) > LIMITS.maxRequestsPerRun) return fail(`rate x (warmup + duration) = ${Math.round(rate * (duration + warmup))} requests is over the per-run cap of ${LIMITS.maxRequestsPerRun}`)
   const sr = searchRate({ mix, rate })
   if (sr > LIMITS.maxSearchRate + 1e-9) return fail(`scan rate ${sr.toFixed(2)}/s is over the cap of ${LIMITS.maxSearchRate}/s (${LIMITS.maxSearchRate * 60}/min); a scan is ~1 s of CPU`)
   if (!Array.isArray(b.regions) || b.regions.length === 0) return fail(`regions must be a non-empty list of ${REGIONS.join(", ")}`)
@@ -119,7 +129,7 @@ export const validate = (body: unknown, now: number, rand: () => number): { ok: 
   if (pin !== null && (typeof pin !== "string" || !UUID.test(pin))) return fail("pin must be a full ephem version id (uuid)")
   const runId = b.runId ?? makeRunId(now, rand)
   if (typeof runId !== "string" || !RUN_ID.test(runId)) return fail(`runId must match ${RUN_ID}`)
-  return { ok: true, spec: { runId, mode: mode as Mode, mix, rate, durationS: duration, regions: b.regions as Region[], seed, pin, startAt: now + LIMITS.startLeadMs, shards } }
+  return { ok: true, spec: { runId, mode: mode as Mode, mix, rate, durationS: duration, regions: b.regions as Region[], seed, pin, warmupS: warmup, startAt: now + LIMITS.startLeadMs, shards } }
 }
 
 export interface ShardPlan {

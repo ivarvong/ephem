@@ -26,7 +26,7 @@ a = ap.parse_args()
 rep = json.load(open(a.run))
 run = rep["runId"]
 ms = lambda s: int(datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp() * 1000)  # noqa: E731
-W = (ms(rep["window"]["startAt"]) - 15_000, ms(rep["window"]["endAt"]) + 45_000)   # prewarm before, timeouts after
+W = (ms(rep["window"].get("warmupAt", rep["window"]["startAt"])) - 15_000, ms(rep["window"]["endAt"]) + 45_000)   # prewarm before, timeouts after
 H = "https://ephem.ivar.workers.dev"
 ROUTES = {"position": [("GET", "/v1/position")], "warm": [("GET", "/v1/day"), ("GET", "/v1/track"), ("GET", "/v1/alignment")],
           "track": [("GET", "/v1/track")], "weather": [("GET", "/v1/weather")], "search": [("POST", "/v1/alignment/search")]}
@@ -49,9 +49,9 @@ for e in inv:
     cnt[(path, ev.get("request", {}).get("cf", {}).get("colo", "?"), ev.get("response", {}).get("status"), w["scriptVersion"]["id"][:8])] += 1
     cpu[path].append(w.get("cpuTimeMs", 0))
 client_n = sum(s["completed"] for s in rep["totals"].values())
-prewarm = sum(r["prewarm"]["sent"] for r in rep["regions"])
+prewarm = sum(r["prewarm"]["sent"] + r.get("warmup", {}).get("sent", 0) for r in rep["regions"])
 print(f"run {run} window {rep['window']['startAt']} .. {rep['window']['endAt']} (pinned {rep['spec'].get('pin') or 'no'})")
-print(f"\n1. front-door invocations with x-ephem-load: {run}: {len(inv)}; client completed {client_n} + prewarm {prewarm} = {client_n + prewarm}"
+print(f"\n1. front-door invocations with x-ephem-load: {run}: {len(inv)}; client completed {client_n} + prewarm and warmup {prewarm} = {client_n + prewarm}"
       f" ({100 * len(inv) / max(1, client_n + prewarm):.1f}%)")
 print(f"   {'route':22} {'colo':5} {'st':>4} {'version':9} {'n':>6}")
 for (p, c, st, v), n in sorted(cnt.items(), key=lambda kv: (kv[0][0], -kv[1])):
@@ -86,10 +86,10 @@ print(hdr)
 for reg in rep["regions"]:
     for kind, s in reg["kinds"].items():
         j = []
-        for ray, cms, st in s.get("sample") or []:
+        for ray, cms, st, *at in s.get("sample") or []:   # [ray, client ms, status, sent at ms after the start]
             x = by_ray.get(ray.rsplit("-", 1)[0])
             if x:
-                j.append((cms, x)); rows.append(dict(region=reg["region"], kind=kind, ray=ray, client=cms, status=st, **x))
+                j.append((cms, x)); rows.append(dict(region=reg["region"], kind=kind, ray=ray, client=cms, status=st, at=at[0] if at else None, **x))
         c = [x[0] for x in j]; sv = [x[1]["e2e"] for x in j]; d = [x[0] - x[1]["e2e"] for x in j]
         colos = collections.Counter(x[1]["colo"] for x in j).most_common(2)
         print(f"   {reg['region']:6} {kind:8} {len(j):>4}/{len(s.get('sample') or []):<4} {fmt(pct(c, .5)):>10} {fmt(pct(c, .9)):>6} {fmt(pct(c, .99)):>6} | "
@@ -97,5 +97,11 @@ for reg in rep["regions"]:
               f"{', '.join(f'{k} {n}' for k, n in colos):16} {fmt(s['ms']['p50']) + '/' + fmt(s['ms']['p99']):>20}")
 if a.json:
     json.dump(rows, open(a.json, "w"))
+slow = [r for r in rows if r["client"] - r["e2e"] > 200]
+if slow:
+    print(f"\n3. requests whose client time exceeds the server's by > 200 ms: {len(slow)} of {len(rows)} joined; by second after the start:")
+    by = collections.Counter((r["region"], (r["at"] or 0) // 1000) for r in slow)
+    for reg in sorted({r["region"] for r in slow}):
+        print(f"   {reg:6} " + ", ".join(f"{t}s x{n}" for (g, t), n in sorted(by.items()) if g == reg))
 print("\n(<0: requests whose client time is more than 2 ms under the server's: should be 0. The client table p50/p99 is over every"
       "\n request, the joined columns over the sample.)")

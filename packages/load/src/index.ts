@@ -12,7 +12,7 @@
 // Bearer LOAD_TOKEN (a Workers secret) on everything but /health; without the secret every call is refused.
 import { DurableObject } from "cloudflare:workers"
 import { type KindStats, type KindSummary, type Outcome, type ShardStats, kindStats, mergeKind, record, shardStats, summarize } from "./stats.ts"
-import { KINDS, LIMITS, ORIGIN, REGIONS, RUN_ID, WARM_KEYS, build, headers, mulberry32, picker, plan, rayColo, target, validate, type Kind, type Region, type RunSpec, type ShardPlan } from "./workload.ts"
+import { KINDS, LIMITS, ORIGIN, REGIONS, RUN_ID, WARM_KEYS, build, endOf, measureFrom, headers, mulberry32, picker, plan, rayColo, target, validate, type Kind, type Region, type RunSpec, type ShardPlan } from "./workload.ts"
 
 interface Env { readonly LOAD_TOKEN?: string; readonly VERSION?: { readonly id: string } }
 interface Exports { readonly Generator: DurableObjectNamespace<Generator>; readonly Coordinator: DurableObjectNamespace<Coordinator> }
@@ -67,7 +67,7 @@ export class Generator extends DurableObject<Env> {
     const busy = sql.exec<{ runId: string }>(`SELECT runId FROM runs WHERE state IN ('pending', 'running')`).toArray()[0]
     if (busy) throw new Error(`generator busy with run ${busy.runId}`)
     // Defence in depth: the Worker validated the spec; the shard re-checks its own share.
-    if (cfg.plan.rate > LIMITS.shardRate + 1e-9 || cfg.spec.durationS > LIMITS.maxDurationS) throw new Error("shard config over the limits")
+    if (cfg.plan.rate > LIMITS.shardRate + 1e-9 || cfg.spec.durationS > LIMITS.maxDurationS || cfg.spec.warmupS > LIMITS.maxWarmupS) throw new Error("shard config over the limits")
     sql.exec(`INSERT INTO runs (runId, config, state, created) VALUES (?, ?, 'pending', ?)`, cfg.spec.runId, JSON.stringify(cfg), Date.now())
     await this.ctx.storage.setAlarm(Date.now() + 20)
     return { ok: true }
@@ -103,7 +103,8 @@ export class Generator extends DurableObject<Env> {
   }
 
   /** Prewarm (warm keys, before the start), then the open-loop schedule: arrival i at startAt + (i + shard/shards) / rate. An
-   * arrival that finds the in-flight cap full is dropped and counted (`dropped`), never queued, so latency stays honest. */
+   * arrival that finds the in-flight cap full is dropped and counted (`dropped`), never queued, so latency stays honest.
+   * Arrivals before measureFrom (the warmup) are sent the same way and counted only in `warmup`. */
   private async drive(cfg: ShardConfig, live: { runId: string; stats: ShardStats; stop: boolean }): Promise<void> {
     const { spec, plan: p } = cfg
     const st = live.stats
@@ -118,7 +119,7 @@ export class Generator extends DurableObject<Env> {
       }))
     }
     const rand = mulberry32(p.seed), pick = picker(spec.mix), period = 1000 / p.rate, phase = (p.shard / p.shards) * period
-    const end = spec.startAt + spec.durationS * 1000
+    const end = endOf(spec), from = measureFrom(spec)
     this.ctx.storage.sql.exec(`UPDATE runs SET startedAt = ? WHERE runId = ?`, spec.startAt, spec.runId)
     const inflight = new Set<Promise<void>>()
     for (let i = 0; ; i++) {
@@ -128,11 +129,14 @@ export class Generator extends DurableObject<Env> {
       if (live.stop) break
       const lag = Date.now() - at
       st.maxLagMs = Math.max(st.maxLagMs, lag); if (lag > LIMITS.lateMs) st.late++
-      const kind = pick(rand()), s: KindStats = st.kinds[kind]
-      s.offered++
-      if (inflight.size >= LIMITS.inflightPerShard) { s.dropped++; continue }
+      const kind = pick(rand()), measured = at >= from, s: KindStats = st.kinds[kind]
+      if (measured) s.offered++
+      if (inflight.size >= LIMITS.inflightPerShard) { if (measured) s.dropped++; continue }
       const b = build(kind, rand, i, Date.now())
-      const job: Promise<void> = fire(spec, kind, b.path, b.method, b.body).then(o => { record(s, o, spec.pin, rand) }).finally(() => { inflight.delete(job) })
+      if (!measured) st.warmup.sent++
+      const job: Promise<void> = fire(spec, kind, b.path, b.method, b.body)
+        .then(o => { if (measured) record(s, o, spec.pin, rand); else if (o.error === undefined && o.status < 400) st.warmup.ok++ })
+        .finally(() => { inflight.delete(job) })
       inflight.add(job)
     }
     await Promise.allSettled(inflight)
@@ -159,13 +163,13 @@ export class Coordinator extends DurableObject<Env> {
   }
 
   admit(spec: RunSpec, shards: number): { ok: true } | { ok: false; reason: string } {
-    const sql = this.ctx.storage.sql, now = Date.now(), requests = Math.ceil(spec.rate * spec.durationS)
+    const sql = this.ctx.storage.sql, now = Date.now(), requests = Math.ceil(spec.rate * (spec.durationS + spec.warmupS))
     if (sql.exec(`SELECT 1 FROM runs WHERE runId = ?`, spec.runId).toArray().length) return { ok: false, reason: `run ${spec.runId} exists` }
     const live = sql.exec<{ runId: string; endsAt: number }>(`SELECT runId, endsAt FROM runs WHERE stopped = 0 AND endsAt > ?`, now).toArray()[0]
     if (live) return { ok: false, reason: `run ${live.runId} is live until ${new Date(live.endsAt).toISOString()} (one run at a time; POST /run/${live.runId}/stop to end it)` }
     const hour = sql.exec<{ n: number | null }>(`SELECT SUM(requests) AS n FROM runs WHERE created > ?`, now - 3_600_000).toArray()[0]?.n ?? 0
     if (hour + requests > LIMITS.maxRequestsPerHour) return { ok: false, reason: `hourly budget: ${hour} requests admitted in the last hour + ${requests} > ${LIMITS.maxRequestsPerHour}` }
-    const endsAt = spec.startAt + spec.durationS * 1000 + LIMITS.timeoutMs.search
+    const endsAt = endOf(spec) + LIMITS.timeoutMs.search
     sql.exec(`INSERT INTO runs (runId, spec, shards, requests, created, endsAt) VALUES (?, ?, ?, ?, ?, ?)`, spec.runId, JSON.stringify(spec), shards, requests, now, endsAt)
     return { ok: true }
   }
@@ -207,15 +211,16 @@ const coordinator = (x: Exports) => x.Coordinator.get(x.Coordinator.idFromName("
 const fold = (reports: readonly ShardReport[], withSample: boolean, sampleCap: number) => {
   const kinds = Object.fromEntries(KINDS.map(k => [k, kindStats()])) as Record<Kind, KindStats>
   let maxLagMs = 0, late = 0
-  const prewarm = { sent: 0, ok: 0 }
+  const prewarm = { sent: 0, ok: 0 }, warmup = { sent: 0, ok: 0 }
   for (const r of reports) {
     if (!r.stats) continue
     for (const k of KINDS) mergeKind(kinds[k], r.stats.kinds[k], sampleCap)
     maxLagMs = Math.max(maxLagMs, r.stats.maxLagMs); late += r.stats.late ?? 0; prewarm.sent += r.stats.prewarm.sent; prewarm.ok += r.stats.prewarm.ok
+    warmup.sent += r.stats.warmup?.sent ?? 0; warmup.ok += r.stats.warmup?.ok ?? 0
   }
   const out: Partial<Record<Kind, KindSummary>> = {}
   for (const k of KINDS) if (kinds[k].offered > 0) out[k] = summarize(kinds[k], withSample)
-  return { kinds: out, maxLagMs, late, prewarm, merged: kinds }
+  return { kinds: out, maxLagMs, late, prewarm, warmup, merged: kinds }
 }
 
 async function report(x: Exports, runId: string, withSample: boolean): Promise<Response> {
@@ -231,10 +236,10 @@ async function report(x: Exports, runId: string, withSample: boolean): Promise<R
     for (const r of reports) colos[r.colo] = (colos[r.colo] ?? 0) + 1
     const state: State = reports.length < shards ? "pending" : reports.every(r => r.state === "done") ? "done" : reports.every(r => r.state === "done" || r.state === "failed") ? "failed" : reports.some(r => r.state === "running") ? "running" : "pending"
     const f = fold(reports, withSample, LIMITS.samplePerKind * 4)
-    regions.push({ region, shards, state, generatorColos: colos, errors: reports.filter(r => r.error).map(r => `${r.shard}: ${r.error}`), maxLagMs: f.maxLagMs, late: f.late, prewarm: f.prewarm, kinds: f.kinds })
+    regions.push({ region, shards, state, generatorColos: colos, errors: reports.filter(r => r.error).map(r => `${r.shard}: ${r.error}`), maxLagMs: f.maxLagMs, late: f.late, prewarm: f.prewarm, warmup: f.warmup, kinds: f.kinds })
   }
   const done = regions.every(r => r.state === "done" || r.state === "failed") || (run.stopped && all.every(r => r.state !== "running"))
-  return json({ ok: true, runId, done, stopped: run.stopped, spec, shards, window: { startAt: new Date(spec.startAt).toISOString(), endAt: new Date(spec.startAt + spec.durationS * 1000).toISOString() }, regions, totals: fold(all, false, 0).kinds })
+  return json({ ok: true, runId, done, stopped: run.stopped, spec, shards, window: { warmupAt: new Date(spec.startAt).toISOString(), startAt: new Date(measureFrom(spec)).toISOString(), endAt: new Date(endOf(spec)).toISOString() }, regions, totals: fold(all, false, 0).kinds })
 }
 
 export default {
@@ -270,8 +275,8 @@ async function handle(request: Request, env: Env, ctx: Ctx): Promise<Response> {
         await Promise.allSettled(shards.map(s => gen(x, spec.runId, s.region, s.shard).stop(spec.runId)))
         return json({ ok: false, code: "E_START", reason: errName(e) }, 500)
       }
-      console.log(JSON.stringify({ run_started: { run: spec.runId, mode: spec.mode, rate: spec.rate, duration: spec.durationS, regions: spec.regions, shards: perRegion, pin: spec.pin, via: colo } }))
-      return json({ ok: true, runId: spec.runId, viaColo: colo, spec, shardsPerRegion: perRegion, startAt: new Date(spec.startAt).toISOString() })
+      console.log(JSON.stringify({ run_started: { run: spec.runId, mode: spec.mode, rate: spec.rate, duration: spec.durationS, warmup: spec.warmupS, regions: spec.regions, shards: perRegion, pin: spec.pin, via: colo } }))
+      return json({ ok: true, runId: spec.runId, viaColo: colo, spec, shardsPerRegion: perRegion, warmupAt: new Date(spec.startAt).toISOString(), startAt: new Date(measureFrom(spec)).toISOString(), endAt: new Date(endOf(spec)).toISOString() })
     }
     const m = /^\/run\/([^/]+)(\/stop)?$/.exec(path)
     if (m && RUN_ID.test(m[1]!)) {
