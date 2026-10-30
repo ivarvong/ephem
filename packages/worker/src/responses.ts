@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect"
 import * as HttpRouter from "effect/http/HttpRouter"
 import * as HttpServerRequest from "effect/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/http/HttpServerResponse"
+import { parseTraceparent } from "./traceparent.ts"
 
 export const IMMUTABLE = "public, max-age=31536000, immutable"
 const NO_STORE = "no-store"
@@ -69,12 +70,13 @@ export const live = (url: URL) => url.pathname === "/v1/weather" ||
 export const forwards = (method: string, url: URL) => (method === "GET" || method === "HEAD") && url.pathname.startsWith("/v1/") && !live(url)
 
 /** Request headers the front door sends with every forward to the Api. x-ephem-ray joins the Api invocation's log row to
- *  this one. Cloudflare-Workers-Version-Overrides is passed through (harmless: ctx.exports already runs the caller's
+ *  this one; a valid client traceparent (src/clienttrace.ts) is passed on so the Api's root span carries client.trace_id. Cloudflare-Workers-Version-Overrides is passed through (harmless: ctx.exports already runs the caller's
  *  version). Neither is in the cache key (the key is entrypoint + path + query + cf.cacheKey). */
 export const VERSION_OVERRIDES = "cloudflare-workers-version-overrides"
 export const forwardHeaders = (h: Readonly<Record<string, string | undefined>>): Record<string, string> => {
-  const out: Record<string, string> = {}, ray = h["cf-ray"], pin = h[VERSION_OVERRIDES]
+  const out: Record<string, string> = {}, ray = h["cf-ray"], pin = h[VERSION_OVERRIDES], tp = h["traceparent"]
   if (ray) out["x-ephem-ray"] = ray
+  if (tp && parseTraceparent(tp)) out["traceparent"] = tp
   if (pin) out[VERSION_OVERRIDES] = pin
   return out
 }

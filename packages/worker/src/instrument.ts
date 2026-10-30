@@ -22,6 +22,7 @@ import { visitor, type Visitor } from "./home.ts"
 import { ASSETS, TOKENS_CSS } from "./instrument-ds.ts"
 import { ENGINE_JS } from "./instrument-engine.ts"
 import { declinationAt } from "./weather.ts"
+import { CLIENT_TRACE_JS } from "./clienttrace.ts"
 
 /** The immutable URL of a vendored file (fonts, OFL licences). */
 export const assetUrl = (name: string): string => `/assets/${ASSETS[name]!.sha}/${name}`
@@ -418,7 +419,7 @@ function clock() { sky.TIME = linkDown ? "NO LINK" : tf.format(new Date()).slice
 function q(extra) { var o = { lat: LOC.lat.toFixed(5), lon: LOC.lon.toFixed(5) }; for (var k in extra) o[k] = extra[k]; return new URLSearchParams(o).toString(); }
 function get(path, extra) {
   S.calls++;
-  return fetch(path + "?" + q(extra)).then(function (r) { return r.json().then(function (b) { if (!r.ok) throw new Error(b && b.message || "HTTP " + r.status); return b; }); });
+  return __tfetch(path + "?" + q(extra)).then(function (r) { return r.json().then(function (b) { if (!r.ok) throw new Error(b && b.message || "HTTP " + r.status); return b; }); });
 }
 function body(b) { return { AZ: b.azimuth, ALT: b.altitude, DECL: b.declination, DIST: b.distanceKm }; }
 var seeded = false, posAt = 0;
@@ -433,7 +434,7 @@ function position() {
       E.seed([N(RPNEngine.wrap360(sky.SUN.AZ), "°", "AZ T"), N(RPNEngine.wrap360(sky.SUN.AZ - sky.MAGDEC), "°", "AZ M"), N(sky.SUN.ALT, "°", "ALT"), RPNEngine.str(sky.MOON.PHASE)]);
     }
     render();
-    if (S.dataAt == null) S.dataAt = performance.now();
+    if (S.dataAt == null) { S.dataAt = performance.now(); if (performance.mark) performance.mark("ephem:data"); }
   });
 }
 var dayFor = null;
@@ -507,6 +508,6 @@ ${fonts.map(f => `<link rel="preload" href="${assetUrl(f)}" as="font" type="font
 <script>${ENGINE_JS}</script>
 <script>${VIEW_JS}</script>
 <script>const LOC = ${json({ lat: v.lat, lon: v.lon, tz: v.tz, place: v.place, magdec })};</script>
-<script>${GLUE_JS}</script>
+<script>${CLIENT_TRACE_JS}${GLUE_JS}</script>
 </body></html>`
 }

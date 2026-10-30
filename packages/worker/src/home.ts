@@ -6,6 +6,7 @@ import * as HttpRouter from "effect/http/HttpRouter"
 import * as HttpServerRequest from "effect/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/http/HttpServerResponse"
 import { isValidZone } from "@ephem/core"
+import { CLIENT_TRACE_JS } from "./clienttrace.ts"
 
 interface CfLocation {
   readonly latitude?: string; readonly longitude?: string; readonly city?: string; readonly region?: string
@@ -373,6 +374,7 @@ footer.tel i{font:500 10px/1 var(--sans);font-style:normal;letter-spacing:.14em;
 (function () {
 "use strict";
 ${CORE_JS}
+${CLIENT_TRACE_JS}
 var D2R = Math.PI / 180, AU = 149597870.7;
 var reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
 var loc = { lat: LOC.lat, lon: LOC.lon, place: LOC.place, city: LOC.city, tz: LOC.tz, source: LOC.source, acc: null };
@@ -382,7 +384,7 @@ var S = { decl: null, wx: null, wxAt: 0, rawOpen: false, from: null, to: null, t
 // ---------- API ----------
 function api(path, q, quiet) {
   var url = path + "?" + new URLSearchParams(q).toString(), t0 = performance.now();
-  return fetch(url).then(function (r) {
+  return __tfetch(url).then(function (r) {
     return r.json().then(function (b) {
       var ms = performance.now() - t0;
       if (!r.ok) throw new Error((b && b.message) || ("HTTP " + r.status));
@@ -593,6 +595,7 @@ function draw() {
   var ringShown = shown.filter(function (f) { return f.id.indexOf("alt") === 0; });
   window.__sky = { rects: drawn, overlaps: overlaps(drawn), band: { top: g.top, hy: hy, bottom: g.bot }, segs: segs, rings: ringShown, ringLines: rings,
     ringHits: ringShown.filter(function (f) { return segs.some(function (sg) { return segHitsRect(sg, f); }); }).map(function (f) { return f.id; }) };
+  if (p && !draw.marked && window.performance && performance.mark) { draw.marked = true; performance.mark("ephem:data"); }   // first frame with an answer (journey.ts)
 }
 function frame() { if (dirty) { dirty = false; draw(); } requestAnimationFrame(frame); }
 

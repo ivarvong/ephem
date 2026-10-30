@@ -16,6 +16,7 @@ import { WeatherNone, type Weather } from "./weather.ts"
 import { Mcp } from "./mcp.ts"
 import { SCALAR_HTML, docsHtml, llmsTxt } from "./docs.ts"
 import { RequestLogging } from "./requestlog.ts"
+import { ClientTrace } from "./clienttrace.ts"
 import { Cors, provideApp, toHandler } from "./router.ts"
 
 /** /docs (plain HTML), /llms.txt and /docs/interactive (Scalar from jsDelivr, ~0 bundle cost): src/docs.ts. */
@@ -37,6 +38,7 @@ export const makeApp = (blocks: Layer.Layer<Blocks>, edge: Role = { role: "local
     Docs,
     RequestLogging,   // first global middleware = outermost: it sees every request, including those Gateway forwards
     Cors,
+    ClientTrace,   // traceparent → client.trace_id / client.span_id on the root span, x-ephem-trace echo (src/clienttrace.ts)
     Gateway,
     Mcp,
     TracerLive,

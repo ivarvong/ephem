@@ -17,6 +17,7 @@ import { TracerLive } from "./trace.ts"
 import { Edge, Gateway, type Role } from "./responses.ts"
 import { WeatherNone, type Weather } from "./weather.ts"
 import { RequestLog, RequestLogging, type RequestLogSink } from "./requestlog.ts"
+import { ClientTrace } from "./clienttrace.ts"
 
 // No HttpPlatform / FileSystem / Path / Etag layers (HttpServer.layerServices): only file responses and on-disk multipart
 // need them, and nothing here serves files. Providing them kept mime tables, Path and FileSystem in the bundle (2026-10-30).
@@ -45,7 +46,7 @@ export const provideApp = <A, E, R>(app: Layer.Layer<A, E, R>, blocks: Layer.Lay
 
 /** The Api entrypoint: the /v1 routes only (no openapi.json, homepage, docs or MCP). */
 export const makeApiApp = (blocks: Layer.Layer<Blocks>, edge: Role = { role: "api" }, weather: Layer.Layer<Weather> = WeatherNone, geoid: Layer.Layer<Geoid> = GeoidInstalled) =>
-  provideApp(Layer.mergeAll(HttpApiBuilder.layer(EphemApi), RequestLogging, Cors, Gateway, TracerLive), blocks, edge, weather, geoid)
+  provideApp(Layer.mergeAll(HttpApiBuilder.layer(EphemApi), RequestLogging, Cors, ClientTrace, Gateway, TracerLive), blocks, edge, weather, geoid)
 
 /** A router layer as a fetch-style handler. `log`: where this request's Basin row goes (src/requestlog.ts); without it nothing is logged. */
 export const toHandler = (app: unknown) => {
