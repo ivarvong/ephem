@@ -76,3 +76,35 @@ describe("alignment height references", () => {
     expect(u.status).toBe(400); expect(u.j.allowed).toEqual(expect.arrayContaining(["heightRef", "targetHeightRef"]))
   })
 })
+
+const pos = async (lat: number, lon: number, hE: number, time: string) =>
+  (await (await handler(new Request(`http://x/v1/position?lat=${lat}&lon=${lon}&height=${hE}&time=${time}`))).json()) as any
+describe("include=sun,phase (round-2 #5)", () => {
+  it("alignment: every track point and pass carries the Sun and the Moon phase, equal to /v1/position there and then", async () => {
+    const { status, j } = await get(`${MSL}&include=sun,phase&observerLat=40.7003&observerLon=-73.9968`)
+    expect(status).toBe(200)
+    for (const p of [j.track[0], j.track.at(-1)]) {
+      const r = await pos(p.lat, p.lon, p.heightEllipsoid, p.time)
+      expect(p.sun.altitude).toBeCloseTo(r.sun.altitude, 9); expect(p.sun.azimuth).toBeCloseTo(r.sun.azimuth, 9)
+      expect(p.sun.apparentAltitude).toBe(null)          // the Sun is far below the sea horizon at 22:45 EST
+      expect(p.phase).toEqual(r.moon.phase)
+    }
+    expect(j.track[0].phase.illuminatedFraction).toBeGreaterThan(0.4); expect(j.track[0].phase.illuminatedFraction).toBeLessThan(0.55)
+    expect(j.conventions.include).toMatch(/include=sun/)
+    const plain = (await get(MSL)).j
+    expect(plain.track[0].sun).toBeUndefined(); expect(plain.track[0].phase).toBeUndefined()
+    expect((await get(`${MSL}&include=sun`)).j.track[0].phase).toBeUndefined()
+  })
+  it("crossing: per crossing; bad values are 400", async () => {
+    const r = await handler(new Request("http://x/v1/crossing?body=moon&lat=40.6985&lon=-73.999&height=5&heightRef=msl&altitude=0.87&altitudeType=apparent&direction=set&start=2026-11-16T00:00:00Z&end=2026-11-18T00:00:00Z&include=phase,sun"))
+    expect(r.status).toBe(200)
+    const j = await r.json() as any
+    expect(j.crossings.length).toBeGreaterThan(0)
+    for (const c of j.crossings) {
+      const p = await pos(40.6985, -73.999, j.observer.heightEllipsoid, c.time)
+      expect(c.sun.altitude).toBeCloseTo(p.sun.altitude, 9); expect(c.phase).toEqual(p.moon.phase)
+    }
+    for (const bad of ["include=moon", "include=sun,sun,phase", "include="])
+      expect((await handler(new Request(`http://x/v1/crossing?body=moon&lat=40.7&lon=-74&altitude=0&date=2026-11-16&tz=America/New_York&${bad}`))).status, bad).toBe(400)
+  })
+})

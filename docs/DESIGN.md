@@ -249,6 +249,12 @@ Worker prefetches the geoid bands for target lat ± maxDistanceKm. Evidence: the
 agree to ≤ 8.5 m along a 12 m/s track (N at the statue is −32.90 m, so their target was 0.09 m high); vs the Skyfield
 oracle with msl heights: position ≤ 25 mm, heightEllipsoid ≤ 1.8 mm (`crosscheck.py --only alignment`, 0 failures).
 
+**Context (`include=sun,phase`, 2026-10-30).** On /v1/alignment (each track point and pass) and /v1/crossing (each
+crossing): `sun` = the Sun's azimuth, true altitude and apparent altitude (sea horizon at the eye's height, else null) seen
+from that point at that instant, and `phase` = the Moon's geocentric phase, both exactly /v1/position's values there
+(worker test). Replaces the customer's per-pass /v1/position calls. Answers without `include` are unchanged (no
+CACHE_VERSION bump).
+
 **Converse ("from here, when").** With `observerLat/Lon`: the azimuth to the target and its apparent elevation are fixed;
 find the instants where the body's azimuth − target azimuth crosses zero (2-min sampling, ±180° wrap crossings
 discarded), and report `altitudeOffset` = body apparent altitude − target elevation. Negative means the body centre is

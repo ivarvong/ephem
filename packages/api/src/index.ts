@@ -175,6 +175,18 @@ export const DayResponse = S.Struct({
   provenance: Provenance,
 })
 
+// ─────────────────────────────── include=sun,phase (context on crossings and alignments) ───────────────────────────────
+/** Comma-separated: sun, phase. */
+export const IncludeParam = S.String.check(S.isPattern(/^(sun|phase)(,(sun|phase))?$/))
+export const SunContext = S.Struct({
+  azimuth: Degrees, altitude: Degrees.annotate(d0("Sun centre true (vacuum) altitude, degrees, seen from this point (twilight thresholds use this).")),
+  apparentAltitude: S.NullOr(Degrees).annotate(d0("Refracted, down to the sea horizon at the eye's height; null below it, as /v1/position.")),
+})
+const contextFields = {
+  sun: S.optionalKey(SunContext.annotate(d0("include=sun: the Sun seen from this point at this instant."))),
+  phase: S.optionalKey(MoonPhase.annotate(d0("include=phase: the Moon's geocentric phase at this instant, as /v1/position."))),
+}
+
 // ─────────────────────────────── /v1/crossing ───────────────────────────────
 export const CrossingQuery = {
   ...skyObserverQuery,
@@ -187,11 +199,13 @@ export const CrossingQuery = {
   start: S.optionalKey(UtcString), end: S.optionalKey(UtcString),                   // window (≤ 31 days), or:
   date: S.optionalKey(DateString), tz: S.optionalKey(S.String),                     // one local day, like /v1/day
   temperature: optNum(Temperature), pressure: optNum(Pressure), dut1: optNum(Dut1),
+  include: S.optionalKey(IncludeParam),                                             // sun,phase: context per crossing
 }
 export const Crossing = S.Struct({
   time: UtcString, direction: S.Literals(["rise", "set"]),
   azimuth: Degrees, altitude: Degrees.annotate(d0("True altitude of the body centre at the crossing.")),
   altitudeRate: S.Finite.annotate(d0("d(true altitude)/dt at the crossing, degrees per minute (±10 s symmetric difference).")),
+  ...contextFields,
 })
 export const CrossingConventions = S.Struct({
   definition: S.String,
@@ -200,6 +214,7 @@ export const CrossingConventions = S.Struct({
   refraction: S.NullOr(S.Struct({ model: S.String, temperatureC: S.Finite, pressureHpa: S.Finite })),
   horizon: S.NullOr(HorizonConventions),
   geoid: GeoidConventions,
+  include: S.optionalKey(S.String),
 })
 export const CrossingResponse = S.Struct({
   body: S.Literals(["sun", "moon"]), start: UtcString, end: UtcString, observer: SkyObserver,
@@ -221,6 +236,7 @@ export const AlignmentQuery = {
   maxDistanceKm: optNum(S.Finite.check(S.isBetween({ minimum: 0.01, maximum: 200 }))), // default 20
   temperature: optNum(S.Finite), pressure: optNum(S.Finite), dut1: optNum(Dut1),
   observerLat: optNum(Lat), observerLon: optNum(Lon),   // both or neither: a fixed spot for the converse question
+  include: S.optionalKey(IncludeParam),                 // sun,phase: context per track point and per pass
 }
 export const AlignmentPoint = S.Struct({
   time: UtcString,
@@ -234,12 +250,14 @@ export const AlignmentPoint = S.Struct({
   heightEllipsoid: S.Finite.annotate(d0("The eye's height above WGS-84 at this standing point, metres.")),
   heightMsl: S.Finite.annotate(d0("The eye's height above the EGM96 geoid at this standing point, metres.")),
   geoidUndulation: S.Finite.annotate(d0("EGM96 N at this standing point, metres: heightEllipsoid = heightMsl + geoidUndulation.")),
+  ...contextFields,
 })
 export const Pass = S.Struct({
   time: UtcString,
   altitudeOffset: Degrees,            // body apparent centre altitude − target apparent elevation (negative: body is hidden behind the target)
   angularRadius: Degrees,
   apparentAltitude: Degrees,
+  ...contextFields,
 })
 export const FromObserver = S.Struct({
   observer: SkyObserver,
@@ -249,7 +267,7 @@ export const FromObserver = S.Struct({
 export const AlignmentConventions = S.Struct({
   definition: S.String, azimuth: S.String, apparentAltitude: S.String,
   terrestrialRefraction: S.String.annotate(d0("Whether and how refraction along the sight line (eye → target) is modelled.")),
-  heights: S.String, rates: S.String,
+  heights: S.String, rates: S.String, include: S.optionalKey(S.String),
   observerHeightRef: S.Literals(["ellipsoid", "msl", "default"]).annotate(d0("What observerHeight was measured from; default = no observerHeight, the eye is on the geoid.")),
   targetHeightRef: HeightRef,
   terrestrialRefractionK: S.Finite,
@@ -385,6 +403,7 @@ export const API_DESCRIPTION = [
   "",
   "Changes on 2026-10-30 (round-2 feedback):",
   "6. /v1/alignment: `heightRef` (observer) and `targetHeightRef`, each ellipsoid (default) | msl, as on /v1/crossing; `target` echoes the target's heights and geoid undulation; every track point has `altitudeRate`, `azimuthRate` (°/min, as /v1/position), `heightEllipsoid`, `heightMsl`, `geoidUndulation`; a `conventions` block. BEHAVIOUR CHANGE: without `observerHeight` the eye is now on the geoid (heightMsl 0, as on every other endpoint); it used to be 0 m above the ellipsoid (≈ 33 m below sea level in New York).",
+  "7. `include=sun,phase` on /v1/alignment (per track point and pass) and /v1/crossing (per crossing): the Sun's azimuth, true and apparent altitude seen from that point, and the Moon's phase.",
 ].join("\n")
 
 /** Unknown query parameters are an error, not silently ignored (a dropped `temperature` changes nothing and says nothing). */

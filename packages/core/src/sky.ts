@@ -8,6 +8,7 @@ import { position, RATE_STEP_S } from "./position.ts"
 import { type HorizonProfile, DAY_THRESHOLDS, MAX_CROSSING_WINDOW_MS, crossing, day, localMidnight, nextDate, parseProfile } from "./day.ts"
 import { isoMs } from "./time.ts"
 import { track } from "./track.ts"
+import { CONTEXT_CONVENTIONS, type Include, contextAt } from "./context.ts"
 
 export interface SkyObserverInput { readonly lat: number; readonly lon: number; readonly height?: number | undefined; readonly heightRef?: HeightRef | undefined }
 const geoOf = (o: SkyObserverInput) => {
@@ -118,6 +119,7 @@ export interface CrossingRequest extends SkyObserverInput {
   readonly altitude?: number | undefined; readonly altitudeType?: "true" | "apparent" | undefined; readonly horizonProfile?: string | undefined
   readonly limb?: Limb | undefined; readonly direction?: "rise" | "set" | "either" | undefined
   readonly temperature?: number | undefined; readonly pressure?: number | undefined; readonly dut1?: number | undefined
+  readonly include?: ReadonlySet<Include> | undefined   // sun, phase: context per crossing
 }
 /** Window from start/end or from a local date + tz; validation messages are the API's. */
 export const crossingWindow = (q: { start?: string | undefined; end?: string | undefined; date?: string | undefined; tz?: string | undefined }): SkyResult<{ startMs: number; endMs: number }> => {
@@ -146,9 +148,11 @@ export const crossingRequest = (src: BlockSource, q: CrossingRequest): SkyResult
     target = { kind: "apparent", altitude: q.altitude!, temperature: T, pressure: P }
   } else target = { kind: "true", altitude: q.altitude! }
   const r = crossing(src, { startMs: q.startMs, endMs: q.endMs, geo, dut1: q.dut1, body: q.body, limb, direction: q.direction ?? "either", target })
-  return { ok: crossingOut(q, h, r, target, limb, profile, T, P) }
+  const inc = q.include ?? new Set<Include>()
+  const withCtx = inc.size === 0 ? r : { crossings: r.crossings.map(c => ({ ...c, ...contextAt(src, inc, geo, h.heightMsl, Date.parse(c.time), { dut1: q.dut1, temperature: T, pressure: P }) })) }
+  return { ok: crossingOut(q, h, withCtx, target, limb, profile, T, P) }
 }
-const crossingOut = (q: CrossingRequest, h: ObserverHeights, r: ReturnType<typeof crossing>, target: Parameters<typeof crossing>[1]["target"], limb: Limb, profile: HorizonProfile | undefined, T: number, P: number) => {
+const crossingOut = (q: CrossingRequest, h: ObserverHeights, r: { crossings: ReadonlyArray<ReturnType<typeof crossing>["crossings"][number] & ReturnType<typeof contextAt>> }, target: Parameters<typeof crossing>[1]["target"], limb: Limb, profile: HorizonProfile | undefined, T: number, P: number) => {
   const what = limb === "center" ? "centre" : `${limb} limb`
   const trueLimb = target.kind === "true" ? target.altitude : target.kind === "apparent" ? target.altitude - refraction(target.altitude, T, P) : null
   return {
@@ -161,6 +165,7 @@ const crossingOut = (q: CrossingRequest, h: ObserverHeights, r: ReturnType<typeo
       refraction: target.kind === "true" ? null : { model: REFRACTION_MODEL, temperatureC: T, pressureHpa: P },
       horizon: profile ? horizonOut({ kind: "profile", profile }) : null,
       geoid: geoidOut,
+      ...(q.include && q.include.size ? { include: CONTEXT_CONVENTIONS } : {}),
     },
   }
 }

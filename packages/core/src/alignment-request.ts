@@ -6,6 +6,7 @@ import { type HeightRef, K_TERRESTRIAL, P_DEFAULT, R_MEAN_M, T_DEFAULT, observer
 import { GEOID, geoidUndulation } from "./geoid.ts"
 import { RATE_STEP_S } from "./position.ts"
 import { REFRACTION_MODEL } from "./sky.ts"
+import { CONTEXT_CONVENTIONS, type Include, contextAt } from "./context.ts"
 
 export interface AlignmentRequest {
   readonly body: BodyName
@@ -16,6 +17,7 @@ export interface AlignmentRequest {
   readonly startMs: number; readonly endMs: number; readonly stepSeconds: number; readonly maxDistanceKm: number
   readonly temperature?: number | undefined; readonly pressure?: number | undefined; readonly dut1?: number | undefined
   readonly observer?: { readonly lat: number; readonly lon: number } | undefined
+  readonly include?: ReadonlySet<Include> | undefined   // sun, phase: context per track point and per pass
 }
 
 export const ALIGNMENT_CONVENTIONS = {
@@ -46,17 +48,20 @@ export const alignmentRequest = (src: BlockSource, q: AlignmentRequest) => {
     startMs: q.startMs, endMs: q.endMs, stepSeconds: q.stepSeconds, maxDistanceKm: q.maxDistanceKm,
     temperature: T, pressure: P, dut1: q.dut1, observer: q.observer,
   }
-  const r = alignment(src, inp)
+  const r = alignment(src, inp), inc = q.include ?? new Set<Include>(), ctx = { dut1: q.dut1, temperature: T, pressure: P }
   const track = r.track.map(p => ({
     time: p.time, lat: p.lat, lon: p.lon, distanceKm: p.distanceKm, azimuth: p.azimuth, apparentAltitude: p.apparentAltitude, angularRadius: p.angularRadius,
     ...ratesAt(src, q.body, { lat: p.lat, lon: p.lon, height: p.heightEllipsoid }, Date.parse(p.time), q.dut1 ?? 0),
     ...heightsOut(p.lat, p.lon, p.heightEllipsoid),
+    ...contextAt(src, inc, { lat: p.lat, lon: p.lon, height: p.heightEllipsoid }, p.heightEllipsoid - geoidUndulation(p.lat, p.lon), Date.parse(p.time), ctx),
     iterations: p.iterations,
   }))
   let fromObserver
   if (r.fromObserver && q.observer) {
     const h = observerHeights(q.observer.lat, q.observer.lon, q.observerHeight, q.heightRef)
-    fromObserver = { ...r.fromObserver, observer: { lat: q.observer.lat, lon: q.observer.lon, height: h.heightEllipsoid, heightEllipsoid: h.heightEllipsoid, heightMsl: h.heightMsl, geoidUndulation: h.geoidUndulation, heightRef: h.heightRef } }
+    const geo = { lat: q.observer.lat, lon: q.observer.lon, height: h.heightEllipsoid }
+    const passes = r.fromObserver.passes.map(x => ({ ...x, ...contextAt(src, inc, geo, h.heightMsl, Date.parse(x.time), ctx) }))
+    fromObserver = { ...r.fromObserver, passes, observer: { lat: q.observer.lat, lon: q.observer.lon, height: h.heightEllipsoid, heightEllipsoid: h.heightEllipsoid, heightMsl: h.heightMsl, geoidUndulation: h.geoidUndulation, heightRef: h.heightRef } }
   }
   return {
     body: r.body,
@@ -65,6 +70,7 @@ export const alignmentRequest = (src: BlockSource, q: AlignmentRequest) => {
     ...(fromObserver ? { fromObserver } : {}),
     conventions: {
       ...ALIGNMENT_CONVENTIONS,
+      ...(inc.size ? { include: CONTEXT_CONVENTIONS } : {}),
       observerHeightRef: oRef, targetHeightRef: tRef,
       terrestrialRefractionK: K_TERRESTRIAL,
       refraction: { model: REFRACTION_MODEL, temperatureC: T, pressureHpa: P },
