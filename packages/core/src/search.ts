@@ -148,6 +148,191 @@ export interface SearchCounters {
 interface Sample { readonly t: number; readonly x: number; readonly y: number; readonly lat: number; readonly lon: number; readonly seed: Seed }
 interface Seg { enter: number; exit: number; enterAt: Crossing | undefined; exitAt: Crossing | undefined; truncated: boolean }
 
+// The search's inner loops, each in its own small function: one big function with many loops ran mostly unoptimised in V8
+// (its OSR'd inner loops deopt on exit, ~250 times per 12-month scan), boxing every double (~150 MB per scan).
+interface LookCtx {
+  readonly src: BlockSource; readonly ref: Geodetic; readonly body: BodyName; readonly dut1: number
+  readonly hLo: number; readonly hHi: number; readonly az0: number; readonly azW: number
+  readonly lAlt: number; readonly lAzJ: number; readonly hJump: number
+  lt: number; readonly c: SearchCounters
+}
+interface Look { readonly da: number; readonly dz: number; readonly jump: number }
+/** The body seen from R at ms: its altitude's and azimuth's distance from the band, and the longest interval on either side
+ *  of ms that provably holds no in-band instant. */
+const lookAt = (k: LookCtx, ms: number): Look => {
+  k.c.scanEvaluations++
+  const f = frameAt(k.src, instant(ms, k.dut1), k.ref), a = apparent(k.src, f, k.body, k.lt), tp = topocentric(f, a.v)
+  k.lt = a.lt
+  const h = tp.altitude, da = h < k.hLo ? k.hLo - h : h > k.hHi ? h - k.hHi : 0
+  const rel = (tp.azimuth - k.az0 + 360) % 360, dz = rel <= k.azW ? 0 : Math.min(rel - k.azW, 360 - rel)
+  const ah = Math.abs(h), ja = da / k.lAlt, jz = ah < k.hJump ? Math.min(dz / k.lAzJ, (k.hJump - ah) / k.lAlt) : 0
+  return { da, dz, jump: ja > jz ? ja : jz }
+}
+/** Jump where the band is provably out of reach, step `step` near it; keep the steps whose ends could both reach it. */
+const scanSpans = (k: LookCtx, from: number, to: number, step: number, lAz: number): Array<[number, number]> => {
+  const spans: Array<[number, number]> = []
+  let open: [number, number] | undefined, has = false, pt = 0, pda = 0, pdz = 0
+  for (let t = from; t <= to || open;) {
+    const l = lookAt(k, t)
+    if (has) {
+      const dt = t - pt
+      if (pda + l.da <= k.lAlt * dt && pdz + l.dz <= lAz * dt) { if (open) open[1] = t; else open = [pt, t] }
+      else if (open) { spans.push(open); open = undefined }
+    }
+    has = true; pt = t; pda = l.da; pdz = l.dz
+    t += l.jump > step ? l.jump : step
+  }
+  return spans
+}
+/** Pull each span's ends in: from an out-of-band end, [end, end ± jump) holds no in-band instant. Ends stay evaluated
+ *  out-of-band instants. */
+const trimSpans = (k: LookCtx, spans: Array<[number, number]>, minMs: number): void => {
+  for (const sp of spans) for (let dir = 1; dir >= -1; dir -= 2) {
+    let t = dir > 0 ? sp[0] : sp[1], end = t
+    for (;;) {
+      const j = lookAt(k, t).jump
+      if (j > 0) end = t
+      if (j < minMs || (dir > 0 ? t + j >= sp[1] : t - j <= sp[0])) break
+      t += dir * j
+    }
+    if (dir > 0) sp[0] = end; else sp[1] = end
+  }
+}
+
+type Gap = { readonly t: number; readonly gap: true }
+type Pt = Sample | Gap
+type Solve = (t: number, seed: Seed) => { x: number; y: number; lat: number; lon: number } | null
+/** Samples of the track over [a, b]: chords ≤ chordM from the measured speed, then midpoints wherever it bends more than
+ *  sagittaM. */
+const sampleSpan = (a: number, b: number, sampleAt: (t: number, seed: Seed) => Sample | null, c: SearchCounters): Pt[] => {
+  const seed: Seed = { backAz: 0, az: 0, dist: 0, slope: 0, lt: 0 }
+  const xs: Pt[] = []
+  let dtMs = 5000, last: Sample | null = null
+  for (let t = a; ; t = Math.min(b, t + dtMs)) {
+    const s = sampleAt(t, seed)
+    if (s) {
+      if (last) { const v = Math.hypot(s.x - last.x, s.y - last.y) / (s.t - last.t); dtMs = Math.min(30_000, Math.max(100, SEARCH.chordM / Math.max(v, 1e-9))) }
+      last = s; xs.push(s)
+    } else { xs.push({ t, gap: true }); Object.assign(seed, { P: undefined }) ; last = null }
+    if (t >= b) break
+  }
+  for (let pass = 0; pass < 8; pass++) if (!bisectPass(xs, sampleAt, c)) break
+  return xs
+}
+const bisectPass = (xs: Pt[], sampleAt: (t: number, seed: Seed) => Sample | null, c: SearchCounters): boolean => {
+  let inserted = false
+  for (let i = 1; i + 1 < xs.length; i++) {
+    const p0 = xs[i - 1]!, p1 = xs[i]!, p2 = xs[i + 1]!
+    if ("gap" in p0 || "gap" in p1 || "gap" in p2) continue
+    const lx = p2.x - p0.x, ly = p2.y - p0.y, dev = Math.abs(lx * (p1.y - p0.y) - ly * (p1.x - p0.x)) / (Math.hypot(lx, ly) || 1)   // off the chord, not along it
+    c.maxSagittaM = Math.max(c.maxSagittaM, dev)
+    if (dev > 4 * SEARCH.sagittaM && p1.t - p0.t > 20) {
+      const m0 = sampleAt((p0.t + p1.t) / 2, { ...p0.seed }), m1 = sampleAt((p1.t + p2.t) / 2, { ...p1.seed })
+      xs.splice(i + 1, 0, m1 ?? { t: (p1.t + p2.t) / 2, gap: true }); xs.splice(i, 0, m0 ?? { t: (p0.t + p1.t) / 2, gap: true })
+      i += 2; inserted = true
+    }
+  }
+  return inserted
+}
+
+/** Edges bucketed by y in horizontal strips (CSR), so a chord tests only the edges of the strips it spans. */
+interface EdgeIndex { readonly y0: number; readonly h: number; readonly n: number; readonly start: Int32Array; readonly items: Int32Array; readonly seen: Int32Array; gen: number; readonly cand: Int32Array }
+const STRIP_EPS_M = 1e-6   // a chord's y-range is widened by this, far above the cross products' rounding, so no edge the exact test could flag is skipped
+const edgeIndex = (E: Float64Array, minY: number, maxY: number): EdgeIndex => {
+  const nE = E.length / 4, n = Math.max(1, Math.min(256, Math.ceil(nE / 4))), h = (maxY - minY) / n || 1
+  const strip = (y: number) => Math.min(n - 1, Math.max(0, Math.floor((y - minY) / h)))
+  const count = new Int32Array(n + 1)
+  for (let e = 0; e < nE; e++) { const ay = E[4 * e + 1]!, by = E[4 * e + 3]!; for (let s = strip(Math.min(ay, by)), z = strip(Math.max(ay, by)); s <= z; s++) count[s + 1]!++ }
+  for (let s = 0; s < n; s++) count[s + 1]! += count[s]!
+  const items = new Int32Array(count[n]!), fill = count.slice(0, n)
+  for (let e = 0; e < nE; e++) { const ay = E[4 * e + 1]!, by = E[4 * e + 3]!; for (let s = strip(Math.min(ay, by)), z = strip(Math.max(ay, by)); s <= z; s++) items[fill[s]!++] = e }
+  return { y0: minY, h, n, start: count, items, seen: new Int32Array(nE), gen: 0, cand: new Int32Array(nE) }
+}
+/** The edges whose strips a chord with y in [ya, yb] touches, ascending (the order a full loop over the edges visits them). */
+const candidates = (ix: EdgeIndex, ya: number, yb: number): number => {
+  const g = ++ix.gen, lo = Math.min(ix.n - 1, Math.max(0, Math.floor((ya - STRIP_EPS_M - ix.y0) / ix.h))), hi = Math.min(ix.n - 1, Math.max(0, Math.floor((yb + STRIP_EPS_M - ix.y0) / ix.h)))
+  let m = 0
+  for (let s = lo; s <= hi; s++) for (let q = ix.start[s]!, z = ix.start[s + 1]!; q < z; q++) { const e = ix.items[q]!; if (ix.seen[e] !== g) { ix.seen[e] = g; ix.cand[m++] = e } }
+  ix.cand.subarray(0, m).sort()
+  return m
+}
+/** Crossings of the sampled track with every edge, each refined on the true track (Illinois to crossingTolM). */
+const spanCuts = (xs: ReadonlyArray<Pt>, pr: PlanarRegion, bb: { minX: number; maxX: number; minY: number; maxY: number }, ix: EdgeIndex, solve: Solve, c: SearchCounters): Array<{ t: number; at: Crossing }> => {
+  const E = pr.edges, cuts: Array<{ t: number; at: Crossing }> = []
+  for (let i = 0; i + 1 < xs.length; i++) {
+    const s0 = xs[i]!, s1 = xs[i + 1]!
+    if ("gap" in s0 || "gap" in s1) {
+      const s = "gap" in s0 ? s1 : s0
+      if (!("gap" in s) && insidePlanar(pr, s.x, s.y)) c.anomalies++   // a gap next to an inside point would hide a boundary
+      continue
+    }
+    if (Math.max(s0.x, s1.x) < bb.minX || Math.min(s0.x, s1.x) > bb.maxX || Math.max(s0.y, s1.y) < bb.minY || Math.min(s0.y, s1.y) > bb.maxY) continue
+    const m = candidates(ix, Math.min(s0.y, s1.y), Math.max(s0.y, s1.y))
+    for (let q = 0; q < m; q++) {
+      const e = ix.cand[q]!, ax = E[4 * e]!, ay = E[4 * e + 1]!, ex = E[4 * e + 2]! - ax, ey = E[4 * e + 3]! - ay
+      const c0 = ex * (s0.y - ay) - ey * (s0.x - ax), c1 = ex * (s1.y - ay) - ey * (s1.x - ax)
+      if ((c0 > 0 && c1 > 0) || (c0 < 0 && c1 < 0)) continue
+      const cx = s1.x - s0.x, cy = s1.y - s0.y
+      const d0 = cx * (ay - s0.y) - cy * (ax - s0.x), d1 = cx * (ay + ey - s0.y) - cy * (ax + ex - s0.x)
+      if ((d0 > 0 && d1 > 0) || (d0 < 0 && d1 < 0)) continue
+      c.crossings++
+      cuts.push(refineCut(s0, s1, ax, ay, ex, ey, c0, c1, solve, c))
+    }
+  }
+  cuts.sort((p, q) => p.t - q.t)
+  return cuts
+}
+/** Illinois on [s0.t, s1.t] for the signed distance of P(t) from the edge's line. */
+const refineCut = (s0: Sample, s1: Sample, ax: number, ay: number, ex: number, ey: number, c0: number, c1: number, solve: Solve, c: SearchCounters): { t: number; at: Crossing } => {
+  const len = Math.hypot(ex, ey), sd = { ...s0.seed }
+  let best = { t: s0.t, lat: s0.lat, lon: s0.lon }
+  const g = (t: number) => {
+    c.refineEvaluations++
+    const s = solve(t, sd)
+    if (!s) return NaN
+    best = { t, lat: s.lat, lon: s.lon }
+    return (ex * (s.y - ay) - ey * (s.x - ax)) / len
+  }
+  let ta = s0.t, fa = c0 / len, tb = s1.t, fb = c1 / len
+  if (fa === 0) best = { t: s0.t, lat: s0.lat, lon: s0.lon }
+  else if (fb === 0) best = { t: s1.t, lat: s1.lat, lon: s1.lon }
+  else {
+    for (let it = 0; it < 60; it++) {
+      const tc = tb - fb * (tb - ta) / (fb - fa), fc = g(tc)
+      if (!Number.isFinite(fc)) { c.anomalies++; break }
+      if (Math.abs(fc) < SEARCH.crossingTolM) break
+      if (fc * fb < 0) { ta = tb; fa = fb } else fa /= 2
+      tb = tc; fb = fc
+      if (Math.abs(tb - ta) < SEARCH.crossingTolS * 1000) { g((ta + tb) / 2); break }
+    }
+  }
+  return { t: best.t, at: { time: isoMs(best.t), lat: best.lat, lon: best.lon } }
+}
+/** Inside / outside between consecutive cuts, from the chords (linear between samples): the span's in-region segments. */
+const spanSegments = (a: number, b: number, xs: ReadonlyArray<Pt>, cuts: ReadonlyArray<{ t: number; at: Crossing }>, pr: PlanarRegion, segs: Seg[], c: SearchCounters): void => {
+  const stateAt = (t: number): boolean => {
+    for (let i = 0; i + 1 < xs.length; i++) {
+      const s0 = xs[i]!, s1 = xs[i + 1]!
+      if (t < s0.t || t > s1.t) continue
+      if ("gap" in s0 || "gap" in s1) return false
+      const f = (t - s0.t) / (s1.t - s0.t)
+      return insidePlanar(pr, s0.x + f * (s1.x - s0.x), s0.y + f * (s1.y - s0.y))
+    }
+    return false
+  }
+  const bounds = [a, ...cuts.map(k => k.t), b]
+  let cur: Seg | undefined
+  for (let i = 0; i + 1 < bounds.length; i++) {
+    const t0 = bounds[i]!, t1 = bounds[i + 1]!
+    if (t1 - t0 < 1e-6) continue
+    const inside = stateAt((t0 + t1) / 2)
+    if (inside && !cur) cur = { enter: t0, exit: t1, enterAt: i === 0 ? undefined : cuts[i - 1]!.at, exitAt: undefined, truncated: i === 0 }
+    else if (inside && cur) cur.exit = t1
+    else if (!inside && cur) { cur.exitAt = cuts[i - 1]!.at; segs.push(cur); cur = undefined }
+  }
+  if (cur) { c.anomalies++; cur.truncated = true; segs.push(cur) }   // span ends are outside by construction
+}
+
 /** Passes whose first entry lies in [startMs, endMs). Pure; reads only the blocks for [start − lookback, end + lookahead]. */
 export const searchWindow = (src: BlockSource, inp: SearchInput): { geometry: SearchGeometry; passes: SearchPass[]; counters: SearchCounters } | { error: string } => {
   const geo = searchGeometry(inp)
@@ -162,149 +347,27 @@ export const searchWindow = (src: BlockSource, inp: SearchInput): { geometry: Se
   const azRate = (H: number) => (W * (sinP + cosP * Math.tan(H * DEG)) + own / Math.cos(H * DEG)) / 3.6e6
   const hBand = Math.max(Math.abs(hLo), Math.abs(hHi))
   const lAlt = (W * cosP + own) / 3.6e6, hKeep = Math.min(hBand + 1, 85), lAz = azRate(hKeep), hJump = Math.min(hBand + SEARCH.azJumpCapDeg, 85), lAzJ = azRate(hJump)
-  let lt = 0
-  const look = (ms: number) => {
-    c.scanEvaluations++
-    const f = frameAt(src, instant(ms, dut1), ref), a = apparent(src, f, inp.body, lt), tp = topocentric(f, a.v)
-    lt = a.lt
-    const h = tp.altitude, da = h < hLo ? hLo - h : h > hHi ? h - hHi : 0
-    const rel = (tp.azimuth - az0 + 360) % 360, dz = rel <= azW ? 0 : Math.min(rel - azW, 360 - rel)
-    // the longest interval on either side of ms that provably holds no in-band instant
-    const ja = da / lAlt, jz = Math.abs(h) < hJump ? Math.min(dz / lAzJ, (hJump - Math.abs(h)) / lAlt) : 0
-    return { da, dz, jump: ja > jz ? ja : jz }
-  }
+  const k: LookCtx = { src, ref, body: inp.body, dut1, hLo, hHi, az0, azW, lAlt, lAzJ, hJump, lt: 0, c }
 
-  // 2. scan → spans
-  const scanFrom = inp.startMs - SEARCH.lookbackS * 1000, scanTo = inp.endMs + SEARCH.lookaheadS * 1000, step = SEARCH.scanStepS * 1000
-  const spans: Array<[number, number]> = []
-  let open: [number, number] | undefined, prev: { t: number; da: number; dz: number; jump: number } | undefined
-  for (let t = scanFrom; t <= scanTo || open;) {
-    const l = look(t)
-    if (prev) {
-      const dt = t - prev.t
-      if (prev.da + l.da <= lAlt * dt && prev.dz + l.dz <= lAz * dt) { if (open) open[1] = t; else open = [prev.t, t] }
-      else if (open) { spans.push(open); open = undefined }
-    }
-    prev = { t, ...l }
-    t += l.jump > step ? l.jump : step
-  }
-  // pull each span's ends in: from an out-of-band end, [end, end ± jump) holds no in-band instant
-  const trimMs = SEARCH.trimMinS * 1000
-  for (const sp of spans) for (const dir of [1, -1] as const) {
-    let t = dir > 0 ? sp[0] : sp[1], end = t
-    for (;;) {
-      const j = look(t).jump
-      if (j > 0) end = t                                   // out of the band: a valid span end
-      if (j < trimMs || (dir > 0 ? t + j >= sp[1] : t - j <= sp[0])) break
-      t += dir * j
-    }
-    if (dir > 0) sp[0] = end; else sp[1] = end
-  }
+  // 2. scan → spans, ends pulled in
+  const scanFrom = inp.startMs - SEARCH.lookbackS * 1000, scanTo = inp.endMs + SEARCH.lookaheadS * 1000
+  const spans = scanSpans(k, scanFrom, scanTo, SEARCH.scanStepS * 1000, lAz)
+  trimSpans(k, spans, SEARCH.trimMinS * 1000)
 
   // 3. track and clip each span
-  const pr: PlanarRegion = planarRegion(inp.region), E = pr.edges, nE = E.length / 4
+  const pr: PlanarRegion = planarRegion(inp.region)
   const bb = pr.polygons.reduce((m, p) => ({ minX: Math.min(m.minX, p.minX), maxX: Math.max(m.maxX, p.maxX), minY: Math.min(m.minY, p.minY), maxY: Math.max(m.maxY, p.maxY) }), { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity })
+  const idx = edgeIndex(pr.edges, bb.minY, bb.maxY)
   const ainp: AlignmentInput = { body: inp.body, target: inp.target, observerHeight: inp.observerHeight, observerHeightRef: inp.observerHeightRef, startMs: 0, endMs: 0, stepSeconds: 1, maxDistanceKm: geo.maxDistanceKm, temperature: T, pressure: Pr, dut1, aim: inp.aim }
-  const solve = (t: number, seed: Seed) => { const p = standingPoint(src, ainp, t, seed); if (!p) return null; const [x, y] = pr.frame.toXY(p.lon, p.lat); return { t, x, y, lat: p.lat, lon: p.lon, p } }
+  const solve: Solve = (t, seed) => { const p = standingPoint(src, ainp, t, seed); if (!p) return null; const [x, y] = pr.frame.toXY(p.lon, p.lat); return { x, y, lat: p.lat, lon: p.lon } }
   const sampleAt = (t: number, seed: Seed): Sample | null => { c.trackEvaluations++; const s = solve(t, seed); return s ? { t, x: s.x, y: s.y, lat: s.lat, lon: s.lon, seed: { ...seed } } : null }
 
   const segs: Seg[] = []
   for (const [a, b] of spans) {
     c.spans++; c.spanSeconds += (b - a) / 1000
-    // samples: chords ≤ chordM from the measured speed, then midpoints wherever the track bends more than sagittaM
-    const seed: Seed = { backAz: 0, az: 0, dist: 0, slope: 0, lt: 0 }
-    const xs: Array<Sample | { t: number; gap: true }> = []
-    let dtMs = 5000, last: Sample | null = null
-    for (let t = a; ; t = Math.min(b, t + dtMs)) {
-      const s = sampleAt(t, seed)
-      if (s) {
-        if (last) { const v = Math.hypot(s.x - last.x, s.y - last.y) / (s.t - last.t); dtMs = Math.min(30_000, Math.max(100, SEARCH.chordM / Math.max(v, 1e-9))) }
-        last = s; xs.push(s)
-      } else { xs.push({ t, gap: true }); Object.assign(seed, { P: undefined }) ; last = null }
-      if (t >= b) break
-    }
-    for (let pass = 0; pass < 8; pass++) {
-      let inserted = false
-      for (let i = 1; i + 1 < xs.length; i++) {
-        const p0 = xs[i - 1]!, p1 = xs[i]!, p2 = xs[i + 1]!
-        if ("gap" in p0 || "gap" in p1 || "gap" in p2) continue
-        const lx = p2.x - p0.x, ly = p2.y - p0.y, dev = Math.abs(lx * (p1.y - p0.y) - ly * (p1.x - p0.x)) / (Math.hypot(lx, ly) || 1)   // off the chord, not along it
-        c.maxSagittaM = Math.max(c.maxSagittaM, dev)
-        if (dev > 4 * SEARCH.sagittaM && p1.t - p0.t > 20) {
-          const m0 = sampleAt((p0.t + p1.t) / 2, { ...p0.seed }), m1 = sampleAt((p1.t + p2.t) / 2, { ...p1.seed })
-          xs.splice(i + 1, 0, m1 ?? { t: (p1.t + p2.t) / 2, gap: true }); xs.splice(i, 0, m0 ?? { t: (p0.t + p1.t) / 2, gap: true })
-          i += 2; inserted = true
-        }
-      }
-      if (!inserted) break
-    }
-    // crossings of the track with every edge, refined on the true track
-    const cuts: Array<{ t: number; at: Crossing }> = []
-    for (let i = 0; i + 1 < xs.length; i++) {
-      const s0 = xs[i]!, s1 = xs[i + 1]!
-      if ("gap" in s0 || "gap" in s1) {
-        const s = "gap" in s0 ? s1 : s0
-        if (!("gap" in s) && insidePlanar(pr, s.x, s.y)) c.anomalies++   // a gap next to an inside point would hide a boundary
-        continue
-      }
-      if (Math.max(s0.x, s1.x) < bb.minX || Math.min(s0.x, s1.x) > bb.maxX || Math.max(s0.y, s1.y) < bb.minY || Math.min(s0.y, s1.y) > bb.maxY) continue
-      const cx = s1.x - s0.x, cy = s1.y - s0.y
-      for (let k = 0; k < nE; k++) {
-        const ax = E[4 * k]!, ay = E[4 * k + 1]!, ex = E[4 * k + 2]! - ax, ey = E[4 * k + 3]! - ay
-        const c0 = ex * (s0.y - ay) - ey * (s0.x - ax), c1 = ex * (s1.y - ay) - ey * (s1.x - ax)
-        if ((c0 > 0 && c1 > 0) || (c0 < 0 && c1 < 0)) continue
-        const d0 = cx * (ay - s0.y) - cy * (ax - s0.x), d1 = cx * (ay + ey - s0.y) - cy * (ax + ex - s0.x)
-        if ((d0 > 0 && d1 > 0) || (d0 < 0 && d1 < 0)) continue
-        c.crossings++
-        const len = Math.hypot(ex, ey), sd = { ...s0.seed }
-        let best = { t: s0.t, lat: s0.lat, lon: s0.lon }
-        const g = (t: number) => {
-          c.refineEvaluations++
-          const s = solve(t, sd)
-          if (!s) return NaN
-          best = { t, lat: s.lat, lon: s.lon }
-          return (ex * (s.y - ay) - ey * (s.x - ax)) / len
-        }
-        // Illinois on [s0.t, s1.t]
-        let ta = s0.t, fa = c0 / len, tb = s1.t, fb = c1 / len
-        if (fa === 0) best = { t: s0.t, lat: s0.lat, lon: s0.lon }
-        else if (fb === 0) best = { t: s1.t, lat: s1.lat, lon: s1.lon }
-        else {
-          for (let it = 0; it < 60; it++) {
-            const tc = tb - fb * (tb - ta) / (fb - fa), fc = g(tc)
-            if (!Number.isFinite(fc)) { c.anomalies++; break }
-            if (Math.abs(fc) < SEARCH.crossingTolM) break
-            if (fc * fb < 0) { ta = tb; fa = fb } else fa /= 2
-            tb = tc; fb = fc
-            if (Math.abs(tb - ta) < SEARCH.crossingTolS * 1000) { g((ta + tb) / 2); break }
-          }
-        }
-        cuts.push({ t: best.t, at: { time: isoMs(best.t), lat: best.lat, lon: best.lon } })
-      }
-    }
-    // inside / outside between consecutive cuts, from the chords (linear between samples)
-    cuts.sort((p, q) => p.t - q.t)
-    const stateAt = (t: number): boolean => {
-      for (let i = 0; i + 1 < xs.length; i++) {
-        const s0 = xs[i]!, s1 = xs[i + 1]!
-        if (t < s0.t || t > s1.t) continue
-        if ("gap" in s0 || "gap" in s1) return false
-        const f = (t - s0.t) / (s1.t - s0.t)
-        return insidePlanar(pr, s0.x + f * (s1.x - s0.x), s0.y + f * (s1.y - s0.y))
-      }
-      return false
-    }
-    const bounds = [a, ...cuts.map(k => k.t), b]
-    let cur: Seg | undefined
-    for (let i = 0; i + 1 < bounds.length; i++) {
-      const t0 = bounds[i]!, t1 = bounds[i + 1]!
-      if (t1 - t0 < 1e-6) continue
-      const inside = stateAt((t0 + t1) / 2)
-      if (inside && !cur) cur = { enter: t0, exit: t1, enterAt: i === 0 ? undefined : cuts[i - 1]!.at, exitAt: undefined, truncated: i === 0 }
-      else if (inside && cur) cur.exit = t1
-      else if (!inside && cur) { cur.exitAt = cuts[i - 1]!.at; segs.push(cur); cur = undefined }
-    }
-    if (cur) { c.anomalies++; cur.truncated = true; segs.push(cur) }   // span ends are outside by construction
+    const xs = sampleSpan(a, b, sampleAt, c)
+    const cuts = spanCuts(xs, pr, bb, idx, solve, c)
+    spanSegments(a, b, xs, cuts, pr, segs, c)
   }
 
   // merge touching segments (a vertex hit splits nothing), drop empty ones

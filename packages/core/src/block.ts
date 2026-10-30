@@ -56,6 +56,16 @@ export const blockByteRange = (i: number): readonly [start: number, endInclusive
 const coeffs = new WeakMap<ArrayBuffer, number[]>()
 const T: number[] = Array.from({ length: 16 }, () => 0), dT: number[] = Array.from({ length: 16 }, () => 0)
 
+// One component's series Σ a_k T_k (and Σ a_k T'_k) into sp, sv: no closure or tuple per call (evalBlock is the hottest
+// allocation site of a search window otherwise).
+let sp = 0, sv = 0
+const series = (f: number[], o: number, n: number, withVel: boolean): void => {
+  let p = 0, v = 0
+  if (withVel) for (let k = 0; k < n; k++) { const a = f[o + k]!; p += a * T[k]!; v += a * dT[k]! }
+  else for (let k = 0; k < n; k++) p += f[o + k]! * T[k]!
+  sp = p; sv = v
+}
+
 /** Position (and velocity) of `body` at `jdTdb` from the block that covers it. Throws RangeError if the block does not.
  *  `withVel = false` skips the derivative series (velocity reads zero); positions are bit-identical either way. */
 export const evalBlock = (block: ArrayBuffer, body: BodyIndex, jdTdb: number, withVel = true): State => {
@@ -64,7 +74,7 @@ export const evalBlock = (block: ArrayBuffer, body: BodyIndex, jdTdb: number, wi
   const jd0 = f[0]!, jd1 = f[1]!
   if (jdTdb < jd0 || jdTdb > jd1) throw new RangeError(`jd ${jdTdb} outside block [${jd0}, ${jd1}]`)
 
-  const [off1, n, nsub] = DE440.ipt[body]!
+  const ipt = DE440.ipt[body]!, off1 = ipt[0], n = ipt[1], nsub = ipt[2]
   const nc = ncomp(body)
   const subDays = (jd1 - jd0) / nsub
   const sub = Math.min(nsub - 1, Math.floor((jdTdb - jd0) / subDays))
@@ -78,13 +88,9 @@ export const evalBlock = (block: ArrayBuffer, body: BodyIndex, jdTdb: number, wi
   for (let k = 2; k < n; k++) T[k] = 2 * tc * T[k - 1]! - T[k - 2]!
   if (withVel) for (let k = 2; k < n; k++) dT[k] = 2 * T[k - 1]! + 2 * tc * dT[k - 1]! - dT[k - 2]!
   const velScale = 2 / subDays                                  // d(tc)/d(day)
-  const comp = (c: number): [number, number] => {
-    let p = 0, v = 0
-    if (withVel) for (let k = 0; k < n; k++) { const a = f[base + c * n + k]!; p += a * T[k]!; v += a * dT[k]! }
-    else for (let k = 0; k < n; k++) p += f[base + c * n + k]! * T[k]!
-    return [p, v * velScale]
-  }
-  const [x, vx] = comp(0), [y, vy] = comp(1)
-  const [z, vz] = nc === 3 ? comp(2) : [0, 0]
+  series(f, base, n, withVel); const x = sp, vx = sv * velScale
+  series(f, base + n, n, withVel); const y = sp, vy = sv * velScale
+  let z = 0, vz = 0
+  if (nc === 3) { series(f, base + 2 * n, n, withVel); z = sp; vz = sv * velScale }
   return { pos: [x, y, z], vel: [vx, vy, vz] }
 }
