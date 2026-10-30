@@ -32,7 +32,7 @@ npm run typecheck >/dev/null && npm run lint >/dev/null && npm test 2>&1 | grep 
 [ "${DRY:-}" = 1 ] && { echo "== DRY=1: gate passed @ $SHA, not deploying"; exit 0; }
 echo "== deploy @ $SHA"
 cd "$WT/packages/worker"
-cf deploy --message "$MSG [git $SHA]" 2>&1 | grep -E 'Current Version ID|error|Error' || { echo "deploy failed" >&2; exit 1; }
+cf deploy --message "$MSG [git $SHA]" 2>&1 | grep -E 'Current Version ID|Startup Time|error|Error' || { echo "deploy failed" >&2; exit 1; }
 
 echo "== smoke"
 sleep 5
