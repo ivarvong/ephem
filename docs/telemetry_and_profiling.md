@@ -22,6 +22,7 @@ Every number you report carries its version id (and trace id or profile file). L
 | `python3 scripts/obs/trace.py <traceId>` or `--latest /v1/day` | One request: invocation CPU/wall, the Effect span tree with work counts, and the runtime's own spans (fetch, jsRpc, R2). The front door and the Api invocation it called are two traces sharing one cf-ray (the Api's ends in its colo, e.g. `-IAD`). |
 | `scripts/obs/profile.sh <full-version-uuid> [cpu\|heap] [ms]` | Drives uncached load, captures a prod profile of that exact version, symbolizes it, prints the top. Files land in `profiles/` (gitignored). |
 | `scripts/obs/load.sh [rounds] [base]` | Uncached load: per round, one 24 h Moon alignment and one `/v1/day`, each with a fresh window or place so the Api cache misses. `LOAD=weather` instead sends 4 `/v1/weather` requests per round (random land-weighted lat/lons, n = 1–3), ~16 req/s. `LOAD=track`: 2 homepage-shaped `/v1/track` per round (72 h from a UTC midnight, 20-min grid, 217 samples) at fresh lat/lons, ~8 req/s; also works under `profile.sh`. |
+| `python3 scripts/obs/queue.py --from ISO --to ISO [--path /v1/position] [--over 20]` | Server-side wait before the handler ran, per request: Effect request span start − runtime request span start. Lists the requests that waited, each tagged **new isolate** (blocks/geoid not yet in L1: start-up) or **busy isolate** (L1 warm: stuck behind other JS), with CPU and `ephem.isolate_computes`. Use it instead of client p99 for "did X slow Y down" (see "Position tail under scan load"). `--path /v1/alignment/search/window` for Api windows. |
 | `python3 scripts/obs/cold-split.py --from ISO --to ISO [--route track] [--json out.json]` | Api CPU by isolate warmth: each Api invocation of the route joined to its handler span's `ephem.isolate_computes` (1 = the isolate's first computation), p50/p90/p99 and CPU sum per bucket, and the runtime-GET → Effect-GET gap (isolate start-up before the router). Versions before the attribute fall back to "L1 empty" as the cold proxy. |
 | `python3 scripts/obs/metar-cache.py [--minutes 30] [--version 80f5b087] [--slice 2]` | METAR feed cache: per (version, tier) request count, share, wall and CPU p50/p99, parses, data age; upstream calls (MetarFeed's `{"evt":"metar.upstream"}`) by status, conditional, and per minute. Joins each `{"evt":"metar"}` log line to its invocation on `$metadata.requestId`. |
 | `python3 scripts/obs/cache-probe.py [base] --mode repeat\|unique\|burst [--keys 10] [--repeats 5] [--burst 50] [--routes day,…]` | Client-side cross-check of Workers Caching: per request `x-ephem-cache` (the Api's cf-cache-status relayed by the front door), client and server-timing latency; p50/p99 by (route, status). `burst` fires N concurrent identical cold requests (collapsing test); count Api invocations for that key with a `starts_with` filter on `$workers.event.request.url = https://api.internal/<path>?<sorted query>`. |
@@ -298,12 +299,38 @@ customer's 12-month scan (Liberty 70 m MSL, the 424-node Brooklyn Bridge Park, e
 | warm repeat (14 × HIT), client wall | 69–105 ms (n = 6) |
 | Api CPU per window | fresh after deploy p50 111 / p90 203 / p99 308 ms (n = 83); sustained p50 51 / p90 155 / p99 273 ms (n = 823) |
 | Api CPU per cold 12-month scan (sum of its windows) | ≈ 1.7 s fresh (10 153 ms / 6 scans), ≈ 1.0 s sustained (60 993 ms / 823 windows × 14); in 14 parallel invocations, so wall ≈ the slowest window |
-| front door CPU per POST (merge) | p50 21–25 / p99 35–55 ms (n = 12, 118) |
+| front door CPU per POST (merge) | p50 21–25 / p99 35–55 ms (n = 12, 118); 37d28e99: cold p50/p90/p99 25/36/68 (n = 230), warm 22/37/86 (n = 24) |
 | live `/v1/position` (front door) client latency, alone → during 124 cold scans/min | p50 38 → 38, p90 49 → 49, p99 69 → 232 ms (n = 249, 245) |
 
-The p99 rise is the open item: ~2 % of live requests landed behind a front-door merge (25 ms CPU, mostly JSON of 14
-windows that each repeat conventions, sun and phase) or a window computed in the same isolate. Next: slim the window body,
-then re-run `live-ab.ts`.
+**Position tail under scan load (measured 2026-10-30, 8a308729 / 0d870218 / 37d28e99 / eb25caa2 / 647f5bbc; scratchpad
+`search-p99/`).** The p99 69 → 232 ms above was one 60 s run (3rd-worst of 245 samples). Repeated from the same laptop,
+client p99 of 60 s *idle* phases ranged 84–525 ms (n ≈ 230 each; laptop link stalls, one TLS read timed out), so client
+p99 cannot resolve this; measure server-side with `queue.py`. What it shows, same load (cold scans ~124/min + position
+every 200 ms):
+
+| | idle | under cold scans |
+| --- | --- | --- |
+| position probes that waited > 20 ms before the handler | 0–0.9 % (0/490, 1/107, 2/438, 1/676) | 0.4–5.1 % (2/480, 17/331, 9/452, 8/674) |
+| … of which on a **new isolate** (blocks/geoid not in L1) | all | 35 of 37; wait 70–234 ms + first-request CPU 18–71 ms |
+| … waiting behind other JS in a warm isolate | — | 2 of 1 937 (23, 37 ms) |
+
+So the tail is **front-door isolate start-up**: under scan load the runtime spreads EWR traffic over more isolates and a
+live request sometimes lands on a new one (≈ 100–220 ms start-up, then a cold-JIT position at ~50 ms CPU). It is not CPU
+contention with the merge: warm 14 × HIT scans at the same rate (merge only) gave 0 waits in 503 probes, and the merge is
+small (front door CPU per POST p50 25 / p90 36 ms cold, 21–22 warm; window bodies 12.4–16.8 KB, 193 KB per scan, of which
+region 2.3 KB + conventions 5.2 KB repeat in every window; in Node the whole POST is 2.3 ms steady state: JSON.parse 12 %,
+building the 14 window keys 15 %, response encode ~12 %, the merge itself ~2 %). Window MISSes do share isolates with the
+front door (an EWR CPU profile under scan load, 8a308729: 73 % `search.searchWindow`; EWR runs 20–24 % of window CPU,
+≈ 0.4–0.5 core during the load), and Api windows themselves wait before starting (p90 ~105 / p99 ~210 ms, 14–15 % > 50 ms),
+which is most of a cold scan's wall beyond its slowest window's CPU.
+
+Tried and reverted: computing each window in ~5 ms slices (generator, a macrotask between slices; e2d5ac3, prod eb25caa2,
+reverted in 0c29b78 → 647f5bbc). Windows ran in 9–10 slices and Node's longest event-loop gap fell 17–47 → 7–14 ms, but in
+prod nothing moved: window wait p90/p99 109/218 → 102/205 ms, new-isolate position probes 2.0 → 1.2 % (inside the 0.4–5.1 %
+run-to-run range), Api CPU per window p50 54 → 56 ms. Slicing cannot help a request that is waiting for an isolate to
+start. Slimming the window JSON would cut front-door CPU a few ms per scan and is not worth a CACHE_VERSION bump for this.
+The lever left is fewer CPU-heavy invocations on the front door's isolates (window compute in a separate Worker, or
+cheaper windows); not done.
 
 ## MCP (`/mcp`, src/mcp.ts)
 
@@ -531,9 +558,14 @@ column.
 | 2026-10-30 | e4d16979, fbdb337e | Cold e2e of a homepage track (curl from EWR, new connection, unique lat/lon, joined by cf-ray; scratchpad `track-prof/e2e-*.joined.json`). Fresh Api isolate, median (n=12 / 3): total 295 / 264 ms = TCP+TLS 39 / 42 + client↔edge 37 / 39 + front door 3 / 3 + loopback 206 / 159 [isolate start-up 108 / 95 + Api CPU 60 / 44 + blocks 4 / 5 + cache/tier round trip 25 / 14]. Warm Api isolate (n=18 / 25): 133 / 122 ms, loopback 36 / 31 (CPU 12 / 8, tier 24 / 22). | next: isolate start-up (~100 ms wall per fresh Api isolate; 1 MB bundle, local `cf workers check` 27 ms active) |
 | 2026-10-30 | bee1a78f, 0d2d5eb6 (git 8de819d = fbdb337e code) → 5c337183 (3c87955) → 164e1cd7, 61305294 (0b88f9f) | **Bundle 985 → 616 → 402 KiB (gzip 451 → 205 → 139).** (1) EGM96 grid (384 KB string) to R2 (see "Geoid bands"). (2) Effect barrel imports → module subpaths + no unused HttpPlatform/FileSystem/Path layers: Effect 465 → 251 KB (Schema 67 → 11, mimeTypes/NetAddress/hashMap/dateTime/Optic/Path/FileSystem/Dns/JsonPatch → 0; per-module table scratchpad `bundle/modules-before-after.tsv`, from the source map with `bundle/smap-bytes.mjs`; esbuild metafile `bundle/meta-*.json`). Left: Multipart/Cookies/Channel/Stream/Queue ~17 KB kept by the HttpServerRequest/Response classes, OpenApi + JSON Schema ~24 KB (/openapi.json, MCP), runtime + SchemaAST ~56 KB, home.ts 60 KB. Local `cf workers check` (6 alternating runs, median active / window): 24.0 / 41.0 → 23.9 / 40.7 → 22.3 / 34.0 ms; deploy-reported startup 53, 58 → 38 → 39, 48 ms. | **Fresh Api isolate (`cold-split.py`, LOAD=track 120 rounds right after each deploy), pre-router gap p50/p90: 117/248 (n 49) → 109/179 (n 26) → 99/158 ms (n 43)**; base → 402 KiB median −18 ms, bootstrap 95% CI [−37, +2]. First-request CPU p50/p90 51/97 → 61/79 → 57/92 ms (unchanged within noise; CI of the diff [−8, +15]); warm CPU p50 10–11 everywhere. The gap is mostly not script size: −59% bytes bought ~15% of the gap; ~100 ms of isolate start-up remains. String bytes are ~free (the grid's removal moved neither `workers check` nor the gap measurably); code bytes cost (~7 ms local window for 214 KB of Effect). |
 | 2026-10-30 | same versions | Cold e2e of a homepage /v1/track (a geoid route: every observer route needs N) from EWR, fresh connection + fresh Api isolate, median: base 319 ms (n 14; server 227, gap 122, CPU 51) → geoid 352 (n 15; server 220, gap 120, CPU 61, geoid.load 11) → both 289 (n 28; server 179, gap 90, CPU 51, geoid.load 6). Warm isolate 131 / 146 / 141 (n 35 / 15 / 20). `geoid.load` over 1 185 spans 12:28–12:41Z: L1 0 ms (24%), HIT p50/p90/p99 5/17/41 (HIT:2 6/28/47), **MISS p50/p90 134/289** (5%, R2 ENAM from the tier colo; once per band per tier, immutable + crossVersionCache); concurrent with blocks.load (HIT 4–6 ms), so a HIT adds ~1–2 ms wall and a MISS ~130 ms. 0 5xx. | next: isolate start-up is platform-side; home.ts 60 KB is the largest piece left |
+| 2026-10-30 | 8a308729, 0d870218, 37d28e99 → eb25caa2 (e2d5ac3) → 647f5bbc (0c29b78, revert) | Position p99 under cold-scan load: client p99 from the laptop is noise (idle 60 s phases 84–525 ms). Server-side (`queue.py`), 0.4–5.1 % of probes under load vs 0–0.9 % idle waited 70–234 ms before the handler, 35 of 37 on a **new front-door isolate**; 2 of 1 937 waited (23, 37 ms) behind JS in a warm isolate. Merge-only load (14 × HIT at the same rate): 0 / 503. Front-door CPU per scan p50 25 ms (cold) / 22 (warm). Sliced window compute: no measured effect (window wait p99 218 → 205 ms, new-isolate probes 2.0 → 1.2 %), reverted. | cause is isolate start-up, not merge CPU; next lever: window compute off the front door's isolates |
 | 2026-10-30 | 8a308729 → 0d870218 (git ac69e35) | Rates analytic (DE440 velocity) instead of a ±10 s difference: the flaky rate property was the nadir side (5.6e-5 vs 1e-5 within 10° of it); now ≤ 3.6e-7 vs Richardson, 0 exceedances in 400k body-samples above −89° (guide "Rates"). Local: position() 18.5 → 12.8 µs, ratesAt 4.0 → 2.3 µs. Prod /v1/track (no rates; `LOAD=track` 120 cold, 13:19:25–13:19:50Z) Api CPU p50 13 / p90 65 / p99 108 ms vs 9 / 61 / 101 on e4d16979 (n=242): unchanged, isolate warmth. | rates 25–60× closer to the positions; position CPU −31% |
 
 ## Gotchas
+
+- Client p99 from the laptop can't measure a server-side tail: idle 60 s phases of `/v1/position` every 200 ms ranged
+  84–525 ms p99 (2026-10-30), and the laptop's link stalls (fetches hung for minutes; give every fetch a timeout). Use
+  `queue.py` (wait before the handler, per request) and invocation CPU joined by cf-ray.
 
 - The tracing API's `setStatus` takes `{ code: "ok" | "error" }`, not a string. A string threw in prod (9d24dd65, about
   2 min of 500s). Every tracing call is now wrapped so it can't fail a request; see `safe()` in `src/trace.ts`.
