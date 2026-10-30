@@ -51,6 +51,22 @@ describe("traceparent", () => {
     expect(res.status).toBe(200); expect(res.headers.get("x-ephem-trace")).toBeNull()
     expect(JSON.stringify(spans)).not.toContain("client.trace_id")
   })
+  it("a page document gets a server-made trace id: on the root span, echoed, inlined, reused by the page's fetches", async () => {
+    for (const path of ["/", "/instrument"]) {
+      const { spans, tracing } = recorder(); setTracing(tracing)
+      const res = await makeHandler(makeBlocks(origin))(new Request("http://x" + path))
+      const tid = res.headers.get("x-ephem-trace")!, html = await res.text()
+      expect(tid, path).toMatch(/^[0-9a-f]{32}$/)
+      expect(html).toContain(`var __EPHEM_TRACE_ID = "${tid}";`)
+      expect(spans.find(s => s.name === "GET")!.attrs, path).toMatchObject({ "client.trace_id": tid, "client.trace_origin": "document" })
+      setTracing(undefined)
+    }
+    const res = await makeHandler(makeBlocks(origin))(new Request("http://x/", { headers: { traceparent: TP } }))
+    expect(res.headers.get("x-ephem-trace")).toBe(TID); expect(await res.text()).toContain(`"${TID}"`)
+    const win: Record<string, unknown> = {}
+    new Function("window", "crypto", `var __EPHEM_TRACE_ID = "${TID}";` + CLIENT_TRACE_JS)(win, globalThis.crypto)
+    expect(win.__ephemTrace).toMatchObject({ traceId: TID, fromDocument: true })
+  })
   it("the front door forwards a valid traceparent to the Api, drops an invalid one", () => {
     expect(forwardHeaders({ "cf-ray": "r1-EWR", traceparent: TP })).toEqual({ "x-ephem-ray": "r1-EWR", traceparent: TP })
     expect(forwardHeaders({ "cf-ray": "r1-EWR", traceparent: "garbage" })).toEqual({ "x-ephem-ray": "r1-EWR" })

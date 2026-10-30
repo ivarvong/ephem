@@ -15,6 +15,22 @@ export { parseTraceparent }
 
 export const TRACE_HEADER = "x-ephem-trace"
 
+const hex = (n: number) => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => b.toString(16).padStart(2, "0")).join("")
+
+/** The page routes (/, /instrument): the document request can't carry the page's trace id, so the server makes it (or takes
+ *  the request's own valid traceparent), records it on the root span (`client.trace_origin: document` when made here) and
+ *  inlines it (`__EPHEM_TRACE_ID`), so the document and every fetch the page makes share one trace id. Call it outside the
+ *  handler's own withSpan, so the annotation lands on the root request span. */
+export const documentTrace = (req: HttpServerRequest.HttpServerRequest) => Effect.gen(function* () {
+  const tp = parseTraceparent(req.headers["traceparent"])
+  if (tp) return tp.traceId   // ClientTrace already annotated it
+  const id = hex(16)
+  yield* Effect.annotateCurrentSpan({ "client.trace_id": id, "client.trace_origin": "document" })
+  return id
+})
+/** The inline declaration the page's CLIENT_TRACE_JS reads (32 hex chars only, safe in a script). */
+export const traceIdScript = (id: string) => /^[0-9a-f]{32}$/.test(id) ? `var __EPHEM_TRACE_ID = "${id}";` : ""
+
 export const ClientTrace = HttpRouter.middleware(Effect.gen(function* () {
   const edge = yield* Edge
   return http => Effect.gen(function* () {
@@ -29,11 +45,12 @@ export const ClientTrace = HttpRouter.middleware(Effect.gen(function* () {
 }), { global: true })
 
 /** Browser side, inlined in both pages: `__tfetch(url, init)` = fetch with a traceparent. `window.__ephemTrace` =
- *  { traceId, fetches: [{ spanId, url, t0, t1, status, ray, echo }] } (ms since navigation start) for scripts/obs/journey.ts. */
+ *  { traceId, fromDocument, fetches: [{ spanId, url, t0, t1, status, ray, echo }] } (ms since navigation start) for scripts/obs/journey.ts. */
 export const CLIENT_TRACE_JS = String.raw`
 var __ephemTrace = window.__ephemTrace = (function () {
   function hex(n) { var b = new Uint8Array(n); crypto.getRandomValues(b); var s = ""; for (var i = 0; i < n; i++) s += (b[i] < 16 ? "0" : "") + b[i].toString(16); return s; }
-  return { traceId: hex(16), fetches: [], hex: hex };
+  var doc = typeof __EPHEM_TRACE_ID === "string" && /^[0-9a-f]{32}$/.test(__EPHEM_TRACE_ID) ? __EPHEM_TRACE_ID : null;   // the document's (server-made)
+  return { traceId: doc || hex(16), fromDocument: !!doc, fetches: [], hex: hex };
 })();
 function __tfetch(url, init) {
   var T = __ephemTrace, sid = T.hex(8), rec = { spanId: sid, url: String(url), t0: performance.now(), t1: null, status: null, ray: null, echo: null };
