@@ -4,7 +4,7 @@ How to see what prod ephem is doing: traces, per-version CPU numbers, and CPU/he
 run against prod. **Keep this file current:** when a command, flag, span, attribute or gotcha changes, update it in the
 same change, and add the date to "Last verified".
 
-Last verified: 2026-10-30 (compute split A/B: S 02dd1270 + ephem-compute fca6e275 vs E cc6ddd8e, git 5edf1b7, → one Worker; compute split: ephem 121b7984 + ephem-compute bb0a1127, git 01e0323; version 4e7c34ee; crossing span + MCP probe b49a8a02; MCP section 68c58ae5; Caching section c72a360c; cold-split, LOAD=track and isolate warmth fbdb337e; geoid bands + bundle A/B 5c337183 / 164e1cd7 / 61305294).
+Last verified: 2026-10-30 (compute split A/B: S 02dd1270 + ephem-compute fca6e275 vs E cc6ddd8e, git 5edf1b7, → one Worker ephem d3caf38f, git 7a125fd; compute split: ephem 121b7984 + ephem-compute bb0a1127, git 01e0323; version 4e7c34ee; crossing span + MCP probe b49a8a02; MCP section 68c58ae5; Caching section c72a360c; cold-split, LOAD=track and isolate warmth fbdb337e; geoid bands + bundle A/B 5c337183 / 164e1cd7 / 61305294).
 
 ## The loop
 
@@ -17,7 +17,7 @@ Every number you report carries its version id (and trace id or profile file). L
 
 | Tool | What it gives you |
 | --- | --- |
-| `python3 scripts/obs/cpu-by-version.py [--minutes 30] [--path /v1/alignment] [--version 80f5b087] [--entrypoint Api] [--from ISO --to ISO]` | CPU and wall p50/p90/p99 and the CPU sum per (version, entrypoint, path, status) from invocation events; entrypoint is `default` (front door), `Api`, `BlockStore` or `MetarFeed`, all in `ephem` (in `--service ephem-compute` only 2026-10-30 19:44Z – the removal: "Compute split"). Every obs script takes `--service` (or `EPHEM_SERVICE`). The A/B tool. `--path` is sent as a server-side filter; `--from/--to` pin an absolute window and read it in full (`telemetry.events_all`: parallel slices, split at the 1000-row cap); `--json` writes one row per invocation. Wall includes waitUntil: see "Request logs (Basin)". |
+| `python3 scripts/obs/cpu-by-version.py [--minutes 30] [--path /v1/alignment] [--version 80f5b087] [--entrypoint Api] [--from ISO --to ISO]` | CPU and wall p50/p90/p99 and the CPU sum per (version, entrypoint, path, status) from invocation events; entrypoint is `default` (front door), `Api`, `BlockStore` or `MetarFeed`, all in `ephem` (in `--service ephem-compute` only 2026-10-30 19:44Z – 21:37Z: "Compute split"). Every obs script takes `--service` (or `EPHEM_SERVICE`). The A/B tool. `--path` is sent as a server-side filter; `--from/--to` pin an absolute window and read it in full (`telemetry.events_all`: parallel slices, split at the 1000-row cap); `--json` writes one row per invocation. Wall includes waitUntil: see "Request logs (Basin)". |
 | `python3 scripts/obs/basin.py status\|failures\|provision\|sql <name>\|crosscheck\|types` | Basin request logs: resources, `basin_send_failed` counts, sink/pipeline provisioning, canned Basin SQL, Basin-vs-o11y counts. See "Request logs (Basin)". |
 | `python3 scripts/obs/trace.py <traceId>` or `--latest /v1/day` | One request: invocation CPU/wall, the Effect span tree with work counts, and the runtime's own spans (fetch, jsRpc, R2). The front door and the Api invocation it called are two traces sharing one cf-ray (the Api's ends in its colo, e.g. `-IAD`). |
 | `scripts/obs/profile.sh <full-version-uuid> [cpu\|heap] [ms]` | Drives uncached load, captures a prod profile of that exact version, symbolizes it, prints the top. Files land in `profiles/` (gitignored). |
@@ -168,6 +168,8 @@ The smoke only sees what a client sees. The gate reads Workers Observability for
 | --- | --- | --- | --- | --- |
 | (a) canary, git 5026667 | 639e952a | 77 smoke requests (23 checks + 54 MCP-probe requests) | 0/77 visible at 6 s, 77/77 at 57 s (3 polls); gate 59.7 s | GATE ok, 0 errors, 0 warnings; Api ×8, BlockStore ×1 (forced MISS); every span |
 | (a) live, same | 639e952a | live smoke + 90 s real traffic (111 events on the version) | 77/77 at 67 s; gate 101.9 s (waits to promotion + 105 s) | GATE ok |
+| (a) canary, git 0af943a (two-stage deploy.sh) | 21250fb5 | 77 smoke requests | 77/77 at 37 s; canary gate 39.7 s, live gate 95.5 s | GATE ok both |
+| (c) throwaway 7e170687 (never on main): marker in its inner deploy.sh + the same log line | c0e1fb57 | client smoke 23/23 ok; bootstrap printed sha256 35778f5c (commit) vs b9ba0842 (shared tree) and the marker | 52/77 visible at 25 s, error found; gate exit 1 after 27.6 s | canary 0% 21:46:42.9Z → removed 21:47:27.4Z (removal 1.7 s); prod stayed 21250fb5; lock + worktree released |
 | (b) throwaway df22873a (never on main): `console.log({"evt":"gate_test_failed"})` on /v1/magnetic, answers unchanged | b9e54fef | client smoke 23/23 ok (pinned) | the log line was visible at the first poll (5 s), before any invocation event; gate exit 1 after 7.6 s | canary 0% 21:36:09.6Z → removed 21:36:28.9Z (19.3 s at 0%, removal 1.5 s after the decision); prod stayed on 639e952a; exit 1, untagged |
 
 Log lines ingest faster than invocation events (seconds vs ~30–60 s), so a logged error fails the gate early; a clean
@@ -197,7 +199,7 @@ No `caches.default` anywhere (`grep -rn "caches\." packages/worker/src` is empty
 the entrypoints whose `exports` entry enables it (`cloudflare.config.ts`), driven only by the Cache-Control they return.
 
 ```
-ephem (one Worker; ephem-compute 2026-10-30 19:44Z – removal, "Compute split")
+ephem (one Worker; ephem-compute 2026-10-30 19:44Z – 21:37Z, "Compute split")
 eyeball ─▶ default (cache OFF: always runs → every request has its trace, Basin row, request.cf; `/` and `/mcp` live here)
              ├─ GET /v1/day, /v1/alignment, /v1/track, /v1/sightline, /v1/crossing, /v1/position|magnetic with time, search windows
              │     ─▶ loopback.ts api: ctx.exports.Api.fetch(path + sorted query, { cf: { cacheKey: "/v<CACHE_VERSION>" + path + query } })
@@ -341,7 +343,29 @@ ephem; deploy.sh `compute` target, bindings, packages/compute, smoke `--pin-comp
 was built for did not show in either arm in this run (it was 0.35–5 % in earlier runs), so it is not what the split buys;
 the speed came from the lean compute bundle's faster isolate start (gap ~89 vs ~119 ms), a lever available inside one
 Worker. Earlier sequential runs (below) said the split had "no measured cost": they had no CPU-per-scan comparison.
+Reviewed as a trade-off and confirmed (CoS, 2026-10-30): S's latency gains were measured only at 124 cold scans/min,
+synthetic contention far above real search traffic, so they likely vanish at real load; warm and live paths were
+unchanged; the second Worker's operational cost (compute deploy phase, canary pinning across a binding, interface
+ordering between two Workers) is paid on every deploy. Deployed: ephem d3caf38f (git 7a125fd, 21:37Z; canary 23/23 +
+telemetry gate, live 23/23 + live gate), ephem-tail 9c9403ec; a fresh key was MISS → HIT with `x-ephem-compute-version`
+= d3caf38f; Api / BlockStore invocations on ephem d3caf38f; ephem-compute's last invocation 21:36Z.
 Caveats: one client colo (EWR), one 30-min window, 6 runs; CPU per scan is a per-run scalar bootstrapped over runs only.
+Dropping run 5 (an /instrument smoke, ~23 requests, hit both arms at ~21:04Z) changes nothing: CPU +32 [+21, +43],
+e2e p50 −29 [−42, −19].
+
+**Re-running** (trigger: search traffic approaching contention; re-run at that real load). Commit 5edf1b7 holds both arms
+(the COMPUTE_MODE switch, `deploy.sh … ab` / `ab-end`, packages/compute). On a branch, restore them onto main (`git revert`
+the code part of 7a125fd), deploy ephem-compute with that commit's deploy.sh (`compute` target), then `deploy.sh <rev> "…"
+ab` (50/50, both arms smoked pinned; prints S and E ids), then:
+
+```sh
+node --experimental-strip-types scripts/obs/split-ab/load.ts <S> <E> ab2 6 240 60 60     # AB_DIR=ab-runs by default
+python3 -I scripts/obs/split-ab/pull.py ab2 r1 … r6                                      # each run >= 5 min after it ends
+AB_COMPUTE=<ephem-compute id> python3 -I scripts/obs/split-ab/stats.py ab2 r1 r2 r3 r4 r5 r6
+scripts/deploy.sh <rev> "end A/B" ab-end
+```
+
+Set load.ts's rates to the real load being tested. Counts must match the client's (they did: ~495 scans per run and arm).
 
 **History: the split as built and its first, sequential A/B.**
 
@@ -740,7 +764,7 @@ column.
 | 2026-10-30 | same versions | Cold e2e of a homepage /v1/track (a geoid route: every observer route needs N) from EWR, fresh connection + fresh Api isolate, median: base 319 ms (n 14; server 227, gap 122, CPU 51) → geoid 352 (n 15; server 220, gap 120, CPU 61, geoid.load 11) → both 289 (n 28; server 179, gap 90, CPU 51, geoid.load 6). Warm isolate 131 / 146 / 141 (n 35 / 15 / 20). `geoid.load` over 1 185 spans 12:28–12:41Z: L1 0 ms (24%), HIT p50/p90/p99 5/17/41 (HIT:2 6/28/47), **MISS p50/p90 134/289** (5%, R2 ENAM from the tier colo; once per band per tier, immutable + crossVersionCache); concurrent with blocks.load (HIT 4–6 ms), so a HIT adds ~1–2 ms wall and a MISS ~130 ms. 0 5xx. | next: isolate start-up is platform-side; home.ts 60 KB is the largest piece left |
 | 2026-10-30 | 8a308729, 0d870218, 37d28e99 → eb25caa2 (e2d5ac3) → 647f5bbc (0c29b78, revert) | Position p99 under cold-scan load: client p99 from the laptop is noise (idle 60 s phases 84–525 ms). Server-side (`queue.py`), 0.4–5.1 % of probes under load vs 0–0.9 % idle waited 70–234 ms before the handler, 35 of 37 on a **new front-door isolate**; 2 of 1 937 waited (23, 37 ms) behind JS in a warm isolate. Merge-only load (14 × HIT at the same rate): 0 / 503. Front-door CPU per scan p50 25 ms (cold) / 22 (warm). Sliced window compute: no measured effect (window wait p99 218 → 205 ms, new-isolate probes 2.0 → 1.2 %), reverted. | cause is isolate start-up, not merge CPU; next lever: window compute off the front door's isolates |
 | 2026-10-30 | 647f5bbc → 121b7984 + ephem-compute bb0a1127 (git 01e0323) | Api + BlockStore moved to their own Worker (service bindings, same keys, callee's Workers Caching verified MISS → HIT). Position probes waiting > 20 ms under ~120–150 cold scans/min: 5/1 420 → 5/1 425 (0.35 %), all new front-door isolates either way. Api window pre-handler wait p90/p99 109/215 → 73/150 ms; cold scan p50 470 → 380–425 ms; binding hop ≤ 1 ms (api.fetch HIT 4 ms both). | split kept; the position tail is front-door isolate start-up that the split does not change (guide "Compute split") |
-| 2026-10-30 | S ephem 02dd1270 + ephem-compute fca6e275 vs E ephem cc6ddd8e (git 5edf1b7), 20:42:57–21:11:57Z | Concurrent A/B of the compute split (one commit, two versions 50/50, both arms pinned and loaded at the same instants; 6 × 240 s). S − E [95 % CI]: cold scan server e2e p50 −29 [−40, −20] ms, p90 −48 [−73, −29]; window wait p90 −26 [−31, −20], p99 −52 [−61, −44]; **CPU per scan +30 [+21, +40] ms (993 vs 963, +3 %)**; position waits > 20 ms 1/7 324 vs 2/7 337, warm hop 4/8 ms both, fresh isolates equal. | pre-registered rule → E: ephem-compute removed, one Worker (guide "Compute split") |
+| 2026-10-30 | S ephem 02dd1270 + ephem-compute fca6e275 vs E ephem cc6ddd8e (git 5edf1b7), 20:42:57–21:11:57Z | Concurrent A/B of the compute split (one commit, two versions 50/50, both arms pinned and loaded at the same instants; 6 × 240 s). S − E [95 % CI]: cold scan server e2e p50 −29 [−40, −20] ms, p90 −48 [−73, −29]; window wait p90 −26 [−31, −20], p99 −52 [−61, −44]; **CPU per scan +30 [+21, +40] ms (993 vs 963, +3 %)**; position waits > 20 ms 1/7 324 vs 2/7 337, warm hop 4/8 ms both, fresh isolates equal. | pre-registered rule → E, confirmed: the latency gain was measured only at synthetic contention (124 cold scans/min), warm/live paths unchanged, two-Worker cost on every deploy. ephem d3caf38f (git 7a125fd), ephem-compute deleted; re-run at real load if search nears contention (5edf1b7 holds both arms; guide "Compute split") |
 | 2026-10-30 | 8a308729 → 0d870218 (git ac69e35) | Rates analytic (DE440 velocity) instead of a ±10 s difference: the flaky rate property was the nadir side (5.6e-5 vs 1e-5 within 10° of it); now ≤ 3.6e-7 vs Richardson, 0 exceedances in 400k body-samples above −89° (guide "Rates"). Local: position() 18.5 → 12.8 µs, ratesAt 4.0 → 2.3 µs. Prod /v1/track (no rates; `LOAD=track` 120 cold, 13:19:25–13:19:50Z) Api CPU p50 13 / p90 65 / p99 108 ms vs 9 / 61 / 101 on e4d16979 (n=242): unchanged, isolate warmth. | rates 25–60× closer to the positions; position CPU −31% |
 | 2026-10-30 | 02dd1270 → 639e952a (git 5026667 ⊇ 5d9103c) | **/instrument** (RPN view): bundle 474.46 → 590.04 KiB (gzip 164.08 → 221.19); local `cf workers check` median active/window 36.3/55.1 → 36.3/54.8 ms (6 alternating runs); deploy-reported startup 56 ms (n=1) vs 43, 44, 50, 51 ms for the previous four 474 KiB uploads. Prod browser (390×844, fresh context + never-seen lat/lon, n=7): 2 API requests cold and warm (+ 3 fonts, `(cache)` warm), HTML 18.3 KB on the wire. | data rendered p50 cold 388 / warm 88 ms; /v1/day rendered 552 / 53 ms (scratchpad instrument/prod.json) |
 
@@ -789,7 +813,7 @@ column.
   `{"- /llms":{"txt":1}}` (ephem-tail 9b316309). Log label/count pairs as strings ("- /llms.txt 1"), not as object keys.
 - The default handler's TailItem has no `entrypoint` (ephem-tail labels it "-"); only `Api`, `BlockStore`, `MetarFeed` carry one.
   ephem-tail labels another script's entrypoint `<script>/<entrypoint>` from the TailItem's `scriptName`
-  (`ephem-compute/Api` rows exist for 2026-10-30 19:44Z – the removal; a schema change would need a new stream).
+  (`ephem-compute/Api` rows exist for 2026-10-30 19:44Z – 21:37Z; a schema change would need a new stream).
 - The o11y query API rate-limits bursts: 6 obs scripts × 8 parallel slices got `429 [971] Please wait and consider
   throttling` (2026-10-30). `events_all` must fail loudly on a failed slice, never return a partial result; run pulls one
   tool at a time.
