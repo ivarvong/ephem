@@ -7,6 +7,7 @@ export interface TailItemLike {
   readonly eventTimestamp?: number | null
   readonly outcome?: string
   readonly entrypoint?: string | null
+  readonly scriptName?: string | null
   readonly scriptVersion?: { readonly id?: string } | null
   readonly cpuTime?: unknown
   readonly wallTime?: unknown
@@ -37,11 +38,19 @@ const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : u
 const str = (v: unknown) => (typeof v === "string" && v !== "" ? v : undefined)
 const text = (m: unknown) => { try { return typeof m === "string" ? m : JSON.stringify(m) } catch { return "" } }
 
+/** The entrypoint column, labelled by script: ephem's own as before ("Api", absent for default), any other script's as
+ *  "<script>/<entrypoint or ->" (ephem-compute/Api, ephem-compute/BlockStore). The stream schema is immutable, so the
+ *  script rides in this column rather than a new one. */
+export const entrypointOf = (t: TailItemLike): string | undefined => {
+  const e = str(t.entrypoint), s = str(t.scriptName)
+  return s && s !== "ephem" ? `${s}/${e ?? "-"}` : e
+}
+
 export const toRow = (t: TailItemLike, now = Date.now()): InvocationRow => {
   const req = t.event?.request, exc = t.exceptions ?? [], logs = t.logs ?? []
   const row: Record<string, unknown> = {
     ts: new Date(num(t.eventTimestamp) ?? now).toISOString(),
-    script_version: str(t.scriptVersion?.id), entrypoint: str(t.entrypoint), outcome: str(t.outcome) ?? "unknown",
+    script_version: str(t.scriptVersion?.id), entrypoint: entrypointOf(t), outcome: str(t.outcome) ?? "unknown",
     method: str(req?.method), route: routeOf(req?.url), status: num(t.event?.response?.status),
     ray: str(req?.headers?.["cf-ray"]), colo: str(req?.cf?.colo),
     exception_names: exc.length ? [...new Set(exc.map(e => e.name ?? "Error"))].join(",") : undefined, exceptions: exc.length,

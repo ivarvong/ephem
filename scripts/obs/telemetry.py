@@ -1,7 +1,9 @@
 """Shared helper: run a Workers Observability query through the cf CLI and return the parsed JSON."""
-import json, subprocess, time
+import json, os, subprocess, time
 
-SERVICE = "ephem"
+# The Worker queried: "ephem" (front door, MetarFeed) or "ephem-compute" (Api, BlockStore; since the compute split). Scripts
+# take --service; EPHEM_SERVICE sets the default.
+SERVICE = os.environ.get("EPHEM_SERVICE", "ephem")
 
 
 def query(view: str, minutes: float, filters: list | None = None, limit: int = 1000, extra: dict | None = None, window: tuple[int, int] | None = None) -> dict:

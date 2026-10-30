@@ -8,12 +8,14 @@ const base = (process.argv[2] && !process.argv[2].startsWith("--") ? process.arg
 const run = `p${Date.now().toString(36)}`
 // EPHEM_VERSION=<version uuid>: pin every request to that version (Cloudflare-Workers-Version-Overrides; scripts/smoke.sh,
 // deploy.sh's 0% canary) and fail any response whose x-ephem-version is another version.
-const PIN = process.env.EPHEM_VERSION, offPin: string[] = []
-if (PIN) {
+// EPHEM_COMPUTE_VERSION=<uuid>: also pin ephem-compute (the front door forwards the header over the service binding).
+const PIN = process.env.EPHEM_VERSION || undefined, CPIN = process.env.EPHEM_COMPUTE_VERSION || undefined, offPin: string[] = []
+const OVR = [PIN && `ephem="${PIN}"`, CPIN && `ephem-compute="${CPIN}"`].filter(Boolean).join(", ")
+if (OVR) {
   const f = globalThis.fetch
   globalThis.fetch = (async (u: string | URL | Request, init: RequestInit = {}) => {
-    const r = await f(u, { ...init, headers: { ...(init.headers as Record<string, string> | undefined), "cloudflare-workers-version-overrides": `ephem="${PIN}"` } })
-    const v = r.headers.get("x-ephem-version"); if (v !== PIN) offPin.push(`${String(u).replace(base, "")} → ${v}`)
+    const r = await f(u, { ...init, headers: { ...(init.headers as Record<string, string> | undefined), "cloudflare-workers-version-overrides": OVR } })
+    const v = r.headers.get("x-ephem-version"); if (PIN && v !== PIN) offPin.push(`${String(u).replace(base, "")} → ${v}`)
     return r
   }) as typeof fetch
 }

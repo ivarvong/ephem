@@ -10,7 +10,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder"
 import { EphemApi, GeoidUnavailable, InvalidInput, OutOfRange, type SearchPayload, type SearchWindowResponse } from "@ephem/api"
 import { SEARCH, SUPPORTED, WINDOW_MS, blocksFor, decodeRegion, encodeRegion, isoMs, parseRegion, searchLatRange, searchWindowRequest, windowReadRange, windowsFor } from "@ephem/core"
 import { PROV, compute, geoidAcross, jd, parseUtc } from "./handlers.ts"
-import { Edge, canonical } from "./responses.ts"
+import { Edge, canonical, forwardHeaders } from "./responses.ts"
 
 export const SEARCH_WINDOW_PATH = "/v1/alignment/search/window"
 export const MAX_PASSES = 1000
@@ -68,7 +68,7 @@ export const SearchLive = HttpApiBuilder.group(EphemApi, "search", h => h
     const reg = parseRegion(p.region)
     if ("error" in reg) return yield* new InvalidInput({ message: reg.error })
     const encoding = encodeRegion(reg.ok), edge = yield* Edge
-    const ray = request.headers["cf-ray"], headers: Record<string, string> = ray ? { "x-ephem-ray": ray } : {}
+    const headers = forwardHeaders(request.headers)
     const windows = windowsFor(start, end)
     yield* Effect.annotateCurrentSpan({ "ephem.windows": windows.length, "ephem.region_vertices": reg.ok.reduce((s, x) => s + x.reduce((t, r) => t + r.length, 0), 0), "ephem.span_days": (end - start) / 86_400_000 })
     const results = yield* Effect.forEach(windows, w => Effect.gen(function* () {

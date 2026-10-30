@@ -21,7 +21,10 @@ ap.add_argument("--version", help="only this script version (id prefix)")
 ap.add_argument("--entrypoint", help="only this entrypoint: default, Api, BlockStore, MetarFeed")
 ap.add_argument("--from", dest="frm", help="absolute window start, ISO-8601 (with --to)")
 ap.add_argument("--to", help="absolute window end, ISO-8601")
+ap.add_argument("--service", help="Worker: ephem (front door; default) or ephem-compute (Api, BlockStore since the compute split)")
 a = ap.parse_args()
+if a.service:
+    import telemetry; telemetry.SERVICE = a.service
 
 rows = collections.defaultdict(lambda: ([], []))
 ms = lambda s: int(datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp() * 1000)  # noqa: E731

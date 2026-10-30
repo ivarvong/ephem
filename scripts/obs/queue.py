@@ -19,7 +19,10 @@ ap.add_argument("--from", dest="frm", required=True)
 ap.add_argument("--to", required=True)
 ap.add_argument("--path", default="/v1/position")
 ap.add_argument("--over", type=float, default=20, help="list requests that waited longer than this (ms)")
+ap.add_argument("--service", help="Worker: ephem (front door; default) or ephem-compute (Api, BlockStore since the compute split)")
 a = ap.parse_args()
+if a.service:
+    import telemetry; telemetry.SERVICE = a.service
 ms = lambda s: int(datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp() * 1000)  # noqa: E731
 api = a.path == "/v1/alignment/search/window"
 root = ("GET https://api.internal" if api else "GET https://ephem.ivar.workers.dev") + a.path

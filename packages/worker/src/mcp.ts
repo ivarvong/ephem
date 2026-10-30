@@ -21,6 +21,7 @@ import {
   AlignmentQuery, AlignmentResponse, SightlineQuery, SightlineResponse, SearchPayload, SearchResponse, CrossingQuery, CrossingResponse, DayQuery, DayResponse, PositionQuery, PositionResponse, TrackQuery, TrackResponse, WeatherQuery, WeatherResponse,
 } from "@ephem/api"
 import { VERSION } from "./handlers.ts"
+import { VERSION_OVERRIDES } from "./responses.ts"
 
 export const LATEST = "2026-07-28"
 export const LEGACY = ["2025-11-25", "2025-06-18", "2025-03-26"] as const
@@ -324,15 +325,22 @@ const handlePost = (req: HttpServerRequest.HttpServerRequest, rest: Rest) => Eff
 
 /** Registers POST/GET/DELETE /mcp. Tool calls dispatch to the router's own /v1 routes, in-process, in the caller's fiber. */
 export const Mcp = HttpRouter.use(router => Effect.gen(function* () {
-  const rest: Rest = (path, query, body) => Effect.gen(function* () {
-    const inner = HttpServerRequest.fromWeb(body === undefined ? new Request(`http://ephem.internal${path}?${new URLSearchParams(query)}`)
-      : new Request(`http://ephem.internal${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }))
+  // fwd: the outer request's cf-ray and version override, so a tool's forward to ephem-compute is joined
+  // to this request's row and pinned like the REST call would be.
+  const restWith = (fwd: Record<string, string>): Rest => (path, query, body) => Effect.gen(function* () {
+    const inner = HttpServerRequest.fromWeb(body === undefined ? new Request(`http://ephem.internal${path}?${new URLSearchParams(query)}`, { headers: fwd })
+      : new Request(`http://ephem.internal${path}`, { method: "POST", headers: { ...fwd, "content-type": "application/json" }, body: JSON.stringify(body) }))
     const res = yield* router.asHttpEffect().pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, inner), Effect.scoped)
     const web = HttpServerResponse.toWeb(res)
     const text = yield* Effect.promise(() => web.text())
     return { status: web.status, body: text ? JSON.parse(text) : null }
   }).pipe(Effect.catchCause(c => Effect.fail(new InternalError({ message: `${path}: ${String(c)}` }))))
-  yield* router.add("POST", "/mcp", req => handlePost(req, rest))
+  yield* router.add("POST", "/mcp", req => {
+    const h = req.headers as Readonly<Record<string, string | undefined>>, fwd: Record<string, string> = {}
+    if (h["cf-ray"]) fwd["cf-ray"] = h["cf-ray"]   // the inner request looks like the outer one to Gateway (forwardHeaders)
+    if (h[VERSION_OVERRIDES]) fwd[VERSION_OVERRIDES] = h[VERSION_OVERRIDES]
+    return handlePost(req, restWith(fwd))
+  })
   yield* router.add("GET", "/mcp", notAllowed)
   yield* router.add("DELETE", "/mcp", notAllowed)
 }))

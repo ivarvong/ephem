@@ -1,45 +1,44 @@
-// Cloudflare Worker entry. Workers Caching only (no Cache API); which entrypoints are cached is cloudflare.config.ts `exports`.
-//   default     cache OFF. The front door: always runs (traces, logs, request.cf, `/`, `/mcp`); GET /v1/* is forwarded to Api.
-//   Api         cache ON.  The same router; sets the internal Cache-Control per route (src/responses.ts).
-//   BlockStore  cache ON.  GET /block/v<N>/<sha>/<i> → one DE440 block (R2 ephem-de440), GET /geoid/v<N>/<sha>/<band> → one
-//                          EGM96 band (R2 ephem-geoid); exact range reads, sha-checked, immutable.
-//   MetarFeed   cache ON.  GET /feed/metars.cache.csv.gz → aviationweather.gov's feed, max-age + SWR + stale-if-error.
-// Blocks: L1 isolate LRU → BlockStore loopback (Workers Caching lower/upper tier → R2). Weather: L1 parsed table → MetarFeed
-// loopback (Workers Caching → upstream). Geoid: L1 band map → BlockStore loopback (Workers Caching → R2), src/geoid.ts. All loopbacks: src/loopback.ts; cache tag: src/cache-version.ts.
+// ephem: the front door. Workers Caching only (no Cache API); which entrypoints are cached is cloudflare.config.ts `exports`.
+//   default     cache OFF. Always runs (traces, logs, request.cf, `/`, `/mcp`, live position / magnetic, weather, the
+//               alignment/search merge); every deterministic GET /v1/* is forwarded to ephem-compute's Api.
+//   MetarFeed   cache ON.  GET /feed/v<N>/metars.cache.csv.gz → aviationweather.gov's feed, max-age + SWR + stale-if-error.
+//   Admin       RPC only (ingest).
+// ephem-compute (src/compute.ts, packages/compute) holds the CPU-heavy cache-enabled entrypoints, Api and BlockStore, in its
+// own isolate pool, so window/alignment/day/track misses never make the platform spawn front-door isolates (guide
+// "Compute split"). The front door reaches them over service bindings (env.COMPUTE, env.STORE): Workers Caching of the
+// callee applies to those fetches as to ctx.exports. Live routes' blocks: L1 isolate LRU → STORE (ephem-compute's cache
+// → R2). Weather: L1 parsed table → MetarFeed loopback. All loopbacks: src/loopback.ts; cache tag: src/cache-version.ts.
 import { WorkerEntrypoint, tracing } from "cloudflare:workers"
 import { makeHandler } from "./app.ts"
-import { loopbackBlocks, makeBlocks, r2Origin, serveBlock, type R2BucketLike } from "./blocks.ts"
+import { loopbackBlocks, makeBlocks } from "./blocks.ts"
 import { setTracing } from "./trace.ts"
-import { loopbackGeoid, makeGeoid, r2GeoidOrigin, serveGeoid } from "./geoid.ts"
-import { defaultNoStore } from "./responses.ts"
-import { makeLoopback } from "./loopback.ts"
+import { loopbackGeoid, makeGeoid } from "./geoid.ts"
+import { makeLoopback, resolveBindings, type Binding, type Bindings, type ComputeBindings } from "./loopback.ts"
 import { makeFeed, serveFeed } from "./metar-feed.ts"
 import { weatherLive } from "./weather.ts"
 import { pipelineSink, type PipelineLike, type RequestRow } from "./requestlog.ts"
 export { Admin } from "./admin.ts"
 
 // LOGS: Basin stream ephem_requests (one row per request, src/requestlog.ts); VERSION: this Worker version's id for the row;
-// REQUEST_LOGS: "off" disables rows (the logging-overhead A/B).
-interface Env { readonly EPH: R2BucketLike; readonly GEOID: R2BucketLike; readonly LOGS?: PipelineLike<RequestRow>; readonly VERSION?: { readonly id: string }; readonly REQUEST_LOGS?: string }
-const logs = (env: Env, waitUntil: (p: Promise<unknown>) => void, role: string) =>
-  env.LOGS && env.REQUEST_LOGS !== "off" ? pipelineSink(env.LOGS, waitUntil, env.VERSION?.id, role) : undefined
-type Loopback = { fetch(req: Request, init?: { cf?: { cacheKey: string } }): Promise<Response> }
-interface Ctx { waitUntil(p: Promise<unknown>): void; readonly exports: Record<string, Loopback> }
+// REQUEST_LOGS: "off" disables rows (the logging-overhead A/B). COMPUTE / STORE: service bindings to ephem-compute's Api / BlockStore.
+interface Env extends ComputeBindings { readonly COMPUTE: Binding; readonly STORE: Binding; readonly LOGS?: PipelineLike<RequestRow>; readonly VERSION?: { readonly id: string }; readonly REQUEST_LOGS?: string }
+interface Ctx { waitUntil(p: Promise<unknown>): void; readonly exports: Bindings }
 
 setTracing(tracing)
-// ctx.exports of the invocation in flight. The loopback bindings are the same objects for every invocation of this isolate.
-let loop: Record<string, Loopback> | undefined
-const lb = makeLoopback(() => loop)   // every ctx.exports fetch goes through src/loopback.ts (test/loopback.test.ts)
+// ctx.exports and env of the invocation in flight. The bindings are the same objects for every invocation of this isolate.
+let loop: Bindings | undefined
+let bound: ComputeBindings | undefined
+const lb = makeLoopback(() => resolveBindings(loop, bound))   // every loopback fetch goes through src/loopback.ts (test/loopback.test.ts)
 
-// One Blocks L1 and one parsed METAR table per isolate, shared by both routers.
+// One Blocks L1 and one parsed METAR table per isolate.
 const blocks = makeBlocks(loopbackBlocks(lb.block))
 const geoid = makeGeoid(loopbackGeoid(lb.geoid))
 const weather = weatherLive(makeFeed({ fetch: () => lb.feed() }))
 let front: ReturnType<typeof makeHandler> | undefined
-let api: ReturnType<typeof makeHandler> | undefined
 
 // x-ephem-version: the front door's Worker version id on every response, so scripts/smoke.sh can prove a version-pinned
 // request (Cloudflare-Workers-Version-Overrides) reached the version it pinned, and a rollback is visible per request.
+// (x-ephem-compute-version, relayed from ephem-compute on forwarded answers, names the compute version that computed it.)
 const withVersion = (r: Response, id: string | undefined): Response => {
   if (!id) return r
   try { r.headers.set("x-ephem-version", id); return r } catch { const c = new Response(r.body, r); c.headers.set("x-ephem-version", id); return c }
@@ -47,25 +46,13 @@ const withVersion = (r: Response, id: string | undefined): Response => {
 
 export default {
   async fetch(request: Request, env: Env, ctx: Ctx): Promise<Response> {
-    loop = ctx.exports
+    loop = ctx.exports; bound = env
     front ??= makeHandler(blocks, { role: "front", api: lb.api }, weather, geoid)
     return withVersion(await front(request, logs(env, p => ctx.waitUntil(p), "front")), env.VERSION?.id)
   },
 }
-
-export class Api extends WorkerEntrypoint<Env> {
-  async fetch(request: Request): Promise<Response> {
-    loop = this.ctx.exports
-    api ??= makeHandler(blocks, { role: "api" }, weather, geoid)
-    return defaultNoStore(await api(request, logs(this.env, p => this.ctx.waitUntil(p), "api")))
-  }
-}
-
-export class BlockStore extends WorkerEntrypoint<Env> {
-  async fetch(request: Request): Promise<Response> {
-    return new URL(request.url).pathname.startsWith("/geoid/") ? serveGeoid(request, r2GeoidOrigin(this.env.GEOID)) : serveBlock(request, r2Origin(this.env.EPH))
-  }
-}
+const logs = (env: Env, waitUntil: (p: Promise<unknown>) => void, role: string) =>
+  env.LOGS && env.REQUEST_LOGS !== "off" ? pipelineSink(env.LOGS, waitUntil, env.VERSION?.id, role) : undefined
 
 export class MetarFeed extends WorkerEntrypoint<Env> {
   async fetch(request: Request): Promise<Response> { return serveFeed(request, { fetch: (u, i) => fetch(u, i) }) }

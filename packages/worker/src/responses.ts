@@ -68,6 +68,18 @@ export const live = (url: URL) => url.pathname === "/v1/weather" ||
   ((url.pathname === "/v1/position" || url.pathname === "/v1/magnetic") && !url.searchParams.has("time"))
 export const forwards = (method: string, url: URL) => (method === "GET" || method === "HEAD") && url.pathname.startsWith("/v1/") && !live(url)
 
+/** Request headers the front door sends with every forward to ephem-compute. x-ephem-ray joins the Api invocation's log row
+ *  to this one. Cloudflare-Workers-Version-Overrides is passed through so a smoke can pin ephem-compute's 0% canary from
+ *  the eyeball (`ephem-compute="<id>"`; docs: version overrides, "Service bindings"). Neither is in the cache key (the key
+ *  is entrypoint + path + query + cf.cacheKey; only Cloudflare-Workers-Version-Key would partition it). */
+export const VERSION_OVERRIDES = "cloudflare-workers-version-overrides"
+export const forwardHeaders = (h: Readonly<Record<string, string | undefined>>): Record<string, string> => {
+  const out: Record<string, string> = {}, ray = h["cf-ray"], pin = h[VERSION_OVERRIDES]
+  if (ray) out["x-ephem-ray"] = ray
+  if (pin) out[VERSION_OVERRIDES] = pin
+  return out
+}
+
 const withCacheControl = (res: HttpServerResponse.HttpServerResponse, cc: string | undefined) =>
   cc ? HttpServerResponse.setHeader(res, "cache-control", cc) : res
 
@@ -77,9 +89,7 @@ export const Gateway = HttpRouter.middleware(Effect.gen(function* () {
     const req = yield* HttpServerRequest.HttpServerRequest
     const url = new URL(req.originalUrl, "http://localhost")
     if (edge.role === "front" && forwards(req.method, url)) {
-      // x-ephem-ray joins the Api invocation's log row to this one; request headers outside the documented set are not in the key.
-      const ray = req.headers["cf-ray"], headers: Record<string, string> = ray ? { "x-ephem-ray": ray } : {}
-      const key = canonical(url)
+      const headers = forwardHeaders(req.headers), key = canonical(url)
       const forwarded = yield* Effect.tryPromise(() => edge.api(key, { method: req.method, headers })).pipe(
         Effect.tap(r => Effect.annotateCurrentSpan({ "ephem.api_cache": r.headers.get("cf-cache-status") ?? "NONE", "http.status_code": r.status })),
         Effect.withSpan("api.fetch", { attributes: { "ephem.api_key": key } }),

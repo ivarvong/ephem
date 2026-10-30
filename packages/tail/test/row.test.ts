@@ -44,6 +44,12 @@ describe("tail rows", () => {
     expect(routeCounts([toRow(item()), toRow(item()), toRow(item({ entrypoint: "Api" }))])).toEqual(["default /v1/alignment 2", "Api /v1/alignment 1"])
     expect(routeCounts([toRow(item({ entrypoint: undefined, event: { request: { url: "https://x/llms.txt" } } }))])).toEqual(["- /llms.txt 1"])
   })
+  it("labels another script's entrypoint <script>/<entrypoint> (ephem-compute), ephem's own unchanged", () => {
+    expect(toRow(item({ scriptName: "ephem-compute", entrypoint: "Api" })).entrypoint).toBe("ephem-compute/Api")
+    expect(toRow(item({ scriptName: "ephem-compute", entrypoint: undefined })).entrypoint).toBe("ephem-compute/-")
+    expect(toRow(item({ scriptName: "ephem", entrypoint: "MetarFeed" })).entrypoint).toBe("MetarFeed")
+    expect(routeCounts([toRow(item({ scriptName: "ephem-compute", entrypoint: "Api", event: { request: { url: "https://api.internal/v1/alignment/search/window?x=1" } } }))])).toEqual(["ephem-compute/Api /v1/alignment/search/window 1"])
+  })
   it("shapeOf reports key names only", () => {
     const s = shapeOf(item()); expect(s.item).toContain("outcome"); expect(JSON.stringify(s)).not.toContain("ephem.ivar.workers.dev")
   })

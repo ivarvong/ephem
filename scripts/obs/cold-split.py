@@ -15,7 +15,10 @@ from telemetry import eq, events, starts  # noqa: E402
 ap = argparse.ArgumentParser()
 ap.add_argument("--from", dest="frm", required=True); ap.add_argument("--to", required=True)
 ap.add_argument("--route", default="track"); ap.add_argument("--json")
+ap.add_argument("--service", help="Worker: ephem (front door; default) or ephem-compute (Api, BlockStore since the compute split)")
 a = ap.parse_args()
+if a.service:
+    import telemetry; telemetry.SERVICE = a.service
 ms = lambda s: int(datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp() * 1000)  # noqa: E731
 W = (ms(a.frm), ms(a.to))
 
