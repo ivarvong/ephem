@@ -20,20 +20,58 @@
 # their cf-rays) and fails on exceptions, 5xx, error logs, missing entrypoints/spans or missing telemetry; a failure removes
 # the canary exactly like a failed smoke. After promotion it runs again over the live smoke plus all real traffic for
 # O11Y_LIVE_S (90) s: a new error signature rolls back. SKIP_O11Y_GATE=1 skips it (emergencies only; loud warning).
-# The body is one function so bash parses the whole file before running it: editing deploy.sh can't break a running deploy.
+#
+# Two stages, so the deploy logic always comes from the commit being deployed, never from the shared tree (an agent's
+# uncommitted deploy.sh ran another agent's deploy, 2026-10-30):
+#   bootstrap  (this file, as found in the shared tree): take the lock, refuse to go backwards, `git worktree add` <rev>, then
+#              exec <worktree>/scripts/deploy.sh with EPHEM_DEPLOY_INNER=1 and the lock + worktree paths. Same pid, so the
+#              lock owner line stays true; the inner copy's EXIT trap releases the lock and removes the worktree on every
+#              path. Keep it tiny: it is the only code that runs from the shared tree.
+#   inner      main() below, from <rev>: node_modules links, gate, deploy, smokes, telemetry gate, rollback. Its smoke.sh and
+#              scripts/obs/* are <rev>'s too. A <rev> from before the bootstrap (no EPHEM_DEPLOY_INNER in its deploy.sh) runs
+#              its own deploy.sh whole (it takes the lock itself).
+if [ "${EPHEM_DEPLOY_INNER:-}" != 1 ]; then
+  set -euo pipefail
+  REV=${1:?usage: deploy.sh <rev> "<message>" [auto|ephem|tail|all]}
+  ROOT=${EPHEM_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}
+  SHA=$(git -C "$ROOT" rev-parse --short=12 "$REV")
+  LOCK="$(git -C "$ROOT" rev-parse --absolute-git-dir)/ephem-deploy.lock"
+  mkdir "$LOCK" 2>/dev/null || { echo "another deploy is running (lock $LOCK, held by $(cat "$LOCK/owner" 2>/dev/null)); wait and rebase" >&2; exit 1; }
+  echo "$SHA pid $$ $(date -u +%FT%TZ)" > "$LOCK/owner"
+  WT=""; trap '[ -n "$WT" ] && git -C "$ROOT" worktree remove --force "$WT" >/dev/null 2>&1; rm -rf "$LOCK"' EXIT   # until exec
+  LAST=$(git -C "$ROOT" tag --list 'deployed/*' --sort=-refname | head -1)
+  if [ -n "$LAST" ] && [ "${ALLOW_OLDER:-}" != 1 ] && ! git -C "$ROOT" merge-base --is-ancestor "$LAST" "$SHA"; then
+    echo "$SHA does not contain the last deployed commit ($LAST = $(git -C "$ROOT" rev-parse --short=12 "$LAST")): rebase onto main, or ALLOW_OLDER=1 for a rollback" >&2; exit 1
+  fi
+  WT=$(mktemp -d "${TMPDIR:-/tmp}/ephem-deploy-$SHA-XXXX")
+  git -C "$ROOT" worktree add --detach -q "$WT" "$SHA"
+  if ! grep -q 'EPHEM_DEPLOY_INNER' "$WT/scripts/deploy.sh"; then
+    OLD=$(mktemp "${TMPDIR:-/tmp}/ephem-deploy-legacy-XXXX"); cp "$WT/scripts/deploy.sh" "$OLD"
+    git -C "$ROOT" worktree remove --force "$WT"; WT=""; rm -rf "$LOCK"; trap - EXIT
+    echo "== bootstrap: $SHA predates the two-stage deploy; running its own deploy.sh whole" >&2
+    exec env EPHEM_ROOT="$ROOT" bash "$OLD" "$@"
+  fi
+  echo "== bootstrap: lock + worktree for $SHA; exec its own scripts/deploy.sh (sha256 $(shasum -a 256 "$WT/scripts/deploy.sh" | cut -c1-12); shared tree's $(shasum -a 256 "$0" | cut -c1-12))"
+  exec env EPHEM_DEPLOY_INNER=1 EPHEM_DEPLOY_LOCK="$LOCK" EPHEM_DEPLOY_WT="$WT" EPHEM_ROOT="$ROOT" bash "$WT/scripts/deploy.sh" "$@"
+fi
+# --- inner: runs from the commit being deployed ----------------------------------------------------------------------------
+# The body is one function so bash parses the whole file before running it.
 main() {
 set -euo pipefail
+# The bootstrap took the lock and made the worktree; this copy owns both from the first line and releases them on every exit.
+ROOT=${EPHEM_ROOT:?inner deploy.sh needs EPHEM_ROOT (the main checkout; set by the bootstrap)}
+LOCK=${EPHEM_DEPLOY_LOCK:?inner deploy.sh needs EPHEM_DEPLOY_LOCK (run scripts/deploy.sh, not the inner copy)}; WT=${EPHEM_DEPLOY_WT:?}
+cleanup() { [ -n "$WT" ] && git -C "$ROOT" worktree remove --force "$WT" >/dev/null 2>&1; rm -rf "$LOCK"; }
+trap cleanup EXIT
 REV=${1:?usage: deploy.sh <rev> "<message>" [auto|ephem|tail|all]}; MSG=${2:?usage: deploy.sh <rev> "<message>"}; TARGET=${3:-auto}
 case "$TARGET" in auto|ephem|tail|all) ;; *) echo "target must be auto|ephem|tail|all" >&2; exit 2 ;; esac
-ROOT=${EPHEM_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}; B=https://ephem.ivar.workers.dev; RETRY_S=${RETRY_S:-5}
+B=https://ephem.ivar.workers.dev; RETRY_S=${RETRY_S:-5}
 SHA=$(git -C "$ROOT" rev-parse --short=12 "$REV")
 # One deploy at a time, and never backwards: concurrent agents' deploys raced and an older commit replaced a newer one
 # for ~2 min (2026-10-30). A rollback or A/B of an older commit needs ALLOW_OLDER=1.
-LOCK="$(git -C "$ROOT" rev-parse --absolute-git-dir)/ephem-deploy.lock"
-mkdir "$LOCK" 2>/dev/null || { echo "another deploy is running (lock $LOCK, held by $(cat "$LOCK/owner" 2>/dev/null)); wait and rebase" >&2; exit 1; }
-echo "$SHA pid $$ $(date -u +%FT%TZ)" > "$LOCK/owner"
-WT=""; cleanup() { [ -n "$WT" ] && git -C "$ROOT" worktree remove --force "$WT" >/dev/null 2>&1; rm -rf "$LOCK"; }
-trap cleanup EXIT
+grep -q "^$SHA pid $$ " "$LOCK/owner" 2>/dev/null || { echo "inner deploy.sh: lock $LOCK is not this deploy's ($(cat "$LOCK/owner" 2>/dev/null))" >&2; exit 1; }
+[ "$(git -C "$WT" rev-parse --short=12 HEAD)" = "$SHA" ] || { echo "inner deploy.sh: worktree $WT is not at $SHA" >&2; exit 1; }
+echo "== inner: deploy logic from $SHA's scripts/deploy.sh"
 LAST=$(git -C "$ROOT" tag --list 'deployed/*' --sort=-refname | head -1)
 LAST_TAIL=$(git -C "$ROOT" tag --list 'deployed-tail/*' --sort=-refname | head -1)
 older() { [ -n "$1" ] && [ "${ALLOW_OLDER:-}" != 1 ] && ! git -C "$ROOT" merge-base --is-ancestor "$1" "$SHA"; }
@@ -49,8 +87,6 @@ for t in $([ $DO_EPHEM = 1 ] && echo "$LAST") $([ $DO_TAIL = 1 ] && echo "$LAST_
 done
 echo "== targets @ $SHA: $([ $DO_TAIL = 1 ] && echo "ephem-tail ")$([ $DO_EPHEM = 1 ] && echo ephem)"
 
-WT=$(mktemp -d "${TMPDIR:-/tmp}/ephem-deploy-$SHA-XXXX")
-git -C "$ROOT" worktree add --detach -q "$WT" "$SHA"
 # node_modules: link every package from the main checkout EXCEPT the workspace packages (@ephem/*). Those are relative
 # symlinks (../../packages/core), so linking the whole directory resolved @ephem/core and @ephem/api to the shared tree's
 # uncommitted files (found 2026-10-30); here they point at this worktree's packages.

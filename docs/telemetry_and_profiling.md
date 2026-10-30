@@ -28,6 +28,7 @@ Every number you report carries its version id (and trace id or profile file). L
 | `python3 scripts/obs/cache-probe.py [base] --mode repeat\|unique\|burst [--keys 10] [--repeats 5] [--burst 50] [--routes day,…]` | Client-side cross-check of Workers Caching: per request `x-ephem-cache` (the Api's cf-cache-status relayed by the front door), client and server-timing latency; p50/p99 by (route, status). `burst` fires N concurrent identical cold requests (collapsing test); count Api invocations for that key with a `starts_with` filter on `$workers.event.request.url = https://api.internal/<path>?<sorted query>`. |
 | `node --experimental-strip-types scripts/obs/mcp-probe.ts [base]` | Full MCP client session against `/mcp` (legacy handshake + modern 2026-07-28 flow + error cases); every tool call (8 tools, incl. `crossing` and `sight_line`; the alignment call uses heightRef/targetHeightRef=msl, aim=litCentroid, include=sun,phase) is checked equal to its REST endpoint (the POST tool `alignment_search` against its REST POST), plus the REST 400 UnknownParameter and a null `apparentAltitude` case. Pass/fail table with latency and cf-ray. Run after every deploy. |
 | `scripts/smoke.sh <base> [--pin <version>] [--expect <version>] [--expect-compute <id>] [--only a,b]` | Every route + content checks + the MCP probe; `--pin` sends `Cloudflare-Workers-Version-Overrides` and requires `x-ephem-version` = that version on every response (the probe too, via `EPHEM_VERSION`). The `compute` / `compute-hit` checks send a never-seen position+time key and require a MISS computed by the Api (`x-ephem-compute-version`, = `--expect-compute` if given; deploy.sh passes the version under test, since a loopback runs the caller's version), then HIT. deploy.sh runs the deployed commit's copy. See "Deploys". |
+| `python3 scripts/obs/canary-gate.py <worker> <new> <prev> --since ISO --run ID --manifest FILE [--live 90]` | deploy.sh's telemetry gate: the smoke's requests (by `x-ephem-smoke`, cf-rays) in o11y; fails on exceptions, 5xx, error logs, missing entrypoints/spans or telemetry; CPU vs previous as warnings. See "Telemetry gate". |
 | `python3 scripts/obs/tail-check.py [--minutes 10] [--version <id>] [--wait 90] [--require /v1/track,…]` | ephem-tail from its own o11y events (no Basin token needed): invocations by (version, outcome), `basin_send_failed` lines, and the route labels summed from its `tail_batch` log lines. Exit 1 on a non-ok outcome, a send failure or a missing required label. deploy.sh runs it after a tail deploy. |
 | `python3 scripts/obs/trace.py --jsonrpc-id <id>` | The trace of one MCP message (the probe's ids are `<run>-<step>`). |
 | `python3 scripts/obs/symbolize.py in.pb [out.pb]` | Replaces minified function names in a prod pprof with names read from the source (see "Source maps"). |
@@ -92,9 +93,10 @@ Views: `events` (invocations: `$metadata.type = cf-worker-event`; spans: `type =
 2. (Removed 2026-10-30: the `compute` target for ephem-compute; see "Compute split".)
 3. **ephem, gradual**: record the version at 100% (`cf workers deployments list`; a split deployment aborts), `cf workers
    versions create`, `cf workers deployments create` with new 0% + previous 100%, wait until 5 pinned `/healthz` in a row
-   come from the new version, then `smoke.sh --pin <new>`. Prod traffic never sees the canary. Fail → remove it, exit 1.
+   come from the new version, then `smoke.sh --pin <new>`, then the **telemetry gate** ("Telemetry gate" below). Prod
+   traffic never sees the canary. Either fails → remove it (100% previous), exit 1, no tag.
 4. Promote (new 100%), wait until 5 unpinned `/healthz` in a row carry the new `x-ephem-version` (not a fixed sleep), then
-   `smoke.sh --expect <new>`. Failed checks are retried once (only those, after `RETRY_S`=5 s). Still failing → route 100%
+   `smoke.sh --expect <new>`, then the gate in live mode (the live smoke + 90 s of real traffic). Failed checks are retried once (only those, after `RETRY_S`=5 s). Still failing → route 100%
    back to the recorded version, wait until it serves, re-smoke it with the last deployed commit's smoke.sh, exit 1, no tag.
 5. A diff touching non-versioned settings (`tailConsumers`, `observability`, `logpush` in cloudflare.config.ts; `GRADUAL=0`
    forces it) skips the 0% stage and uses `cf deploy`: `versions create` says those apply only on the next deployment.
@@ -118,6 +120,76 @@ never on main): canary smoke 18/18 pinned → promote → `deploy-canary` 404, r
 
 Restoration is < 10 s from the decision; the rest is the live smoke (~7 s) and the 5 s retry. Both exited 1 untagged and
 re-smoked 37d28e99 18/18 (run 2; run 1 re-smoked with the failed commit's own smoke, fixed in cb07493).
+
+### Telemetry gate (`scripts/obs/canary-gate.py`, 2026-10-30)
+
+The smoke only sees what a client sees. The gate reads Workers Observability for the same requests before promotion
+(ivar: "use a 0% version … hit it with that version, run the full smoketest, via the o11y with cf cli, before progressing").
+
+- **Selection.** deploy.sh runs every smoke with `--run <id>` (header `x-ephem-smoke: <id>` on every curl check and every
+  MCP probe request) and `--manifest <file>` (one line per request: `<cf-ray> <status> <method> <path> <check>`). The gate
+  queries front-door invocations by that header (live traffic can't pollute it), joins Api invocations by their request
+  header `x-ephem-ray` (= the front ray), BlockStore invocations by rayId prefix, then pulls every span and log line of
+  those traces with a `$metadata.traceId` `in` filter (comma-joined values; a JSON array is rejected). At 0% it also reads
+  every invocation and log of the new version id in the window (only pinned requests reach it).
+- **Two records per request.** The invocation event and the runtime's root span (`cloudflare.ray_id`, `outcome`,
+  `http.response.status_code`, `cpu_time_ms`, version) are ingested independently. A request is visible if either
+  arrived: in the first pinned run one invocation event (`/assets/…/RPNDot-Regular.woff2`, ray a52d5c29ef834350) never
+  arrived while its root span did (1 of 154 smoke requests over two runs).
+- **Ingest wait.** Polls every 5 s up to `--wait 90`; stops early once 100% of the manifest is visible and every required
+  span is present. At the deadline: coverage ≥ 95% of the smoke's requests, every smoke check with at least one visible
+  request, and every required entrypoint/span, else FAIL (missing telemetry never passes). Measured: see the table below.
+- **FAIL:** outcome ≠ ok; any 5xx (invocation or root span) or a server status that differs from the client's; any log
+  at level error, any key ending `_failed` (`basin_send_failed`, `request_log_failed`), any `{"evt":"*_failed"}`; a smoke
+  request answered by another version of the Worker under test; missing `GET`/`POST`/`api.fetch` spans (default),
+  `mcp.initialize` + `mcp.tools/call` (MCP), an Api invocation with `position` + `blocks.load` spans, a BlockStore
+  invocation when an Api `blocks.load` span reports a MISS (smoke check `blocks-miss` asks for a random instant in
+  1972–2149 to force one), and any linked Api / BlockStore invocation on another version (a loopback runs the caller's version).
+- **WARN only: CPU.** Per (entrypoint, path): new p50 > 2× the previous version's p50 (last 15 min) and +5 ms, or new max >
+  previous p99 + 50 ms, when the baseline has n ≥ 10. Not a failure rule: the smoke sends 1–3 requests per route to fresh
+  isolates whose first request pays start-up (cold-split.py: 1.2–2× CPU), and no threshold separates that from a
+  regression at that n.
+- **Live (after promotion, `--live 90`).** The live smoke's requests as above, plus every invocation and log of the new
+  version in [promotion, +90 s] (waits until +105 s for ingest). An error on real traffic fails only if its signature
+  (service, entrypoint, kind, path) did not occur on the previous version in its last 15 min; a pre-existing signature or
+  a user's `canceled` is a warning. Failure → the existing rollback path.
+- **Deterministic half: `x-ephem-errors`.** The front door counts `console.error` lines (every `*_failed` log, the
+  tracing `safe()` warning) and unhandled rejections per isolate and returns the count on responses to requests carrying
+  `x-ephem-smoke` (src/index.ts). A pinned canary's isolates serve only the smoke, so `smoke.sh --pin --run` and the MCP
+  probe (`isolate.errors` row) fail on any non-zero count with no ingest dependency. An error in waitUntil after a response
+  shows on that isolate's next request. Not available for the Api: its responses are cached by Workers Caching, so a
+  header there would be replayed; Api errors are telemetry-only.
+- `SKIP_O11Y_GATE=1` skips both gates (emergencies only; deploy.sh prints a banner). `O11Y_WAIT_S`, `O11Y_LIVE_S`
+  override 90 / 90. A commit from before the gate runs its own deploy.sh (below), which has no gate.
+
+**Measured** (logs: scratchpad `o11y-gate/deploy-*.log`):
+
+| run | version | what | ingest / gate time | result |
+| --- | --- | --- | --- | --- |
+| (a) canary, git 5026667 | 639e952a | 77 smoke requests (23 checks + 54 MCP-probe requests) | 0/77 visible at 6 s, 77/77 at 57 s (3 polls); gate 59.7 s | GATE ok, 0 errors, 0 warnings; Api ×8, BlockStore ×1 (forced MISS); every span |
+| (a) live, same | 639e952a | live smoke + 90 s real traffic (111 events on the version) | 77/77 at 67 s; gate 101.9 s (waits to promotion + 105 s) | GATE ok |
+| (b) throwaway df22873a (never on main): `console.log({"evt":"gate_test_failed"})` on /v1/magnetic, answers unchanged | b9e54fef | client smoke 23/23 ok (pinned) | the log line was visible at the first poll (5 s), before any invocation event; gate exit 1 after 7.6 s | canary 0% 21:36:09.6Z → removed 21:36:28.9Z (19.3 s at 0%, removal 1.5 s after the decision); prod stayed on 639e952a; exit 1, untagged |
+
+Log lines ingest faster than invocation events (seconds vs ~30–60 s), so a logged error fails the gate early; a clean
+canary costs ~60 s of waiting for the invocations. The CPU columns of (a) show why CPU is a warning: the Api's first
+`/v1/position` on a fresh isolate was 80 ms against p50 35.
+
+### Two-stage deploy.sh (bootstrap, 2026-10-30)
+
+deploy.sh runs from the shared tree, so an agent's uncommitted deploy.sh ran another agent's deploy (2026-10-30, 21:33Z: the
+compute-split revert's in-progress deploy.sh smoked commit 5026667 with the wrong compute expectation; the canary failed
+closed). Now the shared-tree copy is only a **bootstrap**: lock, never-backwards against the last `deployed/` tag,
+`git worktree add <rev>`, then `exec <worktree>/scripts/deploy.sh` with `EPHEM_DEPLOY_INNER=1`, `EPHEM_DEPLOY_LOCK`,
+`EPHEM_DEPLOY_WT`. exec keeps the pid, so the lock's owner line stays true; the inner copy checks it, owns the EXIT trap
+(lock released, worktree removed on every path) and runs everything else from `<rev>`: node_modules links, gate, deploy,
+smoke.sh, canary-gate.py, rollback. A `<rev>` whose deploy.sh predates this (no `EPHEM_DEPLOY_INNER`) runs that deploy.sh
+whole (it takes the lock itself). The first line of every deploy names both scripts' sha256. Changing deploy.sh's
+inner part needs no care for in-flight deploys; change the bootstrap by `mv`ing a new file in.
+
+```sh
+python3 scripts/obs/canary-gate.py ephem <new> <prev> --since <iso> --run <id> --manifest <file> [--live 90] [--json out]
+```
+
 
 ## Caching (Workers Caching; never the Cache API)
 
@@ -704,6 +776,15 @@ column.
   10/10 with `--limit-rate 4k`), and is the cause of 1bff6e62's "/docs has no /openapi.json link": o11y shows every /docs
   request to 1bff6e62 (13:18:12–13:18:33Z) returned 200. smoke.sh writes bodies to files and greps those
   (`echo "$S" | head -1 | grep` had the same flaw). Repro: scratchpad `deploy/repro-pipefail.sh`.
+- **`$metadata.id` is not unique.** One query returned 78 rows for 78 distinct cf-rays with only 67 distinct ids (smoke run
+  g1793394107, 2026-10-30). `telemetry.events_all` deduplicated by it and silently dropped ~14% of events: /v1/position
+  20:50–21:00Z kept 2133 of 2478 (cc6ddd8e) and 2116 of 2459 (02dd1270), equally in both arms. That was the "15–24% o11y
+  loss" in the compute-mode A/B: it is not ingest loss. Fixed (dedup by the whole `$metadata`). Cross-check on the same
+  10 min: o11y invocations front 9414 / Api 13898, root spans 9403 / 13896, ephem-tail `tail_batch` rows 9410 / 13906,
+  all within 0.1%. Never count or dedup by `$metadata.id`; count rays or traceIds.
+- Spans carry the version as `source.cloudflare.script_version.id` and the entrypoint as `source.cloudflare.entrypoint`
+  (no `$workers`); filter spans by ray with key `cloudflare.ray_id` (root spans only). Console JSON lines have no
+  `$metadata.level`; `console.error` lines have level `error`.
 - Workers Observability splits JSON log keys on ".": `{"routes":{"- /llms.txt":1}}` came back as
   `{"- /llms":{"txt":1}}` (ephem-tail 9b316309). Log label/count pairs as strings ("- /llms.txt 1"), not as object keys.
 - The default handler's TailItem has no `entrypoint` (ephem-tail labels it "-"); only `Api`, `BlockStore`, `MetarFeed` carry one.

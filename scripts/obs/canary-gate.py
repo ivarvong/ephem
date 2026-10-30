@@ -206,6 +206,7 @@ if PREV:
             m = is_err_log(e)
             if m: BASE_SIGS.add((svc(e), ep(e), "log " + m.split(":")[0], path(e)))
 
+early = False
 start = time.time(); deadline = start + a.wait; live_end = ms(a.since) + int(a.live * 1000)
 polls = 0
 while True:
@@ -213,7 +214,7 @@ while True:
     front, linked, tev, mine = collect(int(time.time() * 1000))
     fails, warns, missing, info = judge(front, linked, tev, mine, False)
     complete = not missing and len({ray0(e) for e in front} & rays) == len(rays)   # stop early only at 100%; floor applies at the deadline
-    if fails and not a.live: break                        # an error is definitive: no need to wait for the rest
+    if fails and not a.live: early = True; break          # an error is definitive: no need to wait for the rest
     if complete and (not a.live or time.time() * 1000 >= live_end + 15_000): break
     if time.time() >= deadline and (not a.live or time.time() * 1000 >= live_end + 15_000): break
     if polls == 1 or polls % 3 == 0:
@@ -249,6 +250,8 @@ for (e_, p_), r in sorted(rows.items()):
 print("   spans/entrypoints: " + ", ".join(f"{n} {'ok' if ok else 'MISSING'}" for n, ok in info["need"]))
 warns += cpu_warn
 for w in warns[:15]: print("   warn  " + w)
+if early and missing:   # stopped on a definite error before ingest finished: what is still missing is not a finding
+    print(f"   (stopped early on {len(fails)} error(s) after {waited:.0f}s; {len(missing)} items not yet ingested, not judged)"); missing = []
 bad = fails + missing
 for f in bad[:25]: print("   FAIL  " + f)
 if len(bad) > 25: print(f"   … {len(bad) - 25} more")
