@@ -14,6 +14,7 @@ import * as Tracer from "effect/Tracer"
 import * as HttpRouter from "effect/http/HttpRouter"
 import * as HttpServerError from "effect/http/HttpServerError"
 import * as HttpServerRequest from "effect/http/HttpServerRequest"
+import { ROUTES } from "./routes.ts"
 
 declare const __EPHEM_BUILD__: string
 const BUILD = typeof __EPHEM_BUILD__ === "string" ? __EPHEM_BUILD__ : "dev"
@@ -82,8 +83,8 @@ const sum = (spans: ReadonlyArray<Attrs>, k: string) => { let s = 0, seen = fals
 const sumPrefix = (spans: ReadonlyArray<Attrs>, p: string) => { let s = 0, seen = false; for (const a of spans) for (const [k, v] of a) if (k.startsWith(p) && typeof v === "number" && Number.isFinite(v)) { s += v; seen = true } return seen ? s : undefined }
 
 /** Every route is a static path, so on the front door (which forwards /v1/* without matching) the path is the route if it is one
- *  of these; anything else is left out rather than stored raw. test/requestlog.test.ts checks this covers /openapi.json. */
-export const ROUTES: ReadonlySet<string> = new Set(["/", "/docs", "/docs/interactive", "/llms.txt", "/openapi.json", "/healthz", "/mcp", "/v1/position", "/v1/day", "/v1/crossing", "/v1/alignment", "/v1/alignment/search", "/v1/alignment/search/window", "/v1/sightline", "/v1/track", "/v1/magnetic", "/v1/weather"])
+ *  of ROUTES (src/routes.ts, shared with ephem-tail); anything else is left out rather than stored raw. */
+export { ROUTES }
 
 export interface RowInput {
   readonly now: number; readonly method: string; readonly url: URL; readonly headers: Readonly<Record<string, string | undefined>>

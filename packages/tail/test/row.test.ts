@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest"
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
-import { routeOf, shapeOf, toRow, type InvocationRow } from "../src/row.ts"
+import { ROUTES as TAIL_ROUTES, routeCounts, routeOf, shapeOf, toRow, type InvocationRow } from "../src/row.ts"
+import { ROUTES } from "../../worker/src/routes.ts"
 import tail from "../src/index.ts"
 import type { EphemInvocationsRecord } from "../../worker/src/basin.generated.ts"
 
@@ -34,18 +35,28 @@ describe("tail rows", () => {
     expect(toRow({ outcome: "ok", event: null }, 0)).toEqual({ ts: "1970-01-01T00:00:00.000Z", outcome: "ok", exceptions: 0, error_logs: 0, basin_send_failed: 0 })
     expect(routeOf("https://x/secret/path")).toBe("other"); expect(routeOf("not a url")).toBe("other"); expect(routeOf("https://x/")).toBe("/")
   })
+  it("labels every ephem route from ephem's own list (packages/worker/src/routes.ts), incl. the round-2 routes", () => {
+    expect(TAIL_ROUTES).toBe(ROUTES)
+    for (const p of ["/v1/track", "/v1/sightline", "/v1/alignment/search", "/v1/alignment/search/window", "/llms.txt", "/docs/interactive"])
+      expect(routeOf(`https://ephem.ivar.workers.dev${p}?lat=1`), p).toBe(p)
+    for (const p of ROUTES) expect(routeOf(`http://api.internal${p}`), p).toBe(p)
+    expect(routeOf("https://x/block/v1/abc/3")).toBe("other")
+    expect(routeCounts([toRow(item()), toRow(item()), toRow(item({ entrypoint: "Api" }))])).toEqual({ "default /v1/alignment": 2, "Api /v1/alignment": 1 })
+  })
   it("shapeOf reports key names only", () => {
     const s = shapeOf(item()); expect(s.item).toContain("outcome"); expect(JSON.stringify(s)).not.toContain("ephem.ivar.workers.dev")
   })
   it("sends one batch per tail call from waitUntil; a rejecting send logs basin_send_failed and does not throw", async () => {
     const waits: Promise<unknown>[] = [], sent: unknown[][] = [], errs: string[] = []
-    const orig = console.error, origLog = console.log; console.error = (m: string) => { errs.push(m) }; console.log = () => {}
+    const logs: string[] = []
+    const orig = console.error, origLog = console.log; console.error = (m: string) => { errs.push(m) }; console.log = (m: string) => { logs.push(m) }
     try {
       await tail.tail([item(), item({ outcome: "ok" })], { INVOCATIONS: { send: async rs => { sent.push([...rs]) } } }, { waitUntil: p => { waits.push(p) } })
       await tail.tail([item()], { INVOCATIONS: { send: async () => { throw new Error("down") } } }, { waitUntil: p => { waits.push(p) } })
       await Promise.all(waits)
     } finally { console.error = orig; console.log = origLog }
     expect(sent).toHaveLength(1); expect(sent[0]).toHaveLength(2)
+    expect(logs.map(l => JSON.parse(l)).filter(l => l.tail_batch).map(l => l.tail_batch)).toEqual([{ rows: 2, routes: { "default /v1/alignment": 2 } }, { rows: 1, routes: { "default /v1/alignment": 1 } }])
     expect(errs).toHaveLength(1); expect(JSON.parse(errs[0]!).basin_send_failed).toMatchObject({ stream: "ephem_invocations", rows: 1 })
   })
 })

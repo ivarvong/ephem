@@ -1,5 +1,6 @@
 // One `ephem_invocations` row per TailItem (schema: packages/worker/ops/basin/invocations.schema.json). Pure, so it is unit-tested.
 // Privacy: the path is reduced to a known route (or "other"); no query string, headers, IP or user agent are kept.
+import { ROUTES } from "../../worker/src/routes.ts"
 
 /** The parts of a TailItem we read (https://developers.cloudflare.com/workers/runtime-apis/handlers/tail/#tailitems). */
 export interface TailItemLike {
@@ -23,7 +24,8 @@ export interface InvocationRow {
   cpu_ms?: number; wall_ms?: number
 }
 
-export const ROUTES = new Set(["/", "/docs", "/openapi.json", "/healthz", "/mcp", "/v1/position", "/v1/day", "/v1/alignment", "/v1/magnetic", "/v1/weather", "/v1/crossing"])
+// The route list is ephem's own (packages/worker/src/routes.ts), so a new route is labelled here the day it ships.
+export { ROUTES }
 export const routeOf = (url: string | undefined): string | undefined => {
   if (!url) return undefined
   let path: string
@@ -49,6 +51,13 @@ export const toRow = (t: TailItemLike, now = Date.now()): InvocationRow => {
   }
   for (const k of Object.keys(row)) if (row[k] === undefined) delete row[k]
   return row as unknown as InvocationRow
+}
+
+/** `${entrypoint} ${route}` → count, for the per-batch `tail_batch` log line. */
+export const routeCounts = (rows: ReadonlyArray<InvocationRow>): Record<string, number> => {
+  const c: Record<string, number> = {}
+  for (const r of rows) { const k = `${r.entrypoint ?? "-"} ${r.route ?? "-"}`; c[k] = (c[k] ?? 0) + 1 }
+  return c
 }
 
 /** Key names (never values) of a TailItem, logged once per isolate so the doc records what the runtime actually sends. */

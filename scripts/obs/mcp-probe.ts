@@ -6,6 +6,17 @@
 // finds the trace of any step.
 const base = (process.argv[2] && !process.argv[2].startsWith("--") ? process.argv[2] : "https://ephem.ivar.workers.dev").replace(/\/$/, "")
 const run = `p${Date.now().toString(36)}`
+// EPHEM_VERSION=<version uuid>: pin every request to that version (Cloudflare-Workers-Version-Overrides; scripts/smoke.sh,
+// deploy.sh's 0% canary) and fail any response whose x-ephem-version is another version.
+const PIN = process.env.EPHEM_VERSION, offPin: string[] = []
+if (PIN) {
+  const f = globalThis.fetch
+  globalThis.fetch = (async (u: string | URL | Request, init: RequestInit = {}) => {
+    const r = await f(u, { ...init, headers: { ...(init.headers as Record<string, string> | undefined), "cloudflare-workers-version-overrides": `ephem="${PIN}"` } })
+    const v = r.headers.get("x-ephem-version"); if (v !== PIN) offPin.push(`${String(u).replace(base, "")} → ${v}`)
+    return r
+  }) as typeof fetch
+}
 const LATEST = "2026-07-28", LEGACY = "2025-11-25"
 const day = new Date(Date.now() + 86_400_000 * (1 + Math.floor(Math.random() * 300))).toISOString().slice(0, 10)   // fresh day: response cache miss
 const ARGS = {
@@ -123,6 +134,7 @@ const w = Math.max(...rows.map(r => r.step.length)), we = Math.max(...rows.map(r
 console.log(`mcp-probe ${run} → ${base}/mcp   (jsonrpc ids: ${run}-<step>)\n`)
 console.log(`${"step".padEnd(w)}  ${"expect".padEnd(we)}  ok    ms    ray               got`)
 for (const r of rows) console.log(`${r.step.padEnd(w)}  ${r.expect.padEnd(we)}  ${r.ok ? "PASS" : "FAIL"} ${r.ms.toFixed(0).padStart(5)}  ${r.ray.padEnd(16)}  ${r.got}`)
+if (PIN) rows.push({ step: "version.pinned", expect: `every response from ${PIN.slice(0, 8)}`, got: offPin.length ? `${offPin.length} off: ${offPin[0]}` : "all", ok: offPin.length === 0, ms: 0, ray: "" })
 const failed = rows.filter(r => !r.ok).length
 console.log(`\n${rows.length - failed}/${rows.length} passed`)
 process.exit(failed ? 1 : 0)

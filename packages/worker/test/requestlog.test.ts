@@ -113,6 +113,17 @@ describe("request rows (through the app)", () => {
     const paths = Object.keys(((await (await handler(new Request("http://x/openapi.json"))).json()) as { paths: Record<string, unknown> }).paths)
     for (const p of paths) expect(ROUTES.has(p), p).toBe(true)
   })
+  it("ROUTES (src/routes.ts, shared with ephem-tail) is exactly what the router serves: every entry is routed, a near miss is 404", async () => {
+    const { ROUTES } = await import("../src/requestlog.ts")
+    expect(ROUTES).toBe((await import("../src/routes.ts")).ROUTES)
+    for (const e of (await import("../src/docs.ts")).ENDPOINTS) expect(ROUTES.has(e.path), e.path).toBe(true)
+    const POST = new Set(["/mcp", "/v1/alignment/search"])
+    for (const p of ROUTES) {
+      const r = await handler(new Request(`http://x${p}`, POST.has(p) ? { method: "POST", headers: { "content-type": "application/json" }, body: "{}" } : {}))
+      expect(r.status, p).not.toBe(404)
+    }
+    expect((await handler(new Request("http://x/v1/trak"))).status).toBe(404)
+  })
   it("error_tag carries the typed error: OutOfRange 422, InvalidRequest 400, RouteNotFound 404", async () => {
     const oor = await run("/v1/position?lat=0&lon=0&time=1960-01-01T00:00:00Z")
     expect(oor.res.status).toBe(422); expect(oor.rows[0]).toMatchObject({ status: 422, ok: false, error_tag: "OutOfRange", route: "/v1/position" })

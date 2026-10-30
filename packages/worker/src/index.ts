@@ -38,11 +38,18 @@ const weather = weatherLive(makeFeed({ fetch: () => lb.feed() }))
 let front: ReturnType<typeof makeHandler> | undefined
 let api: ReturnType<typeof makeHandler> | undefined
 
+// x-ephem-version: the front door's Worker version id on every response, so scripts/smoke.sh can prove a version-pinned
+// request (Cloudflare-Workers-Version-Overrides) reached the version it pinned, and a rollback is visible per request.
+const withVersion = (r: Response, id: string | undefined): Response => {
+  if (!id) return r
+  try { r.headers.set("x-ephem-version", id); return r } catch { const c = new Response(r.body, r); c.headers.set("x-ephem-version", id); return c }
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: Ctx): Promise<Response> {
     loop = ctx.exports
     front ??= makeHandler(blocks, { role: "front", api: lb.api }, weather, geoid)
-    return front(request, logs(env, p => ctx.waitUntil(p), "front"))
+    return withVersion(await front(request, logs(env, p => ctx.waitUntil(p), "front")), env.VERSION?.id)
   },
 }
 
