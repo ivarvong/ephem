@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import {
   type Geodetic, type Region, SEARCH, WINDOW_MS, apparent, decodeRegion, encodeRegion, frameAt, geoidUndulation, insideRegion, instant, parseRegion,
-  direct, planarRegion, regionBbox, searchGeometry, searchWindow, searchWindowRequest, searchWindowRequestSteps, standingPoint, targetElevation, topocentric, windowsFor,
+  direct, planarRegion, regionBbox, searchGeometry, searchWindow, searchWindowRequest, standingPoint, targetElevation, topocentric, windowsFor,
 } from "../src/index.ts"
 import { diskBlocks } from "./helpers/blocks.ts"
 
@@ -159,19 +159,6 @@ describe("search: the customer's Statue of Liberty / Brooklyn Bridge Park scan (
     expect(r.ok.region).toMatchObject({ polygons: 1, rings: 1, vertices: 423 })
     expect(r.ok.conventions).toMatchObject({ observerHeightRef: "msl", targetHeightRef: "msl", terrestrialRefractionK: 0.13 })
     expect(r.ok.geometry.elevation.min).toBeGreaterThan(0.6); expect(r.ok.geometry.elevation.max).toBeLessThan(1.1)
-  })
-  it("sliced (searchWindowRequestSteps): yields every ~sliceEvaluations evaluations, output identical to the one-piece run", () => {
-    const w = windowsFor(Date.parse("2026-11-16T00:00:00Z"), Date.parse("2026-11-17T00:00:00Z"))[0]!
-    const q = { body: "moon" as const, targetLat: LIBERTY.lat, targetLon: LIBERTY.lon, targetHeight: 70, targetHeightRef: "msl" as const, observerHeight: 5, heightRef: "msl" as const, region: park, encoding: encodeRegion(park), startMs: w }
-    const it = searchWindowRequestSteps(diskBlocks, q)
-    let slices = 0, r = it.next()
-    while (!r.done) { slices++; r = it.next() }
-    const whole = searchWindowRequest(diskBlocks, q)
-    if (!("ok" in whole) || !("ok" in r.value)) throw new Error("window failed")
-    expect(r.value).toEqual(whole)
-    const c = whole.ok.counters, evals = c.scanEvaluations! + c.trackEvaluations! + c.refineEvaluations!
-    expect(slices).toBeGreaterThanOrEqual(Math.floor(evals / SEARCH.sliceEvaluations) - 1)
-    expect(slices).toBeLessThanOrEqual(Math.ceil(evals / SEARCH.sliceEvaluations))
   })
 })
 

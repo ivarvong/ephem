@@ -8,8 +8,8 @@
 import * as Effect from "effect/Effect"
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder"
 import { EphemApi, GeoidUnavailable, InvalidInput, OutOfRange, type SearchPayload, type SearchWindowResponse } from "@ephem/api"
-import { SEARCH, SUPPORTED, WINDOW_MS, blocksFor, decodeRegion, encodeRegion, isoMs, parseRegion, searchLatRange, searchWindowRequestSteps, windowReadRange, windowsFor } from "@ephem/core"
-import { PROV, computeSliced, geoidAcross, jd, parseUtc } from "./handlers.ts"
+import { SEARCH, SUPPORTED, WINDOW_MS, blocksFor, decodeRegion, encodeRegion, isoMs, parseRegion, searchLatRange, searchWindowRequest, windowReadRange, windowsFor } from "@ephem/core"
+import { PROV, compute, geoidAcross, jd, parseUtc } from "./handlers.ts"
 import { Edge, canonical } from "./responses.ts"
 
 export const SEARCH_WINDOW_PATH = "/v1/alignment/search/window"
@@ -31,8 +31,8 @@ const windowAnswer = (q: WindowQuery) => Effect.gen(function* () {
   if (fromMs < SUPPORTED.fromMs || toMs >= SUPPORTED.toMs) return yield* new OutOfRange({ message: "the window is outside 1972-01-01 … 2149-12-31 UTC" })
   const reg = decodeRegion(q.region)
   if ("error" in reg) return yield* new InvalidInput({ message: reg.error })
-  const { out, provenance } = yield* computeSliced("search", blocksFor(jd(fromMs), jd(toMs)), src =>
-    searchWindowRequestSteps(src, { body: q.body, targetLat: q.targetLat, targetLon: q.targetLon, targetHeight: q.targetHeight, targetHeightRef: q.targetHeightRef,
+  const { out, provenance } = yield* compute("search", blocksFor(jd(fromMs), jd(toMs)), src =>
+    searchWindowRequest(src, { body: q.body, targetLat: q.targetLat, targetLon: q.targetLon, targetHeight: q.targetHeight, targetHeightRef: q.targetHeightRef,
       observerHeight: q.observerHeight, heightRef: q.heightRef, region: reg.ok, encoding: q.region, startMs: start, temperature: q.temperature, pressure: q.pressure, dut1: q.dut1, aim: q.aim }),
     o => ("ok" in o ? { "ephem.passes": o.ok.passes.length, "ephem.region_vertices": o.ok.region.vertices, ...Object.fromEntries(Object.entries(o.ok.counters).map(([k, v]) => [`ephem.search.${k}`, v])) } : {}),
     geoidAcross(searchLatRange(reg.ok, q.targetLat)))

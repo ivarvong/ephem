@@ -6,7 +6,7 @@ import { type HeightRef, K_TERRESTRIAL, P_DEFAULT, T_DEFAULT } from "./horizon.t
 import { GEOID, geoidUndulation } from "./geoid.ts"
 import { REFRACTION_MODEL } from "./sky.ts"
 import { type Region, regionBbox, regionVertices } from "./region.ts"
-import { SEARCH, WINDOW_MS, drain, searchWindowSteps } from "./search.ts"
+import { SEARCH, WINDOW_MS, searchWindow } from "./search.ts"
 import { isoMs } from "./time.ts"
 import { type Aim, AIM_DEFINITIONS } from "./aim.ts"
 
@@ -40,16 +40,13 @@ export const searchLatRange = (region: Region, targetLat: number): [number, numb
   return [Math.min(b.south, lo), Math.max(b.north, hi)]
 }
 
-export const searchWindowRequest = (src: BlockSource, q: SearchWindowRequest) => drain(searchWindowRequestSteps(src, q))
-
-/** searchWindowRequest as a generator (searchWindowSteps): the worker runs it in slices. */
-export function* searchWindowRequestSteps(src: BlockSource, q: SearchWindowRequest) {
+export const searchWindowRequest = (src: BlockSource, q: SearchWindowRequest) => {
   if (q.aim === "litCentroid" && q.body !== "moon") return { error: "aim=litCentroid is the Moon's lit-area centroid: body must be moon" }
   const T = q.temperature ?? T_DEFAULT, P = q.pressure ?? P_DEFAULT
   const tN = geoidUndulation(q.targetLat, q.targetLon), tRef = q.targetHeightRef ?? "ellipsoid"
   const tE = tRef === "msl" ? q.targetHeight + tN : q.targetHeight
   const oRef: HeightRef | "default" = q.observerHeight === undefined ? "default" : q.heightRef ?? "ellipsoid"
-  const r = yield* searchWindowSteps(src, {
+  const r = searchWindow(src, {
     body: q.body, target: { lat: q.targetLat, lon: q.targetLon, height: tE },
     observerHeight: q.observerHeight ?? 0, observerHeightRef: oRef === "ellipsoid" ? "ellipsoid" : "msl",
     region: q.region, startMs: q.startMs, endMs: q.startMs + WINDOW_MS, temperature: T, pressure: P, dut1: q.dut1, aim: q.aim,
