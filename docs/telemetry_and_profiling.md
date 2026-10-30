@@ -4,7 +4,7 @@ How to see what prod ephem is doing: traces, per-version CPU numbers, and CPU/he
 run against prod. **Keep this file current:** when a command, flag, span, attribute or gotcha changes, update it in the
 same change, and add the date to "Last verified".
 
-Last verified: 2026-10-30 (compute split A/B: S 02dd1270 + ephem-compute fca6e275 vs E cc6ddd8e, git 5edf1b7, → one Worker ephem d3caf38f, git 7a125fd; compute split: ephem 121b7984 + ephem-compute bb0a1127, git 01e0323; version 4e7c34ee; crossing span + MCP probe b49a8a02; MCP section 68c58ae5; Caching section c72a360c; cold-split, LOAD=track and isolate warmth fbdb337e; geoid bands + bundle A/B 5c337183 / 164e1cd7 / 61305294).
+Last verified: 2026-10-30 (remote load: ephem-load 8d0730a7 against ephem 8413211a, run L20261030T224759Z-kcfr; compute split A/B: S 02dd1270 + ephem-compute fca6e275 vs E cc6ddd8e, git 5edf1b7, → one Worker ephem d3caf38f, git 7a125fd; compute split: ephem 121b7984 + ephem-compute bb0a1127, git 01e0323; version 4e7c34ee; crossing span + MCP probe b49a8a02; MCP section 68c58ae5; Caching section c72a360c; cold-split, LOAD=track and isolate warmth fbdb337e; geoid bands + bundle A/B 5c337183 / 164e1cd7 / 61305294).
 
 ## The loop
 
@@ -21,11 +21,13 @@ Every number you report carries its version id (and trace id or profile file). L
 | `python3 scripts/obs/basin.py status\|failures\|provision\|sql <name>\|crosscheck\|types` | Basin request logs: resources, `basin_send_failed` counts, sink/pipeline provisioning, canned Basin SQL, Basin-vs-o11y counts. See "Request logs (Basin)". |
 | `python3 scripts/obs/trace.py <traceId>` or `--latest /v1/day` | One request: invocation CPU/wall, the Effect span tree with work counts, and the runtime's own spans (fetch, jsRpc, R2). The front door and the Api invocation it called are two traces sharing one cf-ray (the Api's ends in its colo, e.g. `-IAD`). |
 | `scripts/obs/profile.sh <full-version-uuid> [cpu\|heap] [ms]` | Drives uncached load, captures a prod profile of that exact version, symbolizes it, prints the top. Files land in `profiles/` (gitignored). |
-| `scripts/obs/load.sh [rounds] [base]` | Uncached load: per round, one 24 h Moon alignment and one `/v1/day`, each with a fresh window or place so the Api cache misses. `LOAD=weather` instead sends 4 `/v1/weather` requests per round (random land-weighted lat/lons, n = 1–3), ~16 req/s. `LOAD=track`: 2 homepage-shaped `/v1/track` per round (72 h from a UTC midnight, 20-min grid, 217 samples) at fresh lat/lons, ~8 req/s; also works under `profile.sh`. |
+| `scripts/obs/load.sh [rounds] [base]` | Laptop load (prefer `load-remote.ts` for anything you will compare): uncached: per round, one 24 h Moon alignment and one `/v1/day`, each with a fresh window or place so the Api cache misses. `LOAD=weather` instead sends 4 `/v1/weather` requests per round (random land-weighted lat/lons, n = 1–3), ~16 req/s. `LOAD=track`: 2 homepage-shaped `/v1/track` per round (72 h from a UTC midnight, 20-min grid, 217 samples) at fresh lat/lons, ~8 req/s; also works under `profile.sh`. |
 | `python3 scripts/obs/queue.py --from ISO --to ISO [--path /v1/position] [--over 20] [--version id] [--json out]` | Server-side wait before the handler ran, per request: Effect request span start − runtime request span start. Lists the requests that waited, each tagged **new isolate** (blocks/geoid not yet in L1: start-up) or **busy isolate** (L1 warm: stuck behind other JS), with CPU and `ephem.isolate_computes`. Use it instead of client p99 for "did X slow Y down" (see "Position tail under scan load"). `--path /v1/alignment/search/window` for Api windows. `--json`: one row per request (wait, cpu, isolate_computes, kind, version, ray). |
 | `python3 scripts/obs/cold-split.py --from ISO --to ISO [--route track] [--json out.json]` | Api CPU by isolate warmth: each Api invocation of the route joined to its handler span's `ephem.isolate_computes` (1 = the isolate's first computation), p50/p90/p99 and CPU sum per bucket, and the runtime-GET → Effect-GET gap (isolate start-up before the router). Versions before the attribute fall back to "L1 empty" as the cold proxy. |
 | `python3 scripts/obs/metar-cache.py [--minutes 30] [--version 80f5b087] [--slice 2]` | METAR feed cache: per (version, tier) request count, share, wall and CPU p50/p99, parses, data age; upstream calls (MetarFeed's `{"evt":"metar.upstream"}`) by status, conditional, and per minute. Joins each `{"evt":"metar"}` log line to its invocation on `$metadata.requestId`. |
 | `python3 scripts/obs/cache-probe.py [base] --mode repeat\|unique\|burst [--keys 10] [--repeats 5] [--burst 50] [--routes day,…]` | Client-side cross-check of Workers Caching: per request `x-ephem-cache` (the Api's cf-cache-status relayed by the front door), client and server-timing latency; p50/p99 by (route, status). `burst` fires N concurrent identical cold requests (collapsing test); count Api invocations for that key with a `starts_with` filter on `$workers.event.request.url = https://api.internal/<path>?<sorted query>`. |
+| `node --experimental-strip-types scripts/obs/load-remote.ts --mode mixed --rate 60 --duration 60 --regions enam,weur,apac [--pin ephem=<id>]` | **Remote load** from the `ephem-load` Worker's Generator Durable Objects (packages/load): open-loop, per region, client p50/p90/p99 per (region, kind), answering colos, cache and version mix, drops. Prints the run id and the measured window; writes `load-runs/<run>.json`. See "Remote load". |
+| `python3 scripts/obs/load-check.py load-runs/<run>.json [--json out]` | Server side of a remote-load run: front-door invocations with `x-ephem-load: <run>` per (route, colo, status, version) against the client's count, and client vs server e2e on the same requests (joined on cf-ray). See "Remote load". |
 | `node --experimental-strip-types scripts/obs/mcp-probe.ts [base]` | Full MCP client session against `/mcp` (legacy handshake + modern 2026-07-28 flow + error cases); every tool call (8 tools, incl. `crossing` and `sight_line`; the alignment call uses heightRef/targetHeightRef=msl, aim=litCentroid, include=sun,phase) is checked equal to its REST endpoint (the POST tool `alignment_search` against its REST POST), plus the REST 400 UnknownParameter and a null `apparentAltitude` case. Pass/fail table with latency and cf-ray. Run after every deploy. |
 | `scripts/smoke.sh <base> [--pin <version>] [--expect <version>] [--expect-compute <id>] [--only a,b]` | Every route + content checks + the MCP probe; `--pin` sends `Cloudflare-Workers-Version-Overrides` and requires `x-ephem-version` = that version on every response (the probe too, via `EPHEM_VERSION`). The `compute` / `compute-hit` checks send a never-seen position+time key and require a MISS computed by the Api (`x-ephem-compute-version`, = `--expect-compute` if given; deploy.sh passes the version under test, since a loopback runs the caller's version), then HIT. deploy.sh runs the deployed commit's copy. See "Deploys". |
 | `python3 scripts/obs/canary-gate.py <worker> <new> <prev> --since ISO --run ID --manifest FILE [--live 90]` | deploy.sh's telemetry gate: the smoke's requests (by `x-ephem-smoke`, cf-rays) in o11y; fails on exceptions, 5xx, error logs, missing entrypoints/spans or telemetry; CPU vs previous as warnings. See "Telemetry gate". |
@@ -83,14 +85,19 @@ Views: `events` (invocations: `$metadata.type = cf-worker-event`; spans: `type =
 
 ## Deploys (`scripts/deploy.sh`)
 
-`scripts/deploy.sh <rev> "<message>" [auto|ephem|tail|all]` (`DRY=1`: gate only). Lock, never-backwards guard
+`scripts/deploy.sh <rev> "<message>" [auto|ephem|tail|load|all]` (`DRY=1`: gate only). Lock, never-backwards guard
 (`ALLOW_OLDER=1` to roll back on purpose), clean worktree of `<rev>`, full gate, then:
 
 1. **ephem-tail** first when targeted (`auto`: packages/tail, packages/worker/src/routes.ts or the invocations schema
    changed since the last `deployed-tail/` tag, or `tailConsumers` changed): `cf deploy`. After ephem's smoke has sent it
    traffic, `scripts/obs/tail-check.py --version <new> --require <the smoke's routes>` must pass, else ephem-tail is routed
    back to its previous version. Tag `deployed-tail/<ts>`.
-2. (Removed 2026-10-30: the `compute` target for ephem-compute; see "Compute split".)
+2. **ephem-load** when targeted (`load`, `all`, or `auto` when packages/load changed since the last `deployed-load/` tag):
+   `cf deploy` (a whole deploy: it has Durable Objects and serves no users), wait for 5 `/health` answers from the new
+   version, then: `/health` names the fixed target and the limits; POST /run without the token is refused (401); with the
+   token an over-limit `/plan` is refused (400) and a 10-request run from enam completes through `load-remote.ts`. Any
+   failure routes ephem-load back to its previous version. If the Worker has no `LOAD_TOKEN` yet (first deploy), it runs
+   `scripts/obs/load-token.sh` first. Tag `deployed-load/<ts>`. (The `compute` target was removed 2026-10-30; "Compute split".)
 3. **ephem, gradual**: record the version at 100% (`cf workers deployments list`; a split deployment aborts), `cf workers
    versions create`, `cf workers deployments create` with new 0% + previous 100%, wait until 5 pinned `/healthz` in a row
    come from the new version, then `smoke.sh --pin <new>`, then the **telemetry gate** ("Telemetry gate" below). Prod
@@ -192,6 +199,98 @@ inner part needs no care for in-flight deploys; change the bootstrap by `mv`ing 
 python3 scripts/obs/canary-gate.py ephem <new> <prev> --since <iso> --run <id> --manifest <file> [--live 90] [--json out]
 ```
 
+
+## Remote load (`ephem-load`, packages/load, 2026-10-30)
+
+Load from inside Cloudflare, in several regions at once, so an A/B no longer rides one laptop's EWR link (client p99
+from the laptop ranged 84–525 ms on idle phases; "Gotchas"). The pattern is db-load's (`~/code/db/bench/worker`).
+
+```
+node --experimental-strip-types scripts/obs/load-remote.ts --mode mixed --rate 60 --duration 60 --regions enam,weur,apac
+     [--pin ephem=<version id>] [--warmup 10] [--seed 1] [--mix position=40,warm=30,track=15,weather=14,search=1] [--shards N] [--plan]
+python3 scripts/obs/load-check.py load-runs/<run>.json            # >= 5 min after the end (ingest lag)
+```
+
+**How it works.** `POST /run` on `https://ephem-load.ivar.workers.dev` (Bearer `LOAD_TOKEN`) validates the spec, asks
+the **Coordinator** DO (one object) to admit it, then starts `shards` **Generator** DOs per region, each created with a
+location hint (`<run>:<region>:<shard>`; a hint applies only at creation, so every run gets new objects). Every shard
+starts its open-loop schedule at the same instant (8 s after the POST; the warm keys are prewarmed before it), sends
+arrival *i* at `start + (i + shard/shards)/rate`, never waits for answers, and drops (counts) an arrival that finds 6
+requests in flight rather than queueing it. The first `--warmup` seconds (default 10) run the same schedule and are
+counted apart. Each shard records per kind: a 1 % log histogram of client ms (fetch → last body byte), statuses, errors,
+`x-ephem-cache`, `x-ephem-version`, the answering colo (cf-ray suffix) and a 150-request reservoir of `[ray, ms, status,
+t]`. `GET /run/:id` merges shards into regions and regions into totals. Ctrl-C sends `POST /run/:id/stop`.
+
+| mode | requests (the laptop harness it matches) |
+| --- | --- |
+| `position` | `GET /v1/position?lat=40.7&lon=-74` (live, front door; split-ab's probe) |
+| `warm` | the 24 split-ab warm keys (day / track / alignment, Nov 1–8), prewarmed by every shard: HITs |
+| `track` | homepage-shaped `/v1/track` (72 h from a UTC midnight) at a fresh lat/lon (load.sh `LOAD=track`) |
+| `weather` | `/v1/weather` at a random land-weighted lat/lon, n = 1–3 (load.sh `LOAD=weather`) |
+| `search` | `POST /v1/alignment/search`, 12-month Brooklyn Bridge Park scan at a fresh target height (split-ab's cold scan) |
+| `mixed` | position 40, warm 30, track 15, weather 14, search 1 (weights; `--mix` to change) |
+
+Cold keys come from a PRNG seeded by the run id and the shard, so they are new in every run. A rerun with the same seed
+and plan used to re-send the last run's keys; they came back as HITs (L20261030T224511Z-iqf9: track 71 % HIT, scan p50 70 ms
+against 318 ms). `--seed` drives only the schedule and the kind picks.
+
+**Tagging.** Every request carries `x-ephem-load: <run>` and `user-agent: ephem-load/1 (run <run>)`. In o11y, filter
+`$workers.event.request.headers.x-ephem-load = <run>`. Request rows have `ua_family = 'synthetic'` ("Request logs"). The
+canary gate's live phase still counts load traffic as traffic (an error under load is an error).
+
+**Safety limits** (packages/load/src/workload.ts `LIMITS`, enforced by the Worker; test/workload.test.ts):
+one target, `https://ephem.ivar.workers.dev`. The spec has no host, path or header field, an unknown field is refused, and
+every URL is checked against it. The colo probe is ephem's own `/cdn-cgi/trace`. Pins must be a full version uuid. Total
+rate ≤ 300 req/s, ≤ 64 req/s per region, scans ≤ 4/s (240/min), duration ≤ 600 s, warmup ≤ 60 s, ≤ 60 000 requests per
+run, ≤ 150 000 per rolling hour, ≤ 5 regions. One run at a time (the CLI releases the lock when its run is done), 6 in
+flight per shard, and timeouts of 10 s (30 s for scans). Without the `LOAD_TOKEN` secret every call but `/health` gets 503.
+The token is in `~/.config/ephem-load/token` (0600). `scripts/obs/load-token.sh` creates it and stores the secret from a
+0600 temp file. It is never printed.
+
+**One Generator drives ~6.5 req/s** (2026-10-30, position only, one shard in enam). At 3/s: p50 11 ms, p99 220 ms. At
+8/s: 6.3/s answered, p50 507 ms, 34 drops. At 15/s: 6.7/s answered, p50 859 ms, 167 drops. Past that, the fetches queue
+inside the object. The same 15 req/s over 4 shards: p50 8 ms, p99 21 ms, 0 drops (L20261030T223104Z-nejb). So the plan
+puts at most 4 req/s on a shard (`shardRate`; scans 1.5/s), up to 16 shards per region. db-load's 22/s per DO went to a
+custom domain. ephem-load needs `global_fetch_strictly_public`, because a Worker's fetch to a workers.dev Worker on the
+same subdomain is otherwise refused, so its requests leave through the public front door like an eyeball's.
+
+**Validation** (2026-10-30, ephem 8413211a, ephem-load 8d0730a7, git 7a1e120; run L20261030T224759Z-kcfr, mixed,
+60 req/s, 60 s + 10 s warmup, enam/weur/apac, 5 shards each, measured 22:48:17.9–22:49:17.9Z). Client (all requests) vs
+server (ephem's runtime request span start → Effect request span end, same requests joined on cf-ray):
+
+| region | generators in | answered in | kind | n | client p50 / p90 / p99 ms | server e2e p50 / p90 / p99 ms | client − server p50 / p90 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| enam | EWR 3, IAD 2 | EWR 303, IAD 183 | position | 486 | 7 / 12 / 755 | 0 / 0 / 3 | 7 / 11 |
+| enam | | | track (cold) | 151 | 42 / 114 / 886 | 33 / 61 / 179 | 8 / 13 |
+| enam | | | search (cold) | 19 | 296 / 502 / 1082 | 261 / 388 / 466 | 19 / 167 |
+| weur | MRS 2, CDG 2, MAD 1 | CDG 216, MRS 194, MAD 103 | position | 513 | 7 / 69 / 810 | 0 / 0 / 4 | 7 / 61 |
+| weur | | | track (cold) | 171 | 57 / 99 / 940 | 44 / 66 / 91 | 9 / 35 |
+| apac | NRT 3, HKG 1, SIN 1 | NRT 295, HKG 96, SIN 89 | position | 480 | 6 / 92 / 931 | 0 / 0 / 2 | 6 / 92 |
+| apac | | | track (cold) | 185 | 38 / 415 / 1091 | 26 / 54 / 630 | 7 / 208 |
+
+- **Counts agree.** 3600/3600 answered (all 200, 0 drops, 0 late arrivals, every answer from 8413211a). o11y has 4550
+  front-door invocations with the run's header for 4560 sent (prewarm 360 + warmup 600 + 3600: 99.8 %). Basin has 4563
+  `synthetic` rows. Earlier run L20261030T223528Z-7lbt: o11y 3950 = sent 3950, Basin 3950.
+- **Latency agrees where ephem is.** For 3591 joined requests, client − server per request is 6–9 ms at p50 for every region
+  and every kind except scans (19–32 ms for the scan POST), and never negative (0 requests > 2 ms under the server). `queue.py --path /v1/position --version 8413211a`
+  over the window: wait p50/p90/p99/max 0/0/3/165 ms (n = 1488; one new isolate). `cpu-by-version.py`: front-door CPU
+  p50 2 ms, p99 7–8 ms (position, track, day), 22 (weather), 42 (scan POST).
+- **Colos follow the region.** The location hint picks a region, not a colo: enam ran in EWR, IAD, ATL or MIA in
+  different runs, weur in LHR, LIS, AMS, CDG, MRS or MAD, apac in NRT, HKG, SIN or KIX. In kcfr every request was
+  answered in its own generator's colo (EWR 720 = 3 shards × 240, IAD 480; MRS 480, CDG 480, MAD 240; NRT 720, HKG 240,
+  SIN 240; cf-ray suffix = o11y `cf.colo`).
+- **The p99s in this run are not ephem.** 288 of the 3591 requests spent > 200 ms outside ephem's spans. All of them fell
+  in seconds 35–45 of the run, in all three regions at once (load-check part 3), while ephem's e2e for the same requests
+  stayed small. The run before it (L20261030T224511Z-iqf9, same spec) had no such episode: position p99 20 / 15 / 33 ms
+  (enam / weur / apac). Client − server covers the generator, egress and the edge before ephem's isolate gets the request,
+  so **compare arms run at the same time** (pin both with `--pin` and run them together, or interleave runs) and use
+  `load-check.py` to split any tail into ephem and not-ephem. The first validation run (7lbt, no warmup) put 52 of its 71
+  > 200 ms outliers in the first 5 s (new connections). That is why the warmup is there.
+
+**A/B with it.** Use one run per arm with `--pin ephem=<id>` (both versions in the deployment, as in "Compute split"),
+started back to back or interleaved, the same `--seed`, and the same regions. The arms' cold keys differ (run id) but
+are drawn from the same distribution. Check `pin misses` = 0 in the table. Read server numbers with
+`cpu-by-version.py --version` and `queue.py --version` over each run's measured window.
 
 ## Caching (Workers Caching; never the Cache API)
 
@@ -658,7 +757,7 @@ Workers Caching miss or revalidation), with the work counts. It gets the front's
 | `block_reads`, `iterations` | `ephem.block_reads`, `ephem.iterations` | work counts (api rows) |
 | `weather_tier`, `data_age_s` | `metar.tier`, `metar.data_age_s` | `/v1/weather` |
 | `mcp_method`, `mcp_tool` | `mcp.method`, `mcp.tool` | `/mcp` |
-| `ua_family` | user agent / `mcp.client` | `curl`, `browser`, `mcp:<client name>`, `other` |
+| `ua_family` | user agent / `mcp.client` / `x-ephem-load` | `curl`, `browser`, `mcp:<client name>`, `other`; `synthetic` for ephem-load traffic (header `x-ephem-load`; since 2026-10-30, ephem 5d347f60). The stream schema is immutable, so this is the synthetic flag instead of a new column. Synthetic rows' `country`/`city` are the Workers egress address's (US/New York), not the region's; `colo` is right |
 | `lat_r`, `lon_r` | `lat`/`lon` (or `targetLat`/`targetLon`; MCP tool arguments) | rounded to 0.01° (~1 km) |
 
 **Privacy rules** (tested): no IP, no raw path or query string, no full user agent, coordinates rounded to 0.01°. MCP client
