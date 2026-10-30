@@ -1,7 +1,7 @@
 // Remote load: drive ephem from ephem-load's Generator Durable Objects in several regions (guide "Remote load").
 //   node --experimental-strip-types scripts/obs/load-remote.ts --mode mixed --rate 60 --duration 60 --regions enam,weur,apac
 //        [--pin ephem=<version id>] [--seed 1] [--mix position=40,warm=30,track=15,weather=14,search=1] [--run-id <id>]
-//        [--plan] [--json] [--quiet] [--base https://ephem-load.ivar.workers.dev]
+//        [--shards N per region (more than the plan needs)] [--plan] [--json] [--quiet] [--base https://ephem-load.ivar.workers.dev]
 // --mode   position | warm | track | weather | search | mixed       --rate  total req/s over all regions ("120/min" also works)
 // --pin    every request carries Cloudflare-Workers-Version-Overrides: ephem="<id>"; the table counts answers from any other version
 // --plan   print the validated spec and shard plan; start nothing
@@ -21,7 +21,7 @@ for (let i = 0; i < argv.length; i++) {
   const k = a.slice(2), v = argv[i + 1]
   if (v === undefined || v.startsWith("--")) flags.set(k, "1"); else { flags.set(k, v); i++ }
 }
-const known = new Set(["mode", "rate", "duration", "regions", "pin", "seed", "mix", "run-id", "plan", "json", "quiet", "base"])
+const known = new Set(["mode", "rate", "duration", "regions", "pin", "seed", "mix", "run-id", "plan", "json", "quiet", "base", "shards"])
 for (const k of flags.keys()) if (!known.has(k)) { console.error(`unknown flag --${k}`); process.exit(2) }
 const need = (k: string) => { const v = flags.get(k); if (v === undefined) { console.error(`--${k} is required (usage: head of ${path.basename(import.meta.filename)})`); process.exit(2) } return v }
 
@@ -40,6 +40,7 @@ const body = {
   ...(pin !== undefined ? { pin } : {}),
   ...(mix !== undefined ? { mix: Object.fromEntries(mix.split(",").map(p => { const [k, w] = p.split("="); return [k!.trim(), Number(w)] })) } : {}),
   ...(flags.has("run-id") ? { runId: flags.get("run-id") } : {}),
+  ...(flags.has("shards") ? { shards: Number(flags.get("shards")) } : {}),
 }
 const quiet = flags.has("quiet")
 const log = (s: string) => { if (!quiet) console.error(s) }

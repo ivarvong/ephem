@@ -33,8 +33,11 @@ export const LIMITS = {
   maxRequestsPerRun: 60_000,
   maxRequestsPerHour: 150_000, // rolling, over every run the coordinator admitted
   maxRegions: 5,
-  /** Planning: one DO invocation drives ~22 req/s at most (db-load run 170024Z: six outbound connections per invocation). */
-  shardRate: 20,
+  maxRatePerRegion: 64, // maxShardsPerRegion x shardRate
+  /** Planning: one Generator's fetches through the public front door serialise at ~6.5 req/s (2026-10-30, position only, one
+   * shard in enam: 3/s p50 11 ms p99 220 ms; 8/s → 6.3/s answered, p50 507 ms; 15/s → 6.7/s, p50 859 ms), so a shard is planned
+   * well under it. (db-load drives ~22/s per DO to a custom domain without global_fetch_strictly_public.) */
+  shardRate: 4,
   shardSearchRate: 1.5,
   maxShardsPerRegion: 16,
   inflightPerShard: 6,
@@ -57,6 +60,8 @@ export interface RunSpec {
   readonly pin: string | null
   /** Epoch ms at which every shard starts its open-loop schedule. */
   readonly startAt: number
+  /** Shards per region asked for (never fewer than the plan needs), or null for the plan's own count. */
+  readonly shards: number | null
 }
 
 export const RUN_ID = /^[0-9A-Za-z_-]{1,48}$/
@@ -75,7 +80,7 @@ const fail = (reason: string) => ({ ok: false as const, reason })
 export const validate = (body: unknown, now: number, rand: () => number): { ok: true; spec: RunSpec } | { ok: false; reason: string } => {
   if (body === null || typeof body !== "object" || Array.isArray(body)) return fail("body must be a JSON object")
   const b = body as Record<string, unknown>
-  const known = new Set(["runId", "mode", "mix", "rate", "duration", "regions", "seed", "pin"])
+  const known = new Set(["runId", "mode", "mix", "rate", "duration", "regions", "seed", "pin", "shards"])
   const extra = Object.keys(b).filter(k => !known.has(k))
   if (extra.length) return fail(`unknown field(s) ${extra.join(", ")} (there is no target, host, path or header field: the target is fixed)`)
   const mode = b.mode
@@ -105,13 +110,16 @@ export const validate = (body: unknown, now: number, rand: () => number): { ok: 
   if (b.regions.length > LIMITS.maxRegions) return fail(`at most ${LIMITS.maxRegions} regions`)
   for (const r of b.regions) if (typeof r !== "string" || !(REGIONS as readonly string[]).includes(r)) return fail(`region ${String(r)} is not one of ${REGIONS.join(", ")}`)
   if (new Set(b.regions).size !== b.regions.length) return fail("regions repeat")
+  if (rate / b.regions.length > LIMITS.maxRatePerRegion) return fail(`${(rate / b.regions.length).toFixed(1)} req/s per region is over the cap of ${LIMITS.maxRatePerRegion} (${LIMITS.maxShardsPerRegion} shards x ${LIMITS.shardRate}/s): add regions`)
+  const shards = b.shards ?? null
+  if (shards !== null && (typeof shards !== "number" || !Number.isInteger(shards) || shards < 1 || shards > LIMITS.maxShardsPerRegion)) return fail(`shards must be an integer 1..${LIMITS.maxShardsPerRegion}`)
   const seed = b.seed ?? 1
   if (typeof seed !== "number" || !Number.isInteger(seed) || seed < 0 || seed > 2 ** 31) return fail("seed must be an integer 0..2^31")
   const pin = b.pin ?? null
   if (pin !== null && (typeof pin !== "string" || !UUID.test(pin))) return fail("pin must be a full ephem version id (uuid)")
   const runId = b.runId ?? makeRunId(now, rand)
   if (typeof runId !== "string" || !RUN_ID.test(runId)) return fail(`runId must match ${RUN_ID}`)
-  return { ok: true, spec: { runId, mode: mode as Mode, mix, rate, durationS: duration, regions: b.regions as Region[], seed, pin, startAt: now + LIMITS.startLeadMs } }
+  return { ok: true, spec: { runId, mode: mode as Mode, mix, rate, durationS: duration, regions: b.regions as Region[], seed, pin, startAt: now + LIMITS.startLeadMs, shards } }
 }
 
 export interface ShardPlan {
@@ -127,7 +135,8 @@ export interface ShardPlan {
 export const plan = (spec: RunSpec): ShardPlan[] => {
   const perRegion = spec.rate / spec.regions.length
   const scanPerRegion = searchRate(spec) / spec.regions.length
-  const shards = Math.min(LIMITS.maxShardsPerRegion, Math.max(1, Math.ceil(perRegion / LIMITS.shardRate), Math.ceil(scanPerRegion / LIMITS.shardSearchRate)))
+  const need = Math.max(1, Math.ceil(perRegion / LIMITS.shardRate - 1e-9), Math.ceil(scanPerRegion / LIMITS.shardSearchRate - 1e-9))
+  const shards = Math.min(LIMITS.maxShardsPerRegion, Math.max(need, spec.shards ?? 0))
   return spec.regions.flatMap((region, ri) =>
     Array.from({ length: shards }, (_, shard) => ({ region, shard, shards, rate: perRegion / shards, seed: ((spec.seed * 31 + ri) * 1009 + shard) >>> 0 })))
 }

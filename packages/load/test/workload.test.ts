@@ -22,9 +22,9 @@ describe("limits (the Worker refuses anything outside them)", () => {
     for (const f of ["target", "origin", "host", "url", "path", "headers"]) expect(refused({ mode: "position", rate: 1, duration: 1, regions: ["enam"], [f]: "https://example.com" })).toMatch(/unknown field/)
   })
   it("caps rate, duration, requests per run, scans, regions", () => {
-    expect(refused({ mode: "position", rate: LIMITS.maxRate + 1, duration: 10, regions: ["enam"] })).toMatch(/over the cap/)
+    expect(refused({ mode: "position", rate: LIMITS.maxRate + 1, duration: 10, regions: ["enam", "wnam", "weur", "apac", "oc"] })).toMatch(/over the cap/)
     expect(refused({ mode: "position", rate: 1, duration: LIMITS.maxDurationS + 1, regions: ["enam"] })).toMatch(/over the cap/)
-    expect(refused({ mode: "position", rate: 200, duration: 400, regions: ["enam"] })).toMatch(/per-run cap/)
+    expect(refused({ mode: "position", rate: 200, duration: 400, regions: ["enam", "wnam", "weur", "apac"] })).toMatch(/per-run cap/)
     expect(refused({ mode: "search", rate: 120, duration: 240, regions: ["enam"] })).toMatch(/scan rate/)
     expect(ok({ mode: "search", rate: 2, duration: 240, regions: ["enam", "weur", "apac"] }).rate).toBe(2)   // 120/min
     expect(refused({ mode: "mixed", rate: 300, duration: 60, regions: ["enam"], mix: { search: 10, position: 90 } })).toMatch(/scan rate/)
@@ -50,17 +50,22 @@ describe("limits (the Worker refuses anything outside them)", () => {
 
 describe("plan", () => {
   it("splits the rate evenly over regions and shards, under one invocation's ceiling", () => {
-    const s = ok({ mode: "mixed", rate: 300, duration: 60, regions: ["enam", "weur", "apac"] })
+    const s = ok({ mode: "mixed", rate: 180, duration: 60, regions: ["enam", "weur", "apac"] })
     const p = plan(s)
     expect(new Set(p.map(x => x.region))).toEqual(new Set(["enam", "weur", "apac"]))
-    expect(p.reduce((a, x) => a + x.rate, 0)).toBeCloseTo(300)
+    expect(p.length).toBe(3 * 15)
+    expect(p.reduce((a, x) => a + x.rate, 0)).toBeCloseTo(180)
+    expect(plan(ok({ mode: "position", rate: 8, duration: 60, regions: ["enam"], shards: 8 }))).toHaveLength(8)   // more shards on request
+    expect(plan(ok({ mode: "position", rate: 40, duration: 60, regions: ["enam"], shards: 1 }))).toHaveLength(10)  // never fewer than needed
+    expect(refused({ mode: "position", rate: 65, duration: 60, regions: ["enam"] })).toMatch(/per region/)
+    expect(refused({ mode: "position", rate: 1, duration: 60, regions: ["enam"], shards: 17 })).toMatch(/shards/)
     for (const x of p) expect(x.rate).toBeLessThanOrEqual(LIMITS.shardRate)
     expect(new Set(p.map(x => x.seed)).size).toBe(p.length)
   })
   it("gives scans enough shards for their latency", () => {
     const p = plan(ok({ mode: "search", rate: 4, duration: 60, regions: ["enam"] }))
     expect(p.length).toBe(Math.ceil(4 / LIMITS.shardSearchRate))
-    expect(searchRate(ok({ mode: "mixed", rate: 100, duration: 60, regions: ["enam"] }))).toBeCloseTo(1)
+    expect(searchRate(ok({ mode: "mixed", rate: 100, duration: 60, regions: ["enam", "weur"] }))).toBeCloseTo(1)
   })
 })
 

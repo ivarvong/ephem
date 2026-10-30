@@ -67,7 +67,7 @@ export class Generator extends DurableObject<Env> {
     const busy = sql.exec<{ runId: string }>(`SELECT runId FROM runs WHERE state IN ('pending', 'running')`).toArray()[0]
     if (busy) throw new Error(`generator busy with run ${busy.runId}`)
     // Defence in depth: the Worker validated the spec; the shard re-checks its own share.
-    if (cfg.plan.rate > LIMITS.shardRate * 1.5 || cfg.spec.durationS > LIMITS.maxDurationS) throw new Error("shard config over the limits")
+    if (cfg.plan.rate > LIMITS.shardRate + 1e-9 || cfg.spec.durationS > LIMITS.maxDurationS) throw new Error("shard config over the limits")
     sql.exec(`INSERT INTO runs (runId, config, state, created) VALUES (?, ?, 'pending', ?)`, cfg.spec.runId, JSON.stringify(cfg), Date.now())
     await this.ctx.storage.setAlarm(Date.now() + 20)
     return { ok: true }
