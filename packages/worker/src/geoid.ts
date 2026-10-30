@@ -43,11 +43,18 @@ export const geoidCache = (s: GeoidStats): string => {
   return parts.length ? parts.join(",") : "L1"
 }
 
-/** The Worker's geoid: installs the isolate L1 as core's band source (call once per isolate). */
+// core's band source is a process global (setGeoidSource), and an isolate can hold two makeGeoid (ephem in
+// COMPUTE_MODE=entrypoint: the front door's and its Api's). Each keeps its own L1; the installed source reads all of them,
+// so a band prefetched by either is visible to core. (With one L1 per install, the last install won and the Api's bands were
+// invisible: position 500s on the A/B's E arm, 58363fbc, 2026-10-30; the gradual canary caught it at 0%.)
+const isolateL1s: Array<Map<number, Uint8Array>> = []
+const fromAnyL1 = (b: number) => { for (const m of isolateL1s) { const x = m.get(b); if (x) return x } throw new Error(`EGM96 geoid band ${b} was not prefetched`) }
+
+/** The Worker's geoid: an isolate L1, installed (with any other makeGeoid's) as core's band source. */
 export const makeGeoid = (fetchBand: GeoidFetch) => {
   const l1 = new Map<number, Uint8Array>()
   const inflight = new Map<number, Promise<{ bytes: Uint8Array; status: string }>>()   // one fetch per band per isolate
-  setGeoidSource(b => { const x = l1.get(b); if (!x) throw new Error(`EGM96 geoid band ${b} was not prefetched`); return x })
+  isolateL1s.push(l1); setGeoidSource(fromAnyL1)
   const load = (lat: number) => Effect.tryPromise({
     try: async () => {
       const want = geoidBandsFor(lat), stats: GeoidStats = { "geoid.bands": want.length, "geoid.l1": 0, "geoid.fetchedBytes": 0 }

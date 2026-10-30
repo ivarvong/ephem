@@ -42,6 +42,14 @@ describe("geoid bands via BlockStore", () => {
     const bad = await serveGeoid(new Request(`https://b${geoidPath(6)}`), async () => ab(bundledGeoidBand(7)))
     expect(bad.status).toBe(502); expect(bad.headers.get("cache-control")).toBe("no-store"); expect(await bad.text()).toMatch(/band 6/)
   })
+  it("two makeGeoid in one isolate (COMPUTE_MODE=entrypoint: front door + Api): bands either one fetched are visible to core", async () => {
+    setGeoidSource(bundledGeoidBand); const want = geoidUndulation(40.7, -74)
+    const fetch = async (b: number) => ({ buf: ab(bundledGeoidBand(b)), status: "MISS" })
+    const api = makeHandler(blocks(), undefined, undefined, makeGeoid(fetch))
+    makeGeoid(fetch)   // the front door's, installed after the Api's (module order in index.ts): it used to hide the Api's L1
+    const r = await api(new Request(`http://x/v1/position?${NYC}&${T}`))
+    expect(r.status).toBe(200); expect((await r.json() as { observer: { geoidUndulation: number } }).observer.geoidUndulation).toBe(want)
+  })
   it("the loopback asks BlockStore for the versioned path", async () => {
     const urls: string[] = []
     const lb = makeLoopback(() => ({ BlockStore: { fetch: async (req: Request) => { urls.push(new URL(req.url).pathname); return new Response("x") } } }))
