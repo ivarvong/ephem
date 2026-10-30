@@ -175,10 +175,16 @@ MSL) are refused on /v1/day with a 422 that says so; /v1/position returns null t
 ### 7.2 Geoid (EGM96)
 
 NGA's official 15′ grid (`WW15MGH.GRD`, earth-info.nga.mil "egm-96interpolation", SHA-256 pinned in
-`reference/geoid/inputs.sha256`) is subsampled to 30′ (361 × 720 nodes), rounded to 1 cm, and bundled
-(`egm96-grid.ts`: 46 bands of 8 rows, each planar-predictor residuals as zigzag varints, base64: 384 KB raw / 258 KB gzip; a
-lookup decodes only the ≤ 2 bands it touches, once per isolate, 0.6 ms in Node; the single stream before 2026-10-30 cost every
-fresh isolate a 260 k-node decode, ~7 ms). Bilinear between nodes. Interpolation error against bilinear on the full 15′ grid (2 M area-uniform points):
+`reference/geoid/inputs.sha256`) is subsampled to 30′ (361 × 720 nodes), rounded to 1 cm, and cut into 46 bands of 8 rows,
+each planar-predictor residuals as zigzag varints (`egm96-grid.ts`, base64 in the source tree: 384 KB). **Since 2026-10-30 the
+grid is not in the Worker bundle:** the bands live in R2 (`ephem-geoid`, one sha-addressed 288 KB object, uploaded by
+`scripts/geoid-r2.ts`), the bundle carries only the manifest (`egm96-bands.ts`: offset, length, sha256 prefix per band), and
+the handler prefetches the 1–2 bands of the observer's latitude through BlockStore (`/geoid/v<CACHE_VERSION>/<sha16>/<band>`,
+Workers Caching, immutable) concurrently with the DE440 blocks, into an isolate L1 (`src/geoid.ts`). Bands are sha-checked at
+BlockStore and again before use; any failure is a 503 `GeoidUnavailable`, never a guessed height. Core's `geoidUndulation`
+reads an injected band source (`setGeoidSource`); tests and the dev server inject the source-tree grid. Same decoder, same
+bytes: answers bit-identical (golden test; 8.28 M-lookup sweep). A lookup decodes only the ≤ 2 bands it touches, once per
+isolate. Bilinear between nodes. Interpolation error against bilinear on the full 15′ grid (2 M area-uniform points):
 rms 0.12 m, p99 0.49 m, p99.9 1.06 m, max 3.48 m. Against NGA's published `OUTINTPT.DAT` test points: ≤ 0.244 m. For the dip
 this is negligible (1 m at 10 m changes the dip by 0.28′). Tests: `geoid.test.ts` (403 nodes equal NGA's values to the cm,
 NGA's test points, 2 000 points vs the 15′ grid). The oracle reads the same NGA grid from PROJ's GeoTIFF
@@ -318,7 +324,11 @@ Until ingest has run, data endpoints return 500 with "R2 object … missing — 
 **Size.** The bundle was 4.3 MB raw / 1.1 MB gzip with `HttpApiScalar.layerCdn`, which inlines ~3.1 MB of Scalar
 (73 % of the script). `/docs` is now a ~400-byte page that loads `@scalar/api-reference@1.74.0` from jsDelivr and points
 it at `/openapi.json`; with `minify: true` the Worker is 516 KiB / 167 KiB gzip (Effect HttpApi + Schema + core), an
-85 % cut.
+85 % cut. It then grew to 985 KiB / 451 KiB gzip (2026-10-30: the bundled EGM96 grid 384 KB, Effect 465 KB, home page 60 KB) and
+was cut to **402 KiB / 139 KiB gzip** (git 0b88f9f): the geoid moved to R2 (§7.2), and every Effect import goes by module
+subpath (`import * as Effect from "effect/Effect"`), because esbuild keeps the whole namespace of a barrel import
+(`import { Schema } from "effect"`): Effect 465 → 228 KB. Startup effect, measured by version: fresh Api isolate pre-router
+gap p50 117 → 99 ms, first-request CPU unchanged (docs/telemetry_and_profiling.md, findings 2026-10-30).
 
 **Local.** `node --experimental-strip-types packages/worker/src/dev.ts 8787` runs the identical handler on Node with
 blocks range-read from a local copy of the DE440 file (`data/jpl/`) with the same `makeBlocks` and the same offsets
