@@ -98,6 +98,12 @@ describe("traceparent", () => {
       expect(ids.size, path).toBe(5)
     }
   })
+  it("a synthetic document (x-ephem-load / x-ephem-smoke) says so to its RUM; a real one does not", async () => {
+    const h = makeHandler(makeBlocks(origin))
+    expect(await (await h(new Request("http://x/", { headers: { "x-ephem-load": "J1" } }))).text()).toContain('<meta name="ephem-synthetic" content="1">')
+    expect(await (await h(new Request("http://x/instrument", { headers: { "x-ephem-smoke": "s" } }))).text()).toContain('<meta name="ephem-synthetic" content="1">')
+    expect(await (await h(new Request("http://x/"))).text()).not.toContain(`<meta name="ephem-synthetic"`)
+  })
   it("traceparentMeta renders only a valid hex traceparent", () => {
     expect(traceparentMeta({ traceId: TID, spanId: SID, traceparent: TP })).toBe(`<meta name="traceparent" content="${TP}">`)
     expect(traceparentMeta({ traceId: TID, spanId: SID, traceparent: `00-${TID}-${SID}-01"><x>` })).toBe("")

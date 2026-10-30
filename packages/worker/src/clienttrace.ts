@@ -35,15 +35,18 @@ export const documentTrace = (req: HttpServerRequest.HttpServerRequest) => Effec
   const traceId = tp?.traceId ?? (!req.headers["traceparent"] && !req.headers["b3"] && !req.headers["x-b3-traceid"] && cur && /^[0-9a-f]{32}$/.test(cur.traceId) ? cur.traceId : hex(16))
   const spanId = cur && HEX16.test(cur.spanId) ? cur.spanId : hex(8)
   yield* Effect.annotateCurrentSpan({ "client.trace_id": traceId, "client.document_span_id": spanId, "client.trace_origin": tp ? "adopted" : "minted" })
-  return { traceId, spanId, traceparent: `00-${traceId}-${spanId}-01` }
+  // Synthetic (ephem-load, smoke, the CDP journey harness): the page's RUM flags its rows, including the pagehide beacon, which
+  // carries none of the harness's request headers.
+  const synthetic = !!(req.headers["x-ephem-load"] || req.headers["x-ephem-smoke"])
+  return { traceId, spanId, traceparent: `00-${traceId}-${spanId}-01`, synthetic }
 })
-export type DocumentTrace = { readonly traceId: string; readonly spanId: string; readonly traceparent: string }
+export type DocumentTrace = { readonly traceId: string; readonly spanId: string; readonly traceparent: string; readonly synthetic?: boolean }
 /** Response headers of a page: the id for CDP, curl and the navigation entry's serverTiming. */
 export const documentTraceHeaders = (d: DocumentTrace): Record<string, string> =>
   ({ [TRACE_HEADER]: d.traceId, "server-timing": `trace;desc="${d.traceparent}"` })
 /** `<meta name="traceparent">` for the page's head; built only from validated hex, anything else renders nothing. */
 export const traceparentMeta = (d: DocumentTrace | undefined): string =>
-  d && parseTraceparent(d.traceparent) ? `<meta name="traceparent" content="${d.traceparent}">` : ""
+  d && parseTraceparent(d.traceparent) ? `<meta name="traceparent" content="${d.traceparent}">${d.synthetic ? `<meta name="ephem-synthetic" content="1">` : ""}` : ""
 
 export const ClientTrace = HttpRouter.middleware(Effect.gen(function* () {
   const edge = yield* Edge

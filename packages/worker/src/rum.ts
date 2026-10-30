@@ -6,7 +6,7 @@
 // Privacy (hard rule; test/rum.test.ts): no IP, no user agent (family only), no URL or query: targets are route ids (ROUTES,
 // `/assets/<known file>`, "other", "external"), names and details from fixed patterns, ids hex only. DNT or GPC (header or
 // navigator) → nothing is sent or stored. The traceparent's sampled flag 00 → nothing. Synthetic traffic (x-ephem-load,
-// x-ephem-smoke, navigator.webdriver) is stored with synthetic = true.
+// x-ephem-smoke, navigator.webdriver, a document served with <meta name=ephem-synthetic>) is stored with synthetic = true.
 // Limits: body ≤ 64 KiB, ≤ 300 spans per batch, ≤ 30 batches per trace per minute and ≤ 600 batches per 10 s per isolate
 // (best effort, in-isolate: a Worker has no cheaper shared counter, and a flood only costs us the rows we drop).
 import * as Context from "effect/Context"
@@ -156,6 +156,7 @@ export const RUM_JS = String.raw`
   var tp = null; try { var m = document.querySelector('meta[name="traceparent"]'); tp = m && m.getAttribute("content"); } catch (e) {}
   if (!off && T) { if (!tp || tp.indexOf(T.traceId) < 0) tp = "00-" + T.traceId + "-" + (T.parentSpanId || T.hex(8)) + "-01"; if (!/-01$/.test(tp)) off = "unsampled"; }
   if (off || !window.PerformanceObserver) { window.__rum = { off: off || "unsupported", span: noop, mark: noop, interaction: noop, flush: noop }; return; }
+  var SYN = !!document.querySelector('meta[name="ephem-synthetic"]');   // the document request was synthetic (src/clienttrace.ts)
   var buf = [], seq = 0, DOC = T.parentSpanId, r1 = function (x) { return x == null ? undefined : Math.round(x * 10) / 10; };
   function add(o) { if (buf.length < 600) buf.push(o); }
   function sid() { return T.hex(8); }
@@ -195,7 +196,7 @@ export const RUM_JS = String.raw`
   function flush(final) {
     fetches(); vitals(final);
     while (buf.length) {
-      var body = JSON.stringify({ v: 1, tp: tp, page: location.pathname, seq: seq++, to: performance.timeOrigin, vw: innerWidth, dpr: devicePixelRatio, wd: N.webdriver === true, s: buf.splice(0, 250) });
+      var body = JSON.stringify({ v: 1, tp: tp, page: location.pathname, seq: seq++, to: performance.timeOrigin, vw: innerWidth, dpr: devicePixelRatio, wd: N.webdriver === true || SYN, s: buf.splice(0, 250) });
       try { if (final && N.sendBeacon && N.sendBeacon("/rum", new Blob([body], { type: "application/json" }))) continue; } catch (e) {}
       try { fetch("/rum", { method: "POST", body: body, keepalive: body.length < 60000, headers: { "content-type": "application/json" } }).catch(noop); } catch (e) {}
     }
