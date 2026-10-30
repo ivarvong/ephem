@@ -173,7 +173,11 @@ if [ $LIVE_OK = 0 ]; then
   TR=$(now); route ephem "rollback: smoke failed for $NEW [git $SHA]" "$PREV:100"
   echo "ROLLBACK: deployment back to $PREV created in $(since "$TR")s"
   s=$(serving "$PREV" 60) && echo "ROLLBACK: $PREV serving 5 consecutive /healthz ${s}s after the rollback deployment ($(since "$TR")s after the decision)" || echo "ROLLBACK: $PREV still not serving after ${s}s" >&2
-  bash "$WT/scripts/smoke.sh" "$B" --expect "$PREV" | tail -1 || true
+  # re-smoke the restored version with the smoke of the commit it was deployed from (the failed commit's own checks may be
+  # what failed); falls back to this commit's smoke
+  PREV_SMOKE="$WT/scripts/smoke.sh"
+  [ -n "$LAST" ] && git -C "$ROOT" show "$LAST:scripts/smoke.sh" > "$WT/scripts/.smoke-prev.sh" 2>/dev/null && PREV_SMOKE="$WT/scripts/.smoke-prev.sh"
+  echo "ROLLBACK: re-smoke of $PREV ($([ "$PREV_SMOKE" = "$WT/scripts/smoke.sh" ] && echo "this commit's" || echo "$LAST's") smoke.sh): $(bash "$PREV_SMOKE" "$B" --expect "$PREV" 2>&1 | tail -1)"
   echo "SMOKE FAILED on $NEW (twice): rolled back to $PREV. Not tagged." >&2; exit 1
 fi
 git -C "$ROOT" tag -f "deployed/$(date -u +%Y%m%dT%H%M%SZ)" "$SHA" >/dev/null
