@@ -43,6 +43,21 @@ const url = new URL(target); if (!url.searchParams.has("lat")) { url.searchParam
 const origin = url.origin
 const log = (...a: unknown[]) => console.error(`[${run}]`, ...a)
 
+// ---------- clock probes ----------
+// DevTools throttling delays what CDP reports (receiveHeadersEnd includes the emulated latency), which widens each request's
+// offset bound by that latency. So the offset also gets unthrottled probes from this process (same system clock as Chrome's
+// wallTime): sequential GET /healthz, send and headers timed with performance.timeOrigin + now(), 6 before and 6 after.
+const probes: Array<{ ray: string; sendWall: number; headWall: number }> = []
+const probe = async () => {
+  for (let i = 0; i < 6; i++) {
+    const t1 = performance.timeOrigin + performance.now()
+    const r = await fetch(`${origin}/healthz`, { headers: { "x-ephem-load": run } })
+    const t4 = performance.timeOrigin + performance.now(); await r.arrayBuffer()
+    const ray = r.headers.get("cf-ray"); if (ray) probes.push({ ray, sendWall: t1, headWall: t4 })
+  }
+}
+await probe()
+
 // ---------- drive the page ----------
 interface Mark { wall: number; name: string }
 const marks: Mark[] = []
@@ -96,6 +111,7 @@ try {
   await s.send("Page.navigate", { url: "about:blank" }); await new Promise(r => setTimeout(r, 1500))
   trace = await P.traceEnd(s)
 } finally { await b.close() }
+await probe()
 const tEnd = Date.now()
 log(`chrome done: ${trace.length} trace events, ${reqs.length} requests, RUM ${pageState?.rum ?? "on"}`)
 
@@ -179,13 +195,13 @@ for (const m of cmarks.filter(m => m.kind === "input")) {
 }
 const lats = cmarks.map(m => m.latency).filter((x): x is number => x != null)
 const client: Client = { source: "cdp", origin, t0Wall: T0 + WALL, traceId: TRACE_ID, reqs: creqs, main, marks: cmarks,
-  fcp: fcpEv ? rel(fcpEv.ts / 1000) : null, lcp: lcpEv ? rel(lcpEv.ts / 1000) : null, data: tData, inp: lats.length ? Math.max(...lats) : null, cls: null, byCat, byCatToData }
+  fcp: fcpEv ? rel(fcpEv.ts / 1000) : null, lcp: lcpEv ? rel(lcpEv.ts / 1000) : null, data: tData, inp: lats.length ? Math.max(...lats) : null, cls: null, byCat, byCatToData, calib: probes }
 
 // Independent clock check: the laptop's offset to an NTP server (sntp prints "+0.125 +/- 0.024 <host>": server − local, s).
 const sntp = (() => { try { const m = /([+-][0-9.]+) \+\/- ([0-9.]+)/.exec(execFileSync("sntp", ["-t", "2", "time.apple.com"], { encoding: "utf8", timeout: 8000 })); return m ? { offsetMs: +(Number(m[1]) * 1000).toFixed(1), errMs: +(Number(m[2]) * 1000).toFixed(1), host: "time.apple.com" } : null } catch { return null } })()
 
 // ---------- server ----------
-const rays = creqs.filter(r => r.ray && r.url.startsWith(origin) && !r.fromCache).map(r => r.ray!)
+const rays = [...creqs.filter(r => r.ray && r.url.startsWith(origin) && !r.fromCache).map(r => r.ray!), ...probes.map(p => p.ray)]
 const needApi = creqs.filter(r => r.ray && /^(MISS|EXPIRED|UPDATING|REVALIDATED)$/.test(r.cache ?? "")).map(r => r.ray!)
 const server = await pullServer({ from: tNav.wall - 120_000, to: tEnd + 60_000, loadTag: run, clientTraceId: TRACE_ID, rays, needApi, waitS, log })
 const model = buildModel(client, server, { run, url: url.pathname + url.search, origin, page: pageKind, device: device.name, net: net?.name ?? "none", cpu, mode, script, chrome: b.version.product,
@@ -219,11 +235,17 @@ for (const r of rum.filter(x => x.kind === "resource" && x.ray)) {
   if (c.end != null) chk(`end ${r.target}`, fl(r.start_ms)! + fl(r.dur_ms)!, c.end)
 }
 for (const r of rum.filter(x => x.kind === "fetch")) { const c = creqs.find(q => q.spanId === r.span_id); if (c) chk(`fetch span ${r.target} start (traceparent ${r.span_id.slice(0, 6)})`, fl(r.start_ms), c.start) }
-const absd = checks.map(x => Math.abs(x.diff)).toSorted((a, z) => a - z)
+// Under DevTools throttling the emulated latency is added after the real first byte: Resource Timing's responseStart is the
+// real one, CDP's receiveHeadersEnd the delayed one. Those checks are reported apart (their difference is the emulation).
+const throttled = !!net
+const fb = checks.filter(x => throttled && x.what.startsWith("first byte") || throttled && x.what.startsWith("document TTFB"))
+const strict = checks.filter(x => !fb.includes(x))
+const absd = strict.map(x => Math.abs(x.diff)).toSorted((a, z) => a - z)
 const TOL = 10
 const rumCheck = { rows: rum.length, kinds: Object.fromEntries([...new Set(rum.map(r => r.kind))].map(k => [k, rum.filter(r => r.kind === k).length])), synthetic: rum.every(r => r.synthetic === "true"),
-  checks: checks.length, within: absd.filter(x => x <= TOL).length, tolMs: TOL, p50: absd[Math.floor(absd.length / 2)] ?? null, max: absd[absd.length - 1] ?? null,
-  worst: checks.toSorted((a, z) => Math.abs(z.diff) - Math.abs(a.diff)).slice(0, 5),
+  checks: strict.length, within: absd.filter(x => x <= TOL).length,
+  firstByteUnderThrottling: fb.length ? { n: fb.length, meanMs: +(fb.reduce((a, x) => a + x.diff, 0) / fb.length).toFixed(1), note: "RUM responseStart is the real first byte; CDP's includes the emulated latency" } : null, tolMs: TOL, p50: absd[Math.floor(absd.length / 2)] ?? null, max: absd[absd.length - 1] ?? null,
+  worst: strict.toSorted((a, z) => Math.abs(z.diff) - Math.abs(a.diff)).slice(0, 5),
   fetchRows: rum.filter(r => r.kind === "fetch").length, fetchesCdp: creqs.filter(r => r.spanId && r.type !== "Document").length,
   resourcesWithRay: rum.filter(r => r.kind === "resource" && r.ray).length, resources: rum.filter(r => r.kind === "resource").length }
 ;(model.meta as any).rum = rumCheck
@@ -246,6 +268,6 @@ if (sntp) console.log(`independent check: sntp ${sntp.host} says server − lapt
 console.log(`server root span inside its request's send → first byte (± uncertainty): ${model.inside.ok}/${model.inside.n}`)
 console.log(`coverage: ${coverage.joined} of ${coverage.total} requests joined to a server invocation (${coverage.byTrace} by trace id + ray)${coverage.unjoined.length ? "; unjoined: " + coverage.unjoined.map(u => `#${u.i} ${u.url} (${u.reason})`).join("; ") : ""}`)
 console.log(`propagation: page trace ${pageState?.trace?.traceId === TRACE_ID ? "=" : "≠"} harness trace (from ${pageState?.trace?.from}); ${coverage.fetchesSameTrace}/${coverage.fetches} fetches carried it`)
-console.log(`RUM: ${rumCheck.rows} rows ${JSON.stringify(rumCheck.kinds)}; ${rumCheck.within}/${rumCheck.checks} timings within ${TOL} ms of CDP (p50 ${rumCheck.p50} ms, max ${rumCheck.max} ms); fetch rows ${rumCheck.fetchRows}/${rumCheck.fetchesCdp}; resources with ray ${rumCheck.resourcesWithRay}/${rumCheck.resources}`)
+console.log(`RUM: ${rumCheck.rows} rows ${JSON.stringify(rumCheck.kinds)}; ${rumCheck.within}/${rumCheck.checks} timings within ${TOL} ms of CDP (p50 ${rumCheck.p50} ms, max ${rumCheck.max} ms); fetch rows ${rumCheck.fetchRows}/${rumCheck.fetchesCdp}; resources with ray ${rumCheck.resourcesWithRay}/${rumCheck.resources}${rumCheck.firstByteUnderThrottling ? `; first byte under throttling: RUM − CDP mean ${rumCheck.firstByteUnderThrottling.meanMs} ms over ${rumCheck.firstByteUnderThrottling.n} (the emulated latency)` : ""}`)
 console.log("top client costs:"); for (const c of model.costs.slice(0, 5)) console.log(`  ${c.ms.toFixed(0).padStart(6)} ms  ${c.what} — ${c.detail}`)
 console.log(`→ ${join(outDir, name)}.{html,perfetto.json,model.json,rum.json,png}`)

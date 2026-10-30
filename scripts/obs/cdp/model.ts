@@ -16,6 +16,8 @@ export interface Client {
   source: "cdp" | "rum"; origin: string; t0Wall: number; traceId: string; reqs: CReq[]; main: MainEv[]; marks: Mark[]
   fcp: number | null; lcp: number | null; data: number | null; inp: number | null; cls: number | null
   byCat: Record<string, number>; byCatToData: Record<string, number>
+  /** unthrottled clock probes (journey.ts: Node fetches of /healthz around the run): offset bounds only, not requests */
+  calib?: Array<{ ray: string; sendWall: number; headWall: number }>
 }
 
 const TASK = new Set(["RunTask", "LoAF", "longtask"])
@@ -32,6 +34,10 @@ export function buildModel(c: Client, srvIn: Server, meta: Record<string, unknow
     if (!root) continue
     const ttfb = root.a["cloudflare.response.time_to_first_byte_ms"] ?? 0
     bounds.push({ ray: r.ray, lo: root.s + ttfb - r.headWall - 1, hi: root.s - r.sendWall + 1, path: new URL(r.url).pathname })
+  }
+  for (const p of c.calib ?? []) {
+    const root = sspans.find(s => s.ray && ray0(s.ray) === ray0(p.ray) && s.ep === "default" && !s.parent)
+    if (root) bounds.push({ ray: p.ray, lo: root.s + (root.a["cloudflare.response.time_to_first_byte_ms"] ?? 0) - p.headWall - 1, hi: root.s - p.sendWall + 1, path: "/healthz (clock probe)" })
   }
   let lo = Math.max(...bounds.map(x => x.lo)), hi = Math.min(...bounds.map(x => x.hi))
   const consistent = bounds.length > 0 && lo <= hi
