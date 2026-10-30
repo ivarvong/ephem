@@ -8,8 +8,17 @@ set -euo pipefail
 REV=${1:?usage: deploy.sh <rev> "<message>"}; MSG=${2:?usage: deploy.sh <rev> "<message>"}
 ROOT=$(cd "$(dirname "$0")/.." && pwd); B=https://ephem.ivar.workers.dev
 SHA=$(git -C "$ROOT" rev-parse --short=12 "$REV")
+# One deploy at a time, and never backwards: concurrent agents' deploys raced and an older commit replaced a newer one
+# for ~2 min (2026-10-30). A rollback or A/B of an older commit needs ALLOW_OLDER=1.
+LOCK="$(git -C "$ROOT" rev-parse --absolute-git-dir)/ephem-deploy.lock"
+mkdir "$LOCK" 2>/dev/null || { echo "another deploy is running (lock $LOCK, held by $(cat "$LOCK/owner" 2>/dev/null)); wait and rebase" >&2; exit 1; }
+echo "$SHA pid $$ $(date -u +%FT%TZ)" > "$LOCK/owner"
+LAST=$(git -C "$ROOT" tag --list 'deployed/*' --sort=-refname | head -1)
+if [ -n "$LAST" ] && [ "${ALLOW_OLDER:-}" != 1 ] && ! git -C "$ROOT" merge-base --is-ancestor "$LAST" "$SHA"; then
+  rm -rf "$LOCK"; echo "$SHA does not contain the last deployed commit ($LAST = $(git -C "$ROOT" rev-parse --short=12 "$LAST")): rebase onto main, or ALLOW_OLDER=1 for a rollback" >&2; exit 1
+fi
 WT=$(mktemp -d "${TMPDIR:-/tmp}/ephem-deploy-$SHA-XXXX")
-cleanup() { git -C "$ROOT" worktree remove --force "$WT" >/dev/null 2>&1 || true; }
+cleanup() { git -C "$ROOT" worktree remove --force "$WT" >/dev/null 2>&1 || true; rm -rf "$LOCK"; }
 trap cleanup EXIT
 
 git -C "$ROOT" worktree add --detach -q "$WT" "$SHA"
