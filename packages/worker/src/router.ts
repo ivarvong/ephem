@@ -18,12 +18,16 @@ import { Edge, Gateway, type Role } from "./responses.ts"
 import { WeatherNone, type Weather } from "./weather.ts"
 import { RequestLog, RequestLogging, type RequestLogSink } from "./requestlog.ts"
 import { ClientTrace } from "./clienttrace.ts"
+import { RumSink, type RumSinkI } from "./rum.ts"
 
 // No HttpPlatform / FileSystem / Path / Etag layers (HttpServer.layerServices): only file responses and on-disk multipart
 // need them, and nothing here serves files. Providing them kept mime tables, Path and FileSystem in the bundle (2026-10-30).
 
 /** CORS + Server-Timing on every response: the API is meant to be called from browsers and compared across deployments. */
-const CORS = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, POST, OPTIONS", "access-control-allow-headers": "*", "access-control-max-age": "86400" } as const
+// timing-allow-origin: cross-origin callers' Resource Timing may read the full timing and serverTiming (only ids, cache statuses
+// and I/O durations; src/servertiming.ts). access-control-expose-headers: the trace id and version for cross-origin fetch().
+const CORS = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, POST, OPTIONS", "access-control-allow-headers": "*", "access-control-max-age": "86400",
+  "timing-allow-origin": "*", "access-control-expose-headers": "server-timing, x-ephem-trace, x-ephem-version, x-ephem-cache" } as const
 export const Cors = HttpRouter.middleware(http => Effect.map(http, HttpServerResponse.setHeaders(CORS)), { global: true })
 
 /** Request-decoding failures become a 400 with the issue spelled out, instead of the runtime's empty 400. */
@@ -51,12 +55,13 @@ export const makeApiApp = (blocks: Layer.Layer<Blocks>, edge: Role = { role: "ap
 /** A router layer as a fetch-style handler. `log`: where this request's Basin row goes (src/requestlog.ts); without it nothing is logged. */
 export const toHandler = (app: unknown) => {
   const { handler } = HttpRouter.toWebHandler(app as Layer.Layer<never, never, HttpRouter.HttpRouter>, { disableLogger: true })
-  return async (request: Request, log?: RequestLogSink): Promise<Response> => {
+  return async (request: Request, log?: RequestLogSink, rum?: RumSinkI): Promise<Response> => {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, POST, OPTIONS", "access-control-allow-headers": "*" } })
     const t0 = performance.now()
-    const res = await handler(request, log ? Context.make(RequestLog, log) : undefined)
-    const h = new Headers(res.headers); const tr = res.headers.get("server-timing")   // a page's `trace;desc=…` entry (src/clienttrace.ts) stays; anything else is replaced
-    h.set("server-timing", (tr?.startsWith("trace;") ? tr + ", " : "") + `total;dur=${(performance.now() - t0).toFixed(1)}`)
+    const ctx = log && rum ? Context.add(Context.make(RequestLog, log), RumSink, rum) : log ? Context.make(RequestLog, log) : rum ? Context.make(RumSink, rum) : undefined
+    const res = await handler(request, ctx as Context.Context<never> | undefined)
+    const h = new Headers(res.headers); const st = res.headers.get("server-timing")   // the router's entries (src/servertiming.ts), then the request's I/O wall
+    h.set("server-timing", (st ? st + ", " : "") + `total;dur=${(performance.now() - t0).toFixed(1)}`)
     return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h })
   }
 }

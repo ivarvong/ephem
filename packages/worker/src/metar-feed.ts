@@ -100,7 +100,7 @@ export interface FeedResult {
 }
 export interface FeedDeps {
   /** GET FEED_PATH: src/loopback.ts feed in prod; serveFeed directly in tests and the dev server */
-  readonly fetch: (req: Request) => Promise<Response>
+  readonly fetch: (req: Request, traceparent?: string) => Promise<Response>
   readonly now?: () => number
   /** refuse a parse with fewer stations (a truncated or wrong file); the real feed has ~5 250 */
   readonly minStations?: number
@@ -134,9 +134,9 @@ export const makeFeed = (deps: FeedDeps) => {
     throw e instanceof FeedUnavailable ? e : new FeedUnavailable(String(e))
   }
 
-  const get = async (): Promise<FeedResult> => {
+  const get = async (traceparent?: string): Promise<FeedResult> => {
     let r: Response
-    try { r = await deps.fetch(new Request(`https://feed.internal${FEED_PATH}`)) } catch (e) { return onError(e) }
+    try { r = await deps.fetch(new Request(`https://feed.internal${FEED_PATH}`), traceparent) } catch (e) { return onError(e) }
     const s = (r.headers.get("cf-cache-status") ?? "none").toLowerCase()
     const tier = (TIERS.has(s) ? s : "none") as Tier
     if (r.status !== 200) { await r.body?.cancel(); return onError(new FeedUnavailable(`feed ${r.status}${tier === "none" ? "" : ` (${tier})`}`)) }

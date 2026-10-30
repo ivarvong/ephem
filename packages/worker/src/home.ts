@@ -6,6 +6,7 @@ import * as HttpRouter from "effect/http/HttpRouter"
 import * as HttpServerRequest from "effect/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/http/HttpServerResponse"
 import { isValidZone } from "@ephem/core"
+import { RUM_JS } from "./rum.ts"
 import { CLIENT_TRACE_JS, documentTrace, documentTraceHeaders, traceparentMeta, type DocumentTrace } from "./clienttrace.ts"
 
 interface CfLocation {
@@ -379,6 +380,7 @@ footer.tel i{font:500 10px/1 var(--sans);font-style:normal;letter-spacing:.14em;
 "use strict";
 ${CORE_JS}
 ${CLIENT_TRACE_JS}
+${RUM_JS}
 var D2R = Math.PI / 180, AU = 149597870.7;
 var reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
 var loc = { lat: LOC.lat, lon: LOC.lon, place: LOC.place, city: LOC.city, tz: LOC.tz, source: LOC.source, acc: null };
@@ -599,7 +601,7 @@ function draw() {
   var ringShown = shown.filter(function (f) { return f.id.indexOf("alt") === 0; });
   window.__sky = { rects: drawn, overlaps: overlaps(drawn), band: { top: g.top, hy: hy, bottom: g.bot }, segs: segs, rings: ringShown, ringLines: rings,
     ringHits: ringShown.filter(function (f) { return segs.some(function (sg) { return segHitsRect(sg, f); }); }).map(function (f) { return f.id; }) };
-  if (p && !draw.marked && window.performance && performance.mark) { draw.marked = true; performance.mark("ephem:data"); }   // first frame with an answer (journey.ts)
+  if (p && !draw.marked && window.performance && performance.mark) { draw.marked = true; performance.mark("ephem:data"); __rum.mark("first-sky-draw"); }   // first frame with an answer (journey.ts, RUM)
 }
 function frame() { if (dirty) { dirty = false; draw(); } requestAnimationFrame(frame); }
 
@@ -608,9 +610,9 @@ var hintT = setTimeout(hideHint, 6000);
 function hideHint() { clearTimeout(hintT); $("hint").classList.add("gone"); }
 function panned() { S.userPanned = true; hideHint(); $("hint").hidden = true; $("recenter").hidden = false; dirty = true; }
 var drag = null;
-cv.parentElement.addEventListener("pointerdown", function (e) { if (e.target.closest("button")) return; drag = { x: e.clientX, c: S.center }; hideHint(); });
-addEventListener("pointermove", function (e) { if (!drag || S.center == null) return; var g = geom(); if (Math.abs(e.clientX - drag.x) < 3) return; S.center = (drag.c - (e.clientX - drag.x) / g.k + 720) % 360; panned(); });
-addEventListener("pointerup", function () { drag = null; });
+cv.parentElement.addEventListener("pointerdown", function (e) { if (e.target.closest("button")) return; drag = { x: e.clientX, c: S.center, t0: performance.now(), moved: false }; hideHint(); });
+addEventListener("pointermove", function (e) { if (!drag || S.center == null) return; var g = geom(); if (Math.abs(e.clientX - drag.x) < 3) return; S.center = (drag.c - (e.clientX - drag.x) / g.k + 720) % 360; drag.moved = true; panned(); });
+addEventListener("pointerup", function () { if (drag && drag.moved) __rum.interaction("drag", drag.t0, performance.now()); drag = null; });
 addEventListener("pointercancel", function () { drag = null; });
 cv.addEventListener("keydown", function (e) { if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && S.center != null) { S.center = (S.center + (e.key === "ArrowLeft" ? -10 : 10) + 360) % 360; panned(); e.preventDefault(); } });
 $("recenter").addEventListener("click", function () { S.userPanned = false; if (S.to) S.center = defaultCenter(S.to); $("recenter").hidden = true; dirty = true; });
@@ -633,6 +635,7 @@ function cardsHtml(p) {
     '<p class="foot">' + ph.name.charAt(0).toUpperCase() + ph.name.slice(1) + ', <span class="tn">' + (ph.illuminatedFraction * 100).toFixed(1) + '%</span> lit</p></article>';
 }
 function setPos(p) {
+  if (!S.to) __rum.mark("data-ready");
   S.from = S.to ? interp() : null; S.to = p; S.tween0 = performance.now();
   if (S.center == null || !S.userPanned) S.center = S.center == null ? defaultCenter(p) : (S.center + wrap180(defaultCenter(p) - S.center) + 360) % 360;
   $("bodies").innerHTML = cardsHtml(p); $("lede").textContent = lede(p.sun, p.moon);

@@ -30,9 +30,9 @@ export const documentTrace = (req: HttpServerRequest.HttpServerRequest) => Effec
   const tp = parseTraceparent(req.headers["traceparent"])
   const span = yield* Effect.option(Effect.currentSpan)
   const cur = span._tag === "Some" ? span.value : undefined
-  // Minted here, never taken from Effect's span: its own parser accepts header values that W3C rejects (a malformed
-  // traceparent still parents the Effect span), and only a strictly valid incoming id is ever adopted.
-  const traceId = tp?.traceId ?? hex(16)
+  // No trace header at all: the root Effect span's own trace id (so loopbacks propagate the same id). A trace header that
+  // W3C rejects: a fresh id, since Effect's lenient parser may have parented the span on it.
+  const traceId = tp?.traceId ?? (!req.headers["traceparent"] && !req.headers["b3"] && !req.headers["x-b3-traceid"] && cur && /^[0-9a-f]{32}$/.test(cur.traceId) ? cur.traceId : hex(16))
   const spanId = cur && HEX16.test(cur.spanId) ? cur.spanId : hex(8)
   yield* Effect.annotateCurrentSpan({ "client.trace_id": traceId, "client.document_span_id": spanId, "client.trace_origin": tp ? "adopted" : "minted" })
   return { traceId, spanId, traceparent: `00-${traceId}-${spanId}-01` }
@@ -51,7 +51,9 @@ export const ClientTrace = HttpRouter.middleware(Effect.gen(function* () {
     const req = yield* HttpServerRequest.HttpServerRequest
     const tp = parseTraceparent(req.headers["traceparent"])
     if (!tp) return yield* http
-    yield* Effect.annotateCurrentSpan({ "client.trace_id": tp.traceId, "client.span_id": tp.spanId })
+    // tracestate `ephem=<16 hex>`: the client span's own parent (the page's document span), so the server knows the chain.
+    const parent = /(?:^|,)\s*ephem=([0-9a-f]{16})\s*(?:,|$)/.exec(req.headers["tracestate"] ?? "")?.[1]
+    yield* Effect.annotateCurrentSpan({ "client.trace_id": tp.traceId, "client.span_id": tp.spanId, ...(parent && !/^0+$/.test(parent) ? { "client.parent_id": parent } : {}) })
     const res = yield* http
     // The Api's answers are cached by Workers Caching: an echo there would be replayed to other clients.
     return edge.role === "api" ? res : HttpServerResponse.setHeader(res, TRACE_HEADER, tp.traceId)
@@ -75,7 +77,7 @@ var __ephemTrace = window.__ephemTrace = (function () {
 function __tfetch(url, init) {
   var T = __ephemTrace, sid = T.hex(8), rec = { spanId: sid, parent: T.parentSpanId, url: String(url), t0: performance.now(), t1: null, status: null, ray: null, echo: null };
   T.fetches.push(rec);
-  init = init || {}; var h = new Headers(init.headers || {}); h.set("traceparent", "00-" + T.traceId + "-" + sid + "-01"); init.headers = h;
+  init = init || {}; var h = new Headers(init.headers || {}); h.set("traceparent", "00-" + T.traceId + "-" + sid + "-01"); if (T.parentSpanId) h.set("tracestate", "ephem=" + T.parentSpanId); init.headers = h;
   return fetch(url, init).then(function (r) {
     rec.t1 = performance.now(); rec.status = r.status; rec.ray = r.headers.get("cf-ray"); rec.echo = r.headers.get("x-ephem-trace");
     return r;

@@ -8,6 +8,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder"
 import { EphemApi, InvalidInput, OutOfRange, WeatherUnavailable, type WeatherResponse } from "@ephem/api"
 import { SUPPORTED, WMM_VALID, decimalYear, wmm } from "@ephem/core"
 import { nearest, type Metar } from "./metar.ts"
+import { currentTraceparent } from "./trace.ts"
 import { FEED_URL, FRESH_MS, type Feed, type FeedResult } from "./metar-feed.ts"
 
 /** METARs are hourly; an observation older than this is flagged. */
@@ -49,7 +50,8 @@ const logLine = (f: FeedResult | undefined, extra: Record<string, unknown>) => c
 
 export const weatherLive = (feed: Feed) => Layer.succeed(Weather, {
   nearest: q => Effect.gen(function* () {
-    const f = yield* Effect.tryPromise({ try: () => feed.get(), catch: e => new WeatherUnavailable({ message: `METAR feed unavailable: ${e instanceof Error ? e.message : String(e)}` }) }).pipe(
+    const tp = yield* currentTraceparent
+    const f = yield* Effect.tryPromise({ try: () => feed.get(tp), catch: e => new WeatherUnavailable({ message: `METAR feed unavailable: ${e instanceof Error ? e.message : String(e)}` }) }).pipe(
       Effect.tapError(e => Effect.sync(() => logLine(undefined, { error: e.message }))),
       Effect.tap(r => Effect.annotateCurrentSpan({
         "metar.tier": r.tier, "ephem.feed_cache": r.tier.toUpperCase(), "metar.data_age_s": Math.round(r.dataAgeMs / 1000), "metar.bytes": r.bytes, "metar.parsed": r.parsed,

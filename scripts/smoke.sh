@@ -58,6 +58,9 @@ chk home 200 "/"
 chk instrument 200 "/instrument?lat=40.7&lon=-74&tz=America/New_York" "/v1/position"   # the RPN view: its glue calls the live API
 IF=$(grep -o '"RPNDot-Regular.woff2":{"sha":"[0-9a-f]*"' "$(dirname "$0")/../packages/worker/src/instrument-ds.ts" | grep -o '[0-9a-f]\{12\}')
 chk instrument-font 200 "/assets/${IF:-missing}/RPNDot-Regular.woff2"   # this commit's immutable font path (src/instrument-ds.ts)
+chk page-trace 200 "/?lat=40.7&lon=-74&tz=America/New_York" '<meta name="traceparent" content="00-'   # document trace context (src/clienttrace.ts)
+RT=$(openssl rand -hex 16); RS=$(openssl rand -hex 8)
+chk rum 204 "/rum" "" '{"v":1,"tp":"00-'"$RT"'-'"$RS"'-01","page":"/instrument","seq":0,"s":[{"k":"app","n":"smoke","sid":"'"$RS"'","t":0}]}'   # RUM ingest (src/rum.ts), stored synthetic
 chk docs 200 "/docs" 'href="/openapi.json"'                       # useful without JS: links the spec (round-2 #7)
 chk docs-interactive 200 "/docs/interactive"
 chk llms 200 "/llms.txt" "$B/mcp"                                 # names the MCP endpoint

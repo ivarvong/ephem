@@ -122,7 +122,7 @@ describe("request rows (through the app)", () => {
     const { ROUTES } = await import("../src/requestlog.ts")
     expect(ROUTES).toBe((await import("../src/routes.ts")).ROUTES)
     for (const e of (await import("../src/docs.ts")).ENDPOINTS) expect(ROUTES.has(e.path), e.path).toBe(true)
-    const POST = new Set(["/mcp", "/v1/alignment/search"])
+    const POST = new Set(["/mcp", "/v1/alignment/search", "/rum"])
     for (const p of ROUTES) {
       const r = await handler(new Request(`http://x${p}`, POST.has(p) ? { method: "POST", headers: { "content-type": "application/json" }, body: "{}" } : {}))
       expect(r.status, p).not.toBe(404)

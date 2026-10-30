@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer"
 import { EGM96_BANDS, GEOID_BANDS, geoidBandsFor, setGeoidSource } from "@ephem/core"
 import { GeoidUnavailable } from "@ephem/api"
 import { CACHE_TAG } from "./cache-version.ts"
+import { currentTraceparent } from "./trace.ts"
 import type { R2BucketLike } from "./blocks.ts"
 
 const SHA16 = EGM96_BANDS.sha256.slice(0, 16)
@@ -27,7 +28,7 @@ export const verifyBand = async (b: number, buf: ArrayBuffer): Promise<Uint8Arra
 }
 
 /** One band's bytes and the cache status of the fetch that produced them (Workers Caching's cf-cache-status, or ORIGIN). */
-export type GeoidFetch = (b: number) => Promise<{ readonly buf: ArrayBuffer; readonly status: string }>
+export type GeoidFetch = (b: number, traceparent?: string) => Promise<{ readonly buf: ArrayBuffer; readonly status: string }>
 /** Per load, flat for span attributes: `geoid.bands`, `geoid.l1`, `geoid.<status>` per fetched band, `geoid.fetchedBytes`. */
 export type GeoidStats = Record<string, number>
 
@@ -55,14 +56,14 @@ export const makeGeoid = (fetchBand: GeoidFetch) => {
   const l1 = new Map<number, Uint8Array>()
   const inflight = new Map<number, Promise<{ bytes: Uint8Array; status: string }>>()   // one fetch per band per isolate
   isolateL1s.push(l1); setGeoidSource(fromAnyL1)
-  const load = (lat: number) => Effect.tryPromise({
+  const load = (lat: number) => Effect.flatMap(currentTraceparent, tp => Effect.tryPromise({
     try: async () => {
       const want = geoidBandsFor(lat), stats: GeoidStats = { "geoid.bands": want.length, "geoid.l1": 0, "geoid.fetchedBytes": 0 }
       await Promise.all(want.map(async b => {
         if (l1.has(b)) { stats["geoid.l1"]!++; return }
         const pending = inflight.get(b)
         if (pending) { await pending; stats["geoid.l1"]!++; return }
-        const p = fetchBand(b).then(async r => ({ bytes: await verifyBand(b, r.buf), status: r.status }))
+        const p = fetchBand(b, tp).then(async r => ({ bytes: await verifyBand(b, r.buf), status: r.status }))
         inflight.set(b, p)
         try {
           const { bytes, status } = await p
@@ -73,7 +74,7 @@ export const makeGeoid = (fetchBand: GeoidFetch) => {
       return stats
     },
     catch: e => new GeoidUnavailable({ message: `EGM96 geoid unavailable: ${e instanceof Error ? e.message : String(e)}` }),
-  })
+  }))
   return Layer.succeed(Geoid, { load })
 }
 
@@ -81,8 +82,8 @@ export const makeGeoid = (fetchBand: GeoidFetch) => {
 export const GeoidInstalled = Layer.succeed(Geoid, { load: lat => Effect.succeed({ "geoid.bands": geoidBandsFor(lat).length, "geoid.l1": geoidBandsFor(lat).length }) })
 
 /** Bands through the BlockStore loopback (src/loopback.ts geoid). */
-export const loopbackGeoid = (fetchBand: (b: number) => Promise<Response>): GeoidFetch => async b => {
-  const r = await fetchBand(b)
+export const loopbackGeoid = (fetchBand: (b: number, traceparent?: string) => Promise<Response>): GeoidFetch => async (b, tp) => {
+  const r = await fetchBand(b, tp)
   if (r.status !== 200) throw new Error(`BlockStore ${r.status} for geoid band ${b}: ${(await r.text()).slice(0, 200)}`)
   return { buf: await r.arrayBuffer(), status: r.headers.get("cf-cache-status") ?? "NONE" }
 }

@@ -12,18 +12,20 @@
 import { WorkerEntrypoint, tracing } from "cloudflare:workers"
 import { makeHandler } from "./app.ts"
 import { loopbackBlocks, makeBlocks } from "./blocks.ts"
-import { setTracing } from "./trace.ts"
+import { recordLoopbackTrace, setTracing } from "./trace.ts"
 import { loopbackGeoid, makeGeoid } from "./geoid.ts"
 import { makeLoopback, resolveBindings, type Bindings } from "./loopback.ts"
 import { makeFeed, serveFeed } from "./metar-feed.ts"
 import { weatherLive } from "./weather.ts"
-import { pipelineSink, type PipelineLike, type RequestRow } from "./requestlog.ts"
+import { pipelineSink, type PipelineLike, type RequestRow, type RequestRowV2 } from "./requestlog.ts"
+import { rumPipelineSink, type RumRow } from "./rum.ts"
 export { Admin } from "./admin.ts"
 export { Api, BlockStore } from "./compute.ts"   // cache ON (cloudflare.config.ts); called over ctx.exports
 
 // LOGS: Basin stream ephem_requests (one row per request, src/requestlog.ts); VERSION: this Worker version's id for the row;
 // REQUEST_LOGS: "off" disables rows (the logging-overhead A/B).
-interface Env { readonly LOGS?: PipelineLike<RequestRow>; readonly VERSION?: { readonly id: string }; readonly REQUEST_LOGS?: string }
+// LOGS_V2: ephem_requests_v2 (v1 + trace ids; dual-written until readers move); RUM: ephem_rum (POST /rum, src/rum.ts).
+interface Env { readonly LOGS?: PipelineLike<RequestRow>; readonly LOGS_V2?: PipelineLike<RequestRowV2>; readonly RUM?: PipelineLike<RumRow>; readonly VERSION?: { readonly id: string }; readonly REQUEST_LOGS?: string }
 interface Ctx { waitUntil(p: Promise<unknown>): void; readonly exports: Bindings }
 
 setTracing(tracing)
@@ -34,7 +36,7 @@ const lb = makeLoopback(() => resolveBindings(loop))   // every loopback fetch g
 // One Blocks L1 and one parsed METAR table per isolate.
 const blocks = makeBlocks(loopbackBlocks(lb.block))
 const geoid = makeGeoid(loopbackGeoid(lb.geoid))
-const weather = weatherLive(makeFeed({ fetch: () => lb.feed() }))
+const weather = weatherLive(makeFeed({ fetch: (_req, tp) => lb.feed(tp) }))
 let front: ReturnType<typeof makeHandler> | undefined
 
 // x-ephem-version: the front door's Worker version id on every response, so scripts/smoke.sh can prove a version-pinned
@@ -63,12 +65,13 @@ export default {
   async fetch(request: Request, env: Env, ctx: Ctx): Promise<Response> {
     loop = ctx.exports
     front ??= makeHandler(blocks, { role: "front", api: lb.api }, weather, geoid)
-    return withErrors(withVersion(await front(request, logs(env, p => ctx.waitUntil(p), "front")), env.VERSION?.id), request)
+    const wu = (p: Promise<unknown>) => ctx.waitUntil(p)
+    return withErrors(withVersion(await front(request, logs(env, wu, "front"), env.RUM && env.REQUEST_LOGS !== "off" ? rumPipelineSink(env.RUM, wu, env.VERSION?.id) : undefined), env.VERSION?.id), request)
   },
 }
 const logs = (env: Env, waitUntil: (p: Promise<unknown>) => void, role: string) =>
-  env.LOGS && env.REQUEST_LOGS !== "off" ? pipelineSink(env.LOGS, waitUntil, env.VERSION?.id, role) : undefined
+  env.LOGS && env.REQUEST_LOGS !== "off" ? pipelineSink(env.LOGS, waitUntil, env.VERSION?.id, role, env.LOGS_V2) : undefined
 
 export class MetarFeed extends WorkerEntrypoint<Env> {
-  async fetch(request: Request): Promise<Response> { return serveFeed(request, { fetch: (u, i) => fetch(u, i) }) }
+  async fetch(request: Request): Promise<Response> { recordLoopbackTrace(request); return serveFeed(request, { fetch: (u, i) => fetch(u, i) }) }
 }

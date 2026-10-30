@@ -22,6 +22,7 @@ import { visitor, type Visitor } from "./home.ts"
 import { ASSETS, TOKENS_CSS } from "./instrument-ds.ts"
 import { ENGINE_JS } from "./instrument-engine.ts"
 import { declinationAt } from "./weather.ts"
+import { RUM_JS } from "./rum.ts"
 import { CLIENT_TRACE_JS, documentTrace, documentTraceHeaders, traceparentMeta, type DocumentTrace } from "./clienttrace.ts"
 
 /** The immutable URL of a vendored file (fonts, OFL licences). */
@@ -349,8 +350,10 @@ function up(el) {
   if (mi) mi.classList.remove("down");
 }
 function press(id, touch) {
+  var t0 = performance.now();
   click();
   E.press(id); render();
+  if (window.__rum) __rum.interaction("key", t0, performance.now(), String(id).replace(/[^A-Za-z0-9_.:-]/g, "_").slice(0, 16));   // soft key → stack drawn
   var v = E.view();
   if (touch) haptic(v.err ? [12, 60, 12] : 8);
 }
@@ -437,7 +440,7 @@ function position() {
       E.seed([N(RPNEngine.wrap360(sky.SUN.AZ), "°", "AZ T"), N(RPNEngine.wrap360(sky.SUN.AZ - sky.MAGDEC), "°", "AZ M"), N(sky.SUN.ALT, "°", "ALT"), RPNEngine.str(sky.MOON.PHASE)]);
     }
     render();
-    if (S.dataAt == null) { S.dataAt = performance.now(); if (performance.mark) performance.mark("ephem:data"); }
+    if (S.dataAt == null) { S.dataAt = performance.now(); if (performance.mark) performance.mark("ephem:data"); __rum.mark("data-ready"); }
   });
 }
 var dayFor = null;
@@ -512,6 +515,6 @@ ${fonts.map(f => `<link rel="preload" href="${assetUrl(f)}" as="font" type="font
 <script>${ENGINE_JS}</script>
 <script>${VIEW_JS}</script>
 <script>const LOC = ${json({ lat: v.lat, lon: v.lon, tz: v.tz, place: v.place, magdec })};</script>
-<script>${CLIENT_TRACE_JS}${GLUE_JS}</script>
+<script>${CLIENT_TRACE_JS}${RUM_JS}${GLUE_JS}</script>
 </body></html>`
 }

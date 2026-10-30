@@ -14,7 +14,10 @@ import * as Tracer from "effect/Tracer"
 import * as HttpRouter from "effect/http/HttpRouter"
 import * as HttpServerError from "effect/http/HttpServerError"
 import * as HttpServerRequest from "effect/http/HttpServerRequest"
+import * as HttpServerResponse from "effect/http/HttpServerResponse"
 import { ROUTES } from "./routes.ts"
+import { serverTimingEntries } from "./servertiming.ts"
+import type { EphemRequestsV2Record } from "./basin.generated.ts"
 
 declare const __EPHEM_BUILD__: string
 const BUILD = typeof __EPHEM_BUILD__ === "string" ? __EPHEM_BUILD__ : "dev"
@@ -31,7 +34,27 @@ export interface RequestRow {
 /** Where a row goes. Provided per request (makeHandler's second argument); absent → nothing is logged. `role` is which entrypoint
  *  logged it: "front" (the uncached front door: one row for every request) or "api" (the cached Api entrypoint: one row per
  *  execution, i.e. per cache miss or revalidation, carrying the work counts). */
-export interface RequestLogSink { readonly version?: string | undefined; readonly role?: string | undefined; readonly emit: (row: RequestRow) => void }
+export interface RequestLogSink { readonly version?: string | undefined; readonly role?: string | undefined; readonly emit: (row: RequestRow, v2: RequestRowV2) => void }
+
+/** One `ephem_requests_v2` row (ops/basin/requests_v2.schema.json): the v1 row plus the trace ids, so `ephem.rum` joins it by
+ *  trace_id. Dual-written with ephem_requests until readers have moved (stream schemas are immutable). */
+export interface RequestRowV2 extends RequestRow {
+  schema: 2; synthetic: boolean; trace_id?: string; span_id?: string; client_span_id?: string; client_parent_id?: string; trace_origin?: string
+}
+const _assignable: (r: RequestRowV2) => EphemRequestsV2Record = r => r   // the row type matches the live stream
+void _assignable
+const HEX = (n: number) => new RegExp(`^[0-9a-f]{${n}}$`)
+const H32 = HEX(32), H16 = HEX(16)
+/** Pure: the v2 row = v1 + trace ids (only validated hex) + the synthetic flag (ephem-load, smoke, journey harness). */
+export const buildRowV2 = (row: RequestRow, i: { headers: RowInput["headers"]; spans: ReadonlyArray<Attrs>; spanId?: string | undefined }): RequestRowV2 => {
+  const hex = (k: string, re: RegExp) => { const v = firstStr(i.spans, k); return v && re.test(v) ? v : undefined }
+  const out: Record<string, unknown> = { ...row, schema: 2, synthetic: !!(i.headers["x-ephem-load"] || i.headers["x-ephem-smoke"]),
+    trace_id: hex("client.trace_id", H32), span_id: i.spanId && H16.test(i.spanId) ? i.spanId : undefined,
+    client_span_id: hex("client.span_id", H16), client_parent_id: hex("client.parent_id", H16),
+    trace_origin: (v => v === "adopted" || v === "minted" ? v : undefined)(firstStr(i.spans, "client.trace_origin")) }
+  for (const k of Object.keys(out)) if (out[k] === undefined) delete out[k]
+  return out as unknown as RequestRowV2
+}
 export class RequestLog extends Context.Service<RequestLog, RequestLogSink>()("@ephem/worker/RequestLog") {}
 
 /** Span attributes → columns. The cache statuses are set by the cache layer (cf-cache-status of the internal fetch). */
@@ -139,7 +162,6 @@ export const RequestLogging = HttpRouter.middleware(http => Effect.gen(function*
   const active = yield* ActiveLog
   if (active) { active.inner.push(new URL(req.originalUrl, "http://localhost")); return yield* http }   // MCP's in-process /v1 call
   const sink = yield* Effect.serviceOption(RequestLog)
-  if (Option.isNone(sink)) return yield* http
   const base = yield* Effect.tracer
   const spans: Array<Tracer.Span> = []
   const recording = Tracer.make({ span(o) { const sp = base.span(o); spans.push(sp); return sp }, ...(base.context ? { context: base.context } : {}) })
@@ -149,26 +171,35 @@ export const RequestLogging = HttpRouter.middleware(http => Effect.gen(function*
   const wallMs = performance.now() - t0
   const status = Exit.isSuccess(exit) ? exit.value.status : (yield* HttpServerError.causeResponse(exit.cause))[0].status
   const reqSpan = yield* Effect.option(Effect.currentSpan)
-  yield* Effect.sync(() => {
+  const attrs = [...(Option.isSome(reqSpan) ? [reqSpan.value.attributes] : []), ...spans.map(sp => sp.attributes)]
+  if (Option.isSome(sink)) yield* Effect.sync(() => {
     try {
       const source = req.source as { cf?: RowInput["cf"] } | undefined
-      sink.value.emit(buildRow({
-        now: Date.now(), method: req.method, url: new URL(req.originalUrl, "http://localhost"), headers: req.headers as Readonly<Record<string, string | undefined>>,
-        cf: source?.cf, status, wallMs, version: sink.value.version, role: sink.value.role,
-        spans: [...(Option.isSome(reqSpan) ? [reqSpan.value.attributes] : []), ...spans.map(sp => sp.attributes)],
+      const headers = req.headers as Readonly<Record<string, string | undefined>>
+      const row = buildRow({
+        now: Date.now(), method: req.method, url: new URL(req.originalUrl, "http://localhost"), headers,
+        cf: source?.cf, status, wallMs, version: sink.value.version, role: sink.value.role, spans: attrs,
         errorTag: Exit.isFailure(exit) ? causeTag(exit.cause) ?? failedTag(spans) : failedTag(spans), inner: mine.inner,
-      }))
+      })
+      sink.value.emit(row, buildRowV2(row, { headers, spans: attrs, spanId: Option.isSome(reqSpan) ? reqSpan.value.spanId : undefined }))
     } catch (e) { console.error(JSON.stringify({ request_log_failed: String(e) })) }
   })
-  return yield* exit
+  if (Exit.isFailure(exit)) return yield* exit
+  // Server-Timing from the same spans (src/servertiming.ts). A document's own `trace;desc` (src/clienttrace.ts) comes first.
+  const res = exit.value, prev = res.headers["server-timing"]
+  const ct = attrs.map(a => a.get("client.trace_id")).find(v => typeof v === "string") as string | undefined
+  const trace = ct && Option.isSome(reqSpan) && !prev?.includes("trace;") ? `00-${ct}-${reqSpan.value.spanId}-01` : undefined
+  const fresh = attrs.map(a => a.get("ephem.api_server_timing")).find(v => typeof v === "string") as string | undefined
+  const st = [...(prev ? [prev] : []), ...serverTimingEntries(spans, trace, fresh)]
+  return st.length ? HttpServerResponse.setHeader(res, "server-timing", st.join(", ")) : res
 }), { global: true })
 
 /** Minimal shape of a Pipelines binding (`env.LOGS`); typed by our row rather than the generic PipelineRecord. */
 export interface PipelineLike<T> { send(records: ReadonlyArray<T>): Promise<void> }
 
 /** The prod sink: send from waitUntil, never awaited by the response; a failed send is one countable error line. */
-export const pipelineSink = (logs: PipelineLike<RequestRow>, waitUntil: (p: Promise<unknown>) => void, version?: string, role = "front"): RequestLogSink => ({
-  version, role,
-  emit: row => waitUntil(logs.send([row]).catch((e: unknown) =>
-    console.error(JSON.stringify({ basin_send_failed: { stream: "ephem_requests", role, route: row.route ?? null, status: row.status, ray: row.ray ?? null, error: e instanceof Error ? `${e.name}: ${e.message}` : String(e) } })))),
-})
+export const pipelineSink = (logs: PipelineLike<RequestRow>, waitUntil: (p: Promise<unknown>) => void, version?: string, role = "front", logsV2?: PipelineLike<RequestRowV2>): RequestLogSink => {
+  const send = <T extends RequestRow>(p: PipelineLike<T>, stream: string, row: T) => waitUntil(p.send([row]).catch((e: unknown) =>
+    console.error(JSON.stringify({ basin_send_failed: { stream, role, route: row.route ?? null, status: row.status, ray: row.ray ?? null, error: e instanceof Error ? `${e.name}: ${e.message}` : String(e) } }))))
+  return { version, role, emit: (row, v2) => { send(logs, "ephem_requests", row); if (logsV2) send(logsV2, "ephem_requests_v2", v2) } }
+}

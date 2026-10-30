@@ -10,6 +10,7 @@ import { CLIENT_TRACE_JS, parseTraceparent, traceparentMeta } from "../src/clien
 import { forwardHeaders, forwards } from "../src/responses.ts"
 import { page as homePage } from "../src/home.ts"
 import { instrumentPage } from "../src/instrument.ts"
+import { RUM_JS } from "../src/rum.ts"
 
 const FIX = resolve(__dirname, "../../core/test/fixtures/blocks")
 const origin = direct(async (first: number, count: number) => {
@@ -124,7 +125,8 @@ describe("traceparent", () => {
   it("both pages send it on every API fetch (no bare fetch) and expose window.__ephemTrace", () => {
     for (const html of [homePage(V), instrumentPage(V)]) {
       expect(html).toContain(CLIENT_TRACE_JS)
-      expect(html.match(/\bfetch\(/g)?.length).toBe(1)   // the one inside __tfetch
+      expect(html.replace(RUM_JS, "").match(/\bfetch\(/g)?.length).toBe(1)   // the one inside __tfetch (RUM_JS posts to /rum)
+      expect(html).toContain(RUM_JS)
       expect(html).toContain('performance.mark("ephem:data")')
     }
   })

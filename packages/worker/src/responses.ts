@@ -99,6 +99,11 @@ export const Gateway = HttpRouter.middleware(Effect.gen(function* () {
         const r = forwarded.value, status = r.headers.get("cf-cache-status") ?? "NONE"
         yield* Effect.annotateCurrentSpan({ "ephem.api_cache": status })
         const h = new Headers(r.headers); h.delete("cf-cache-status"); h.set("x-ephem-cache", status)
+        // The Api's own Server-Timing is stored with a cached answer: true only for a fresh run (MISS); a HIT would replay
+        // another request's numbers. A fresh run's blocks/geoid entries go on as api-<name> (src/servertiming.ts), the rest is dropped.
+        const apiSt = h.get("server-timing"); h.delete("server-timing")
+        const fresh = apiSt && status === "MISS" ? apiSt.split(/,\s*/).filter(e => /^(blocks|geoid)\b/.test(e)).map(e => "api-" + e).join(", ") : ""
+        if (fresh) yield* Effect.annotateCurrentSpan({ "ephem.api_server_timing": fresh })
         const cc = outwardCacheControl(r.status, url); if (cc) h.set("cache-control", cc)
         return HttpServerResponse.fromWeb(new Response(r.body, { status: r.status, statusText: r.statusText, headers: h }))
       }

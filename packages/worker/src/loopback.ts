@@ -15,9 +15,10 @@ export interface Binding { fetch(req: Request, init?: { cf?: { cacheKey: string 
 export interface Loopback {
   /** pathAndQuery: path + sorted query (responses.ts canonical) */
   readonly api: (pathAndQuery: string, init: { method: string; headers: Record<string, string> }) => Promise<Response>
-  readonly block: (i: number) => Promise<Response>
-  readonly geoid: (band: number) => Promise<Response>
-  readonly feed: () => Promise<Response>
+  /** traceparent: the calling span's (src/trace.ts currentTraceparent); not in any cache key (the key is the URL). */
+  readonly block: (i: number, traceparent?: string) => Promise<Response>
+  readonly geoid: (band: number, traceparent?: string) => Promise<Response>
+  readonly feed: (traceparent?: string) => Promise<Response>
 }
 
 /** Api's key in the cache: the tag, then path and sorted query. */
@@ -30,13 +31,15 @@ export type Resolved = { readonly [K in Name]?: Binding | undefined }
 export const resolveBindings = (exports: Bindings | undefined): Resolved =>
   ({ Api: exports?.Api, BlockStore: exports?.BlockStore, MetarFeed: exports?.MetarFeed })
 
+const tpInit = (tp: string | undefined): RequestInit => (tp ? { headers: { traceparent: tp } } : {})
+
 export const makeLoopback = (bindings: () => Resolved | undefined): Loopback => {
   const get = (name: Name) => { const b = bindings()?.[name]; if (!b) throw new Error(`loopback ${name} unavailable`); return b }
   return {
     // cf goes in fetch's second argument, as documented for ctx.exports (a Request copy may drop `cf`).
     api: (pq, init) => get("Api").fetch(new Request(`https://api.internal${pq}`, init), { cf: { cacheKey: apiCacheKey(pq) } }),
-    block: i => get("BlockStore").fetch(new Request(`https://blocks.internal${blockPath(i)}`)),
-    geoid: b => get("BlockStore").fetch(new Request(`https://blocks.internal${geoidPath(b)}`)),
-    feed: () => get("MetarFeed").fetch(new Request(`https://feed.internal${FEED_PATH}`)),
+    block: (i, tp) => get("BlockStore").fetch(new Request(`https://blocks.internal${blockPath(i)}`, tpInit(tp))),
+    geoid: (b, tp) => get("BlockStore").fetch(new Request(`https://blocks.internal${geoidPath(b)}`, tpInit(tp))),
+    feed: tp => get("MetarFeed").fetch(new Request(`https://feed.internal${FEED_PATH}`, tpInit(tp))),
   }
 }

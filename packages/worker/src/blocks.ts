@@ -5,6 +5,7 @@
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import { currentTraceparent } from "./trace.ts"
 import { DE440, type BlockSource } from "@ephem/core"
 import { CACHE_TAG } from "./cache-version.ts"
 
@@ -43,7 +44,7 @@ export const blocksCache = (s: CacheStats): string => {
 /** Origin: read `count` consecutive blocks starting at `first`, as one byte range. */
 export type RangeOrigin = (first: number, count: number) => Promise<ArrayBuffer>
 /** One block, and the cache status of the fetch that produced it (Workers Caching's cf-cache-status, or ORIGIN). */
-export type BlockFetch = (i: number) => Promise<{ readonly buf: ArrayBuffer; readonly status: string }>
+export type BlockFetch = (i: number, traceparent?: string) => Promise<{ readonly buf: ArrayBuffer; readonly status: string }>
 
 class Lru<K, V> {
   private readonly m = new Map<K, V>()
@@ -68,7 +69,7 @@ export const makeBlocks = (fetchBlock: BlockFetch, l1Capacity = 512 /* 4.2 MB */
   const l1 = new Lru<number, ArrayBuffer>(l1Capacity)
   const inflight = new Map<number, Promise<{ buf: ArrayBuffer; status: string }>>()   // one fetch per block per isolate
 
-  const load = (wanted: ReadonlyArray<number>) => Effect.tryPromise({
+  const load = (wanted: ReadonlyArray<number>) => Effect.flatMap(currentTraceparent, tp => Effect.tryPromise({
     try: async () => {
       const stats: CacheStats = { l1: 0, fetchedBytes: 0 }
       const got = new Map<number, ArrayBuffer>()
@@ -80,7 +81,7 @@ export const makeBlocks = (fetchBlock: BlockFetch, l1Capacity = 512 /* 4.2 MB */
       await Promise.all(ids.filter(i => !got.has(i)).map(async i => {
         const pending = inflight.get(i)
         if (pending) { got.set(i, (await pending).buf); stats.l1!++; return }
-        const p = fetchBlock(i).then(r => ({ buf: verifyBlock(i, r.buf), status: r.status }))
+        const p = fetchBlock(i, tp).then(r => ({ buf: verifyBlock(i, r.buf), status: r.status }))
         inflight.set(i, p)
         try {
           const { buf, status } = await p
@@ -93,13 +94,13 @@ export const makeBlocks = (fetchBlock: BlockFetch, l1Capacity = 512 /* 4.2 MB */
       return { src, stats }
     },
     catch: e => new BlockLoadError(wanted[0] ?? -1, e),
-  })
+  }))
   return Layer.succeed(Blocks, { load })
 }
 
 /** Blocks through the BlockStore loopback (src/loopback.ts block): Workers Caching answers or runs BlockStore. */
-export const loopbackBlocks = (fetchBlock: (i: number) => Promise<Response>): BlockFetch => async i => {
-  const r = await fetchBlock(i)
+export const loopbackBlocks = (fetchBlock: (i: number, traceparent?: string) => Promise<Response>): BlockFetch => async (i, tp) => {
+  const r = await fetchBlock(i, tp)
   if (r.status !== 200) throw new Error(`BlockStore ${r.status} for block ${i}: ${(await r.text()).slice(0, 200)}`)
   return { buf: await r.arrayBuffer(), status: r.headers.get("cf-cache-status") ?? "NONE" }
 }

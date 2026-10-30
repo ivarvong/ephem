@@ -3,6 +3,7 @@
 // Workers can only nest a span under the one active at creation (enterSpan callbacks), which does not fit fibers; so each Effect
 // span becomes a startSpan child of the request span, carrying effect.span_id / effect.parent_id / effect.parent to rebuild the tree.
 // Timers do not advance during pure compute in Workers, so compute spans read 0 ms: their attributes carry deterministic work counts.
+import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
@@ -50,3 +51,17 @@ export const WorkersTracer = Tracer.make({
   },
 })
 export const TracerLive = Layer.succeed(Tracer.Tracer, WorkersTracer)
+
+/** W3C traceparent of the current Effect span (its trace id is the client's when the request carried a valid traceparent:
+ *  HttpMiddleware.tracer parents the root span on it), for loopback fetches (BlockStore, MetarFeed). undefined if none. */
+export const currentTraceparent = Effect.map(Effect.option(Effect.currentSpan), sp =>
+  sp._tag === "Some" && /^[0-9a-f]{32}$/.test(sp.value.traceId) && /^[0-9a-f]{16}$/.test(sp.value.spanId) && !/^0+$/.test(sp.value.traceId)
+    ? `00-${sp.value.traceId}-${sp.value.spanId}-01` : undefined)
+
+/** A loopback entrypoint (BlockStore, MetarFeed) has no Effect router: record the caller's trace context on a tiny span of
+ *  its own (`loopback.trace`: client.trace_id, client.span_id) so its invocation joins the trace by id, not only by ray. */
+export const recordLoopbackTrace = (req: Request) => {
+  const m = /^00-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}$/.exec(req.headers.get("traceparent") ?? "")
+  if (!m || !tracing || /^0+$/.test(m[1]!) || /^0+$/.test(m[2]!)) return
+  safe(() => { const w = tracing!.startSpan("loopback.trace"); w.setAttribute("client.trace_id", m[1]!); w.setAttribute("client.span_id", m[2]!); w.end() })
+}

@@ -17,6 +17,7 @@ import { Mcp } from "./mcp.ts"
 import { SCALAR_HTML, docsHtml, llmsTxt } from "./docs.ts"
 import { RequestLogging } from "./requestlog.ts"
 import { ClientTrace } from "./clienttrace.ts"
+import { Rum } from "./rum.ts"
 import { Cors, provideApp, toHandler } from "./router.ts"
 
 /** /docs (plain HTML), /llms.txt and /docs/interactive (Scalar from jsDelivr, ~0 bundle cost): src/docs.ts. */
@@ -35,6 +36,7 @@ export const makeApp = (blocks: Layer.Layer<Blocks>, edge: Role = { role: "local
     HttpApiBuilder.layer(EphemApi, { openapiPath: "/openapi.json" }),
     Home,
     Instrument,
+    Rum,   // POST /rum: browser RUM batches → Basin ephem_rum (src/rum.ts)
     Docs,
     RequestLogging,   // first global middleware = outermost: it sees every request, including those Gateway forwards
     Cors,

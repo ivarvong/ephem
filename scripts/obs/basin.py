@@ -27,7 +27,15 @@ TOKEN_FILE = os.path.expanduser("~/.config/ephem/r2-admin-token")
 STREAMS = {
     "ephem_requests": ("d43e9589a2784812afda39033b6792eb", "requests", "ephem_requests_sink", "ephem_requests_pipeline", "requests.schema.json"),
     "ephem_invocations": ("2d45db937f214e5cae5c19ba4c099779", "invocations", "ephem_invocations_sink", "ephem_invocations_pipeline", "invocations.schema.json"),
+    # 2026-10-30, unified client+server tracing: requests + trace ids (dual-written with ephem_requests until migrated), and
+    # browser RUM spans (POST /rum). Ids are read from ops/basin/created-<stream>.json once `create-streams` has run.
+    "ephem_requests_v2": (None, "requests_v2", "ephem_requests_v2_sink", "ephem_requests_v2_pipeline", "requests_v2.schema.json"),
+    "ephem_rum": (None, "rum", "ephem_rum_sink", "ephem_rum_pipeline", "rum.schema.json"),
 }
+for _n, _v in list(STREAMS.items()):
+    _f = os.path.join(OPS, f"created-{_n.removeprefix('ephem_')}.json")
+    if _v[0] is None and os.path.exists(_f):
+        STREAMS[_n] = (json.load(open(_f))["id"], *_v[1:])
 ROLL_S = 60
 
 T = f"{NAMESPACE}.requests"
@@ -92,13 +100,35 @@ def failures(a) -> None:
             print(f"{svc:11} {needle:20} {n}{'+' if n >= 1000 else ''}  (last {a.minutes:g} min)")
 
 
-def provision(_a) -> None:
+def create_streams(a) -> None:
+    """Create each named stream that has no id yet (Worker binding on, HTTP off, JSON), from its schema file. Schemas are
+    immutable once created: a change means a new stream name. Writes ops/basin/created-<stream>.json."""
+    for stream in a.stream:
+        sid, _t, _s, _p, schema = STREAMS[stream]
+        if sid:
+            print(f"{stream}: exists ({sid})"); continue
+        body = {"name": stream, "format": {"type": "json"}, "http": {"enabled": False, "authentication": False}, "worker_binding": {"enabled": True},
+                "schema": {"fields": json.load(open(os.path.join(OPS, schema)))}}
+        r = cf("pipelines", "streams", "create", "--body", json.dumps(body))
+        if r.returncode:
+            raise SystemExit(f"{stream}: {(r.stderr or r.stdout)[:400]}")
+        out = json.loads(r.stdout); out = out.get("result", out)
+        json.dump(out, open(os.path.join(OPS, f"created-{stream.removeprefix('ephem_')}.json"), "w"), indent=2)
+        print(f"{stream}: created {out['id']}")
+
+
+def provision(a) -> None:
     tok = token()
     if not tok:
         raise SystemExit(f"no token at {TOKEN_FILE}: Ivar creates an R2 Account API token (Admin Read & Write) and puts it there (chmod 600)")
-    r = cf("basin-catalog", "credentials", "create", BUCKET, "--body", "@/dev/stdin", stdin=json.dumps({"token": tok}))
-    print("catalog credential:", "ok" if r.returncode == 0 else (r.stderr or r.stdout).replace(tok, "<redacted>")[:300])
+    if not a.stream:
+        r = cf("basin-catalog", "credentials", "create", BUCKET, "--body", "@/dev/stdin", stdin=json.dumps({"token": tok}))
+        print("catalog credential:", "ok" if r.returncode == 0 else (r.stderr or r.stdout).replace(tok, "<redacted>")[:300])
     for stream, (_sid, table, sink, pipeline, schema) in STREAMS.items():
+        if a.stream and stream not in a.stream:
+            continue
+        if not _sid:
+            raise SystemExit(f"{stream} has no stream yet: run `basin.py create-streams {stream}` first")
         fields = json.load(open(os.path.join(OPS, schema)))
         body = {"name": sink, "type": "basin_catalog", "format": {"type": "parquet", "compression": "zstd"}, "schema": {"fields": fields},
                 "config": {"account_id": ACCOUNT, "bucket": BUCKET, "namespace": NAMESPACE, "table_name": table, "token": tok, "rolling_policy": {"interval_seconds": ROLL_S}}}
@@ -176,7 +206,8 @@ ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDe
 sub = ap.add_subparsers(dest="cmd", required=True)
 sub.add_parser("status").set_defaults(f=status)
 p = sub.add_parser("failures"); p.add_argument("--minutes", type=float, default=60); p.set_defaults(f=failures)
-sub.add_parser("provision").set_defaults(f=provision)
+p_prov = sub.add_parser("provision"); p_prov.add_argument("stream", nargs="*", help="only these streams' sinks + pipelines (default: all, plus the catalog credential)"); p_prov.set_defaults(f=provision)
+p_cs = sub.add_parser("create-streams"); p_cs.add_argument("stream", nargs="+", choices=list(STREAMS)); p_cs.set_defaults(f=create_streams)
 p = sub.add_parser("sql"); p.add_argument("name", nargs="?", choices=sorted(QUERIES), default="by-route"); p.add_argument("--hours", type=float, default=1); p.add_argument("--raw"); p.set_defaults(f=sql)
 p = sub.add_parser("crosscheck"); p.add_argument("--from", dest="frm", required=True); p.add_argument("--to", required=True); p.set_defaults(f=crosscheck)
 sub.add_parser("types").set_defaults(f=types)

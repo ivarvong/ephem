@@ -1,0 +1,192 @@
+{
+  "id": "3f7057f2350a4c7695ac6046305ac339",
+  "name": "ephem_rum",
+  "version": 1,
+  "created_at": "2026-10-30T23:27:40.495Z",
+  "modified_at": "2026-10-30T23:27:40.495Z",
+  "format": {
+    "type": "json"
+  },
+  "schema": {
+    "fields": [
+      {
+        "name": "ts",
+        "type": "timestamp",
+        "required": true
+      },
+      {
+        "name": "schema",
+        "type": "int32",
+        "required": true
+      },
+      {
+        "name": "trace_id",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "span_id",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "parent_id",
+        "type": "string",
+        "required": false
+      },
+      {
+        "name": "kind",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "page",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "target",
+        "type": "string",
+        "required": false
+      },
+      {
+        "name": "start_ms",
+        "type": "float64",
+        "required": true
+      },
+      {
+        "name": "dur_ms",
+        "type": "float64",
+        "required": false
+      },
+      {
+        "name": "value",
+        "type": "float64",
+        "required": false
+      },
+      {
+        "name": "time_origin",
+        "type": "timestamp",
+        "required": false
+      },
+      {
+        "name": "dns_ms",
+        "type": "float64",
+        "required": false
+      },
+      {
+        "name": "connect_ms",
+        "type": "float64",
+        "required": false
+      },
+      {
+        "name": "tls_ms",
+        "type": "float64",
+        "required": false
+      },
+      {
+        "name": "request_ms",
+        "type": "float64",
+        "required": false
+      },
+      {
+        "name": "ttfb_ms",
+        "type": "float64",
+        "required": false
+      },
+      {
+        "name": "download_ms",
+        "type": "float64",
+        "required": false
+      },
+      {
+        "name": "transfer_bytes",
+        "type": "int64",
+        "required": false
+      },
+      {
+        "name": "status",
+        "type": "int32",
+        "required": false
+      },
+      {
+        "name": "protocol",
+        "type": "string",
+        "required": false
+      },
+      {
+        "name": "cache",
+        "type": "string",
+        "required": false
+      },
+      {
+        "name": "server_timing",
+        "type": "string",
+        "required": false
+      },
+      {
+        "name": "ray",
+        "type": "string",
+        "required": false
+      },
+      {
+        "name": "detail",
+        "type": "string",
+        "required": false
+      },
+      {
+        "name": "seq",
+        "type": "int32",
+        "required": true
+      },
+      {
+        "name": "version",
+        "type": "string",
+        "required": false
+      },
+      {
+        "name": "colo",
+        "type": "string",
+        "required": false
+      },
+      {
+        "name": "country",
+        "type": "string",
+        "required": false
+      },
+      {
+        "name": "ua_family",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "vw",
+        "type": "int32",
+        "required": false
+      },
+      {
+        "name": "dpr",
+        "type": "float64",
+        "required": false
+      },
+      {
+        "name": "synthetic",
+        "type": "bool",
+        "required": true
+      }
+    ]
+  },
+  "http": {
+    "enabled": false,
+    "authentication": false,
+    "cors": {}
+  },
+  "worker_binding": {
+    "enabled": true
+  }
+}
