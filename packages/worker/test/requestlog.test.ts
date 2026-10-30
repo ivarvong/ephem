@@ -77,6 +77,11 @@ describe("request rows (pure)", () => {
     expect(bad).not.toHaveProperty("lat_r"); expect(bad.ok).toBe(false)
     expect(round2(-0.004)).toBe(-0); expect(round2(179.996)).toBe(180)
   })
+  it("ephem-load traffic (x-ephem-load) is ua_family synthetic, and the run id is not logged", () => {
+    const row = buildRow({ now: 0, method: "GET", url: new URL("http://x/v1/position?lat=40.7&lon=-74"), headers: { "x-ephem-load": "L20261030T120000Z-ab12", "user-agent": "ephem-load/1 (run L20261030T120000Z-ab12)" }, status: 200, wallMs: 0, spans: [new Map()] })
+    expect(row.ua_family).toBe("synthetic"); expect(JSON.stringify(row)).not.toContain("L20261030T120000Z")
+    matchesSchema(row)
+  })
   it("ua_family is coarse", () => {
     expect(uaFamily("curl/8.7.1", undefined)).toBe("curl"); expect(uaFamily(UA, undefined)).toBe("browser")
     expect(uaFamily("python-requests/2.32", undefined)).toBe("other"); expect(uaFamily(undefined, undefined)).toBe("other")

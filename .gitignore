@@ -22,3 +22,4 @@ reference/geoid/inputs/*.npy
 .env*
 # written by `cf workers check`
 *.cpuprofile
+load-runs/

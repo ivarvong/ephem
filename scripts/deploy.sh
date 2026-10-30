@@ -1,6 +1,6 @@
 #!/bin/bash
-# Deploy ephem (and ephem-tail) from a committed revision only: never from the shared working tree.
-#   scripts/deploy.sh <rev> "<message>" [auto|ephem|tail|all]     (DRY=1 runs the gate in the clean worktree and stops)
+# Deploy ephem (and ephem-tail, ephem-load) from a committed revision only: never from the shared working tree.
+#   scripts/deploy.sh <rev> "<message>" [auto|ephem|tail|load|all]     (DRY=1 runs the gate in the clean worktree and stops)
 # Checks out <rev> into a throwaway git worktree, links node_modules from the main checkout (no npm install), runs the full
 # gate there, then deploys from that worktree:
 #   tail   ephem-tail (packages/tail) first: cf deploy, then (after ephem's smoke has sent it traffic) scripts/obs/tail-check.py
@@ -11,9 +11,14 @@
 #          RETRY_S s); still failing → route 100% back to the recorded previous version, re-smoke it, exit 1, no tag.
 #          A change to non-versioned settings (tailConsumers, observability, logpush in packages/worker/cloudflare.config.ts)
 #          deploys with cf deploy instead (no 0% stage: those settings apply on deployment), with the same live smoke + rollback.
+#   load   ephem-load (packages/load, the remote load generator; guide "Remote load"): cf deploy, wait until /health answers from
+#          the new version, then check it: /health (target, limits), unauthenticated POST /run refused (401), and with the token
+#          (~/.config/ephem-load/token) an over-limit /plan refused (400) and a 10-request run from one region answered by
+#          ephem (scripts/obs/load-remote.ts). Any failure routes ephem-load back to its previous version. Tags deployed-load/<ts>.
+#          It never touches ephem, so it runs (and can fail) before the ephem phase.
 # auto (default) = ephem, plus tail first when packages/tail, the shared route list or the invocations schema changed since
-# the last deployed-tail/ tag, or tailConsumers changed since the last deployed/ tag. Success tags deployed/<ts> (ephem) and
-# deployed-tail/<ts>. (ephem-compute, a separate Worker for Api + BlockStore, and its `compute` target were removed after the
+# the last deployed-tail/ tag, or tailConsumers changed since the last deployed/ tag, plus load when packages/load changed
+# since the last deployed-load/ tag. Success tags deployed/<ts> (ephem), deployed-tail/<ts> and deployed-load/<ts>. (ephem-compute, a separate Worker for Api + BlockStore, and its `compute` target were removed after the
 # 2026-10-30 A/B, DESIGN §12.0; old deployed-compute/ tags are history.) Smoke checks live in the deployed commit's scripts/smoke.sh. Fails closed at every step.
 # Telemetry gate (scripts/obs/canary-gate.py): after the pinned canary smoke and before promotion,
 # the gate reads Workers Observability for exactly the smoke's requests (smoke.sh --run: x-ephem-smoke header; --manifest:
@@ -32,7 +37,7 @@
 #              its own deploy.sh whole (it takes the lock itself).
 if [ "${EPHEM_DEPLOY_INNER:-}" != 1 ]; then
   set -euo pipefail
-  REV=${1:?usage: deploy.sh <rev> "<message>" [auto|ephem|tail|all]}
+  REV=${1:?usage: deploy.sh <rev> "<message>" [auto|ephem|tail|load|all]}
   ROOT=${EPHEM_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}
   SHA=$(git -C "$ROOT" rev-parse --short=12 "$REV")
   LOCK="$(git -C "$ROOT" rev-parse --absolute-git-dir)/ephem-deploy.lock"
@@ -63,8 +68,8 @@ ROOT=${EPHEM_ROOT:?inner deploy.sh needs EPHEM_ROOT (the main checkout; set by t
 LOCK=${EPHEM_DEPLOY_LOCK:?inner deploy.sh needs EPHEM_DEPLOY_LOCK (run scripts/deploy.sh, not the inner copy)}; WT=${EPHEM_DEPLOY_WT:?}
 cleanup() { [ -n "$WT" ] && git -C "$ROOT" worktree remove --force "$WT" >/dev/null 2>&1; rm -rf "$LOCK"; }
 trap cleanup EXIT
-REV=${1:?usage: deploy.sh <rev> "<message>" [auto|ephem|tail|all]}; MSG=${2:?usage: deploy.sh <rev> "<message>"}; TARGET=${3:-auto}
-case "$TARGET" in auto|ephem|tail|all) ;; *) echo "target must be auto|ephem|tail|all" >&2; exit 2 ;; esac
+REV=${1:?usage: deploy.sh <rev> "<message>" [auto|ephem|tail|load|all]}; MSG=${2:?usage: deploy.sh <rev> "<message>"}; TARGET=${3:-auto}
+case "$TARGET" in auto|ephem|tail|load|all) ;; *) echo "target must be auto|ephem|tail|load|all" >&2; exit 2 ;; esac
 B=https://ephem.ivar.workers.dev; RETRY_S=${RETRY_S:-5}
 SHA=$(git -C "$ROOT" rev-parse --short=12 "$REV")
 # One deploy at a time, and never backwards: concurrent agents' deploys raced and an older commit replaced a newer one
@@ -74,18 +79,20 @@ grep -q "^$SHA pid $$ " "$LOCK/owner" 2>/dev/null || { echo "inner deploy.sh: lo
 echo "== inner: deploy logic from $SHA's scripts/deploy.sh"
 LAST=$(git -C "$ROOT" tag --list 'deployed/*' --sort=-refname | head -1)
 LAST_TAIL=$(git -C "$ROOT" tag --list 'deployed-tail/*' --sort=-refname | head -1)
+LAST_LOAD=$(git -C "$ROOT" tag --list 'deployed-load/*' --sort=-refname | head -1)
 older() { [ -n "$1" ] && [ "${ALLOW_OLDER:-}" != 1 ] && ! git -C "$ROOT" merge-base --is-ancestor "$1" "$SHA"; }
 changed() { [ -z "$1" ] || ! git -C "$ROOT" diff --quiet "$1" "$SHA" -- "${@:2}"; }
 tc_changed() { [ -n "$LAST" ] && git -C "$ROOT" diff "$LAST" "$SHA" -- packages/worker/cloudflare.config.ts | grep -qE '^[+-][^+-].*tailConsumers'; }
-DO_TAIL=0; DO_EPHEM=0
+DO_TAIL=0; DO_EPHEM=0; DO_LOAD=0
 case "$TARGET" in
-  ephem) DO_EPHEM=1 ;; tail) DO_TAIL=1 ;; all) DO_TAIL=1; DO_EPHEM=1 ;;
-  auto) DO_EPHEM=1; { changed "$LAST_TAIL" packages/tail packages/worker/src/routes.ts packages/worker/ops/basin/invocations.schema.json || tc_changed; } && DO_TAIL=1 ;;
+  ephem) DO_EPHEM=1 ;; tail) DO_TAIL=1 ;; load) DO_LOAD=1 ;; all) DO_TAIL=1; DO_EPHEM=1; DO_LOAD=1 ;;
+  auto) DO_EPHEM=1; { changed "$LAST_TAIL" packages/tail packages/worker/src/routes.ts packages/worker/ops/basin/invocations.schema.json || tc_changed; } && DO_TAIL=1
+        changed "$LAST_LOAD" packages/load && DO_LOAD=1 ;;
 esac
-for t in $([ $DO_EPHEM = 1 ] && echo "$LAST") $([ $DO_TAIL = 1 ] && echo "$LAST_TAIL"); do
+for t in $([ $DO_EPHEM = 1 ] && echo "$LAST") $([ $DO_TAIL = 1 ] && echo "$LAST_TAIL") $([ $DO_LOAD = 1 ] && echo "$LAST_LOAD"); do
   older "$t" && { echo "$SHA does not contain the last deployed commit ($t = $(git -C "$ROOT" rev-parse --short=12 "$t")): rebase onto main, or ALLOW_OLDER=1 for a rollback" >&2; exit 1; }
 done
-echo "== targets @ $SHA: $([ $DO_TAIL = 1 ] && echo "ephem-tail ")$([ $DO_EPHEM = 1 ] && echo ephem)"
+echo "== targets @ $SHA: $([ $DO_LOAD = 1 ] && echo "ephem-load ")$([ $DO_TAIL = 1 ] && echo "ephem-tail ")$([ $DO_EPHEM = 1 ] && echo ephem)"
 
 # node_modules: link every package from the main checkout EXCEPT the workspace packages (@ephem/*). Those are relative
 # symlinks (../../packages/core), so linking the whole directory resolved @ephem/core and @ephem/api to the shared tree's
@@ -174,6 +181,64 @@ HAS_GATE=0; [ -f "$WT/scripts/obs/canary-gate.py" ] && HAS_GATE=1
 gate_args() { [ $HAS_GATE = 1 ] && printf '%s\n' --run "$1" --manifest "$2"; return 0; }
 O11Y_LIVE_S=${O11Y_LIVE_S:-90}
 
+# --- ephem-load ------------------------------------------------------------------------------------------------------------
+# A new Worker with Durable Objects (exports), deployed whole (cf deploy). Checked from outside; rolled back on any failure.
+if [ $DO_LOAD = 1 ]; then
+  LB=https://ephem-load.ivar.workers.dev; LOAD_PREV=""
+  exists ephem-load && { LOAD_PREV=$(active ephem-load); [ -n "$LOAD_PREV" ] || { echo "ephem-load has a split deployment; resolve it first" >&2; exit 1; }; }
+  echo "== deploy ephem-load @ $SHA (previous ${LOAD_PREV:-none: first deploy})"
+  cd "$WT/packages/load"
+  out=$(cf deploy --message "$MSG [git $SHA]" 2>&1) || { echo "$out" | tail -20 >&2; echo "ephem-load deploy failed" >&2; exit 1; }
+  LOAD_NEW=$(echo "$out" | sed -n 's/.*Current Version ID: *\([0-9a-f-]*\).*/\1/p' | head -1)
+  [ -n "$LOAD_NEW" ] || { echo "$out" | tail -20 >&2; echo "ephem-load deploy: no version id in the output" >&2; exit 1; }
+  echo "ephem-load $LOAD_NEW"
+  load_check() {
+    local t0 v ok=0 h c LT="${EPHEM_LOAD_TOKEN:-$(cat "$HOME/.config/ephem-load/token" 2>/dev/null)}"
+    t0=$(now)
+    while :; do   # 5 consecutive /health answers from the new version
+      v=$(curl -s --max-time 10 "$LB/health" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version") or "")' 2>/dev/null)
+      if [ "$v" = "$LOAD_NEW" ]; then ok=$((ok + 1)); [ $ok -ge 5 ] && break; else ok=0; fi
+      [ "$(python3 -c "import sys,time; print(int(time.time()-float(sys.argv[1]) > 60))" "$t0")" = 1 ] && { echo "FAIL ephem-load: /health never answered from $LOAD_NEW"; return 1; }
+      sleep 0.5
+    done
+    echo "ok   load-health $LOAD_NEW serving after $(since "$t0")s"
+    if [ -n "$LT" ] && [ "$(curl -s --max-time 10 "$LB/health" | python3 -c 'import json,sys; print(json.load(sys.stdin)["configured"])')" != True ]; then
+      # first deploy: the secret can only be set on an existing Worker. load-token.sh stores it (a new version); wait for that one.
+      echo "== ephem-load has no LOAD_TOKEN: setting it from ~/.config/ephem-load/token (scripts/obs/load-token.sh)"
+      bash "$WT/scripts/obs/load-token.sh" || { echo "FAIL load-secret: could not set LOAD_TOKEN"; return 1; }
+      LOAD_NEW=$(active ephem-load); [ -n "$LOAD_NEW" ] || { echo "FAIL load-secret: split deployment after the secret"; return 1; }
+      t0=$(now); ok=0
+      while [ $ok -lt 5 ]; do
+        v=$(curl -s --max-time 10 "$LB/health" | python3 -c 'import json,sys; j=json.load(sys.stdin); print((j.get("version") or "") + ("+" if j.get("configured") else ""))' 2>/dev/null)
+        if [ "$v" = "$LOAD_NEW+" ]; then ok=$((ok + 1)); else ok=0; fi
+        [ "$(python3 -c "import sys,time; print(int(time.time()-float(sys.argv[1]) > 60))" "$t0")" = 1 ] && { echo "FAIL load-secret: $LOAD_NEW never answered configured"; return 1; }
+        sleep 0.5
+      done
+      echo "ok   load-secret LOAD_TOKEN set; $LOAD_NEW serving"
+    fi
+    h=$(curl -s --max-time 10 "$LB/health")
+    echo "$h" | python3 -c 'import json,sys; j=json.load(sys.stdin); assert j["service"]=="ephem-load" and j["target"]=="https://ephem.ivar.workers.dev" and j["limits"]["maxRate"]<=300 and j["limits"]["maxDurationS"]<=600, j' \
+      && echo "ok   load-health-body target + limits" || { echo "FAIL load-health-body: $h"; return 1; }
+    c=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 -X POST -H 'content-type: application/json' -d '{"mode":"position","rate":1,"duration":1,"regions":["enam"]}' "$LB/run")
+    [ "$c" = 401 ] || [ "$c" = 503 ] && echo "ok   load-noauth POST /run without the token -> $c" || { echo "FAIL load-noauth: POST /run without the token -> $c"; return 1; }
+    if [ -z "$LT" ]; then echo "!! no ~/.config/ephem-load/token: skipped the authorized checks (load-limits, load-run)" >&2; return 0; fi
+    [ "$(echo "$h" | python3 -c 'import json,sys; print(json.load(sys.stdin)["configured"])')" = True ] || { echo "FAIL load-secret: LOAD_TOKEN is not set on ephem-load"; return 1; }
+    c=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 -X POST -H "authorization: Bearer $LT" -H 'content-type: application/json' -d '{"mode":"position","rate":10000,"duration":1,"regions":["enam"]}' "$LB/plan")
+    [ "$c" = 400 ] && echo "ok   load-limits over-limit /plan -> 400" || { echo "FAIL load-limits: over-limit /plan -> $c"; return 1; }
+    local o; o=$(cd "$WT" && EPHEM_LOAD_TOKEN="$LT" LOAD_DIR="$WT/.load-runs" node --experimental-strip-types scripts/obs/load-remote.ts --base "$LB" --mode position --rate 2 --duration 5 --regions enam --run-id "d-$SHA-$(date +%s)" --quiet 2>&1)
+    local rc=$?
+    if [ $rc = 0 ]; then echo "ok   load-run $(echo "$o" | grep '^run .*ok' | head -1)"
+    elif echo "$o" | grep -q 'HTTP 409'; then echo "!! load-run skipped: another run is live ($(echo "$o" | grep -o 'run [^ ]* is live[^(]*'))" >&2
+    else echo "$o" | tail -8; echo "FAIL load-run (exit $rc)"; return 1; fi
+  }
+  if load_check; then
+    git -C "$ROOT" tag -f "deployed-load/$(date -u +%Y%m%dT%H%M%SZ)" "$SHA" >/dev/null; echo "== deployed ephem-load $SHA ($LOAD_NEW)"
+  else
+    if [ -n "$LOAD_PREV" ]; then route ephem-load "rollback: load check failed for $LOAD_NEW [git $SHA]" "$LOAD_PREV:100"; echo "LOAD CHECK FAILED: ephem-load rolled back to $LOAD_PREV" >&2
+    else echo "LOAD CHECK FAILED on the first ephem-load deploy ($LOAD_NEW); nothing to roll back to (it serves no users). Not tagged." >&2; fi
+    exit 1
+  fi
+fi
 # --- ephem-tail ------------------------------------------------------------------------------------------------------------
 TAIL_NEW=""; TAIL_PREV=""
 if [ $DO_TAIL = 1 ]; then

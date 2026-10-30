@@ -116,7 +116,9 @@ export const buildRow = (i: RowInput): RequestRow => {
     block_reads: sum(s, ATTR.blockReads), iterations: sum(s, ATTR.iterations),
     weather_tier: firstStr(s, ATTR.weatherTier), data_age_s: firstNum(s, ATTR.dataAge),
     mcp_method: firstStr(s, ATTR.mcpMethod), mcp_tool: firstStr(s, ATTR.mcpTool),
-    ua_family: uaFamily(i.headers["user-agent"], firstStr(s, ATTR.mcpClient)),
+    // synthetic: ephem-load (packages/load) tags every request with x-ephem-load: <run>; the stream schema is immutable, so the flag
+    // rides in ua_family (a free string) instead of a new column.
+    ua_family: i.headers["x-ephem-load"] ? "synthetic" : uaFamily(i.headers["user-agent"], firstStr(s, ATTR.mcpClient)),
     lat_r: loc?.lat, lon_r: loc?.lon,
   }
   for (const k of Object.keys(row)) if (row[k] === undefined) delete row[k]
