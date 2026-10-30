@@ -27,7 +27,7 @@ export const CONVENTIONS = {
   magnetic: "WMM2025 (NOAA NCEI), degree 12 with secular variation; declination east positive; magnetic bearing = true − declination. Verified against the model's published test values.",
   weather: "Nearest METAR stations by great-circle distance from aviationweather.gov's all-stations feed, cached ≤ 60 s fresh, served up to 10 min stale while it refreshes; feed.tier and feed.ageSeconds say which.",
   crossing: "/v1/crossing: every instant in the window when the chosen limb (default centre) reaches `altitude`, true (default) or apparent (the same refraction model as /v1/position and /v1/day), or meets a horizonProfile; rise = upward.",
-  rates: "altitudeRate, azimuthRate: degrees per minute, symmetric difference over ±10 s.",
+  rates: "altitudeRate, azimuthRate: degrees per minute, analytic (DE440 Chebyshev velocity through light time, aberration and Earth rotation; no finite difference).",
   unknownParameters: "Every endpoint rejects query parameters it does not define with 400 InvalidRequest, listing the allowed ones.",
   track: "/v1/track: the Sun's and Moon's azimuth, true altitude and apparent altitude at every point of a UTC grid (start, end on multiples of stepSeconds since 1970-01-01T00:00Z), columnar; each sample equals /v1/position's values at that instant bit for bit. Bounded: stepSeconds 60–3600, at most 8 days and 1 441 samples.",
   sightline: "/v1/sightline: the sight line's height above sea level against ground distance from an eye to a target (straight chord between WGS-84 ECEF points, so Earth's curvature is included; and the refracted ray with k = 0.13, which runs k·s₁·s₂/(2R) higher), plus each obstacle point's clearance. Terrestrial refraction is modelled as that constant coefficient only.",
@@ -111,7 +111,7 @@ export const BodyPosition = S.Struct({
   azimuth: Degrees,                // from north through east, [0, 360)
   altitude: Degrees,               // true (vacuum)
   apparentAltitude: S.NullOr(Degrees).annotate(d0("Refracted altitude, degrees; null when it would lie below the observer's horizon or the refraction model's floor (conventions.refraction.validFrom). CHANGED 2026-10-29: was always a number, and repeated the true altitude below −1°.")),
-  altitudeRate: S.Finite.annotate(d0("d(altitude)/dt, degrees per minute (true altitude; symmetric difference over ±10 s).")),
+  altitudeRate: S.Finite.annotate(d0("d(altitude)/dt, degrees per minute (true altitude; analytic from the DE440 velocity, no finite difference).")),
   azimuthRate: S.Finite.annotate(d0("d(azimuth)/dt, degrees per minute (symmetric difference over ±10 s).")),
   rightAscension: S.Finite,        // hours, topocentric apparent, of date
   declination: Degrees,            // topocentric apparent, of date

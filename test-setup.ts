@@ -3,3 +3,9 @@
 import { setGeoidSource } from "./packages/core/src/geoid.ts"
 import { bundledGeoidBand } from "./packages/core/src/geoid-bundled.ts"
 setGeoidSource(bundledGeoidBand)
+
+// fast-check: FC_SEED pins the seed (replay a failure; CI=1 pins 42). Otherwise each run draws a fresh seed, and a failing
+// property's error carries `seed` and `path` (fast-check reports both); rerun with FC_SEED=<seed> to reproduce it.
+import fc from "fast-check"
+const fcSeed = process.env.FC_SEED ?? (process.env.CI ? "42" : undefined)
+if (fcSeed !== undefined) fc.configureGlobal({ seed: Number(fcSeed) })

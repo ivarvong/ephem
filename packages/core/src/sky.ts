@@ -4,7 +4,7 @@ import type { BlockSource, BodyName } from "./ephemeris.ts"
 import { type Limb, type HeightRef, type HorizonSpec, type ObserverHeights, P_DEFAULT, REFRACTION_CEIL, REFRACTION_FLOOR, T_DEFAULT,
   K_TERRESTRIAL, horizonOf, observerHeights, refraction } from "./horizon.ts"
 import { GEOID } from "./geoid.ts"
-import { position, RATE_STEP_S } from "./position.ts"
+import { position, RATE_METHOD } from "./position.ts"
 import { type HorizonProfile, DAY_THRESHOLDS, MAX_CROSSING_WINDOW_MS, crossing, day, localMidnight, nextDate, parseProfile } from "./day.ts"
 import { isoMs } from "./time.ts"
 import { track } from "./track.ts"
@@ -20,7 +20,7 @@ const observerOut = (o: SkyObserverInput, h: ObserverHeights) => ({
   lat: o.lat, lon: o.lon, height: h.heightEllipsoid, heightEllipsoid: h.heightEllipsoid, heightMsl: h.heightMsl, geoidUndulation: h.geoidUndulation, heightRef: h.heightRef,
 })
 const geoidOut = { model: GEOID.model, source: GEOID.source, interpolationErrorM: GEOID.interpolationErrorM }
-const RATES = { unit: "deg/min" as const, method: `symmetric difference of the true altitude / azimuth over ±${RATE_STEP_S} s` }
+const RATES = { unit: "deg/min" as const, method: RATE_METHOD }
 /** The one refraction model (every endpoint): stated verbatim in every conventions block. */
 export const REFRACTION_MODEL = "R(a) = 34′·(P/1010)·(283/(273 + T))·cot(a + 7.31/(a + 4.4))/cot(7.31/4.4) for apparent altitude a (degrees) in [−1.6963°, 89.9°], 0 above: Bennett's (1982) shape normalised to the almanac's 34′ at the horizon (10 °C, 1010 hPa). The same function for /v1/position, /v1/day, /v1/crossing and /v1/alignment."
 export const REFRACTION_UNCERTAINTY = "Bennett's shape is fitted to standard-atmosphere tables above 0°; at 0° a US Standard Atmosphere 1976 ray trace (reference/terrain_sunset) gives 33.9′ against this model's 34′. Below 0° it is an extrapolation: at the sea horizon it reads 0.1′ high from 10 m, 1.0′ from 320 m and 2.6′ from 1 000 m against that ray trace. Real refraction near the horizon depends on the temperature profile of the lowest air and varies with the weather by much more than that; treat sub-arcminute differences there as model, not sky."

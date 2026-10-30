@@ -1,6 +1,6 @@
 {
-  "cacheVersion": 6,
-  "recorded": "2026-10-30T12:56:35.154Z",
+  "cacheVersion": 7,
+  "recorded": "2026-10-30T13:13:24.267Z",
   "requests": {
     "day.nyc": "/v1/day?date=2026-10-28&tz=America/New_York&lat=40.7127&lon=-74.0059&height=10",
     "day.tromso": "/v1/day?date=2026-11-15&tz=Europe/Oslo&lat=69.6492&lon=18.9553",
@@ -18,11 +18,11 @@
   "answers": {
     "day.nyc": "2a4ab89f11974eeb7ae52f0fb3c37908",
     "day.tromso": "26c824c2a48b360294ff9f2b58c8907b",
-    "position.nyc": "1deed3c207eae3aa1f1e5b8e460e904e",
-    "position.sydney.refraction": "80427b975b3ff24b3ee9b1686b284c99",
-    "alignment.moon.liberty": "b13cf19e7c60b0778cb8bc1a3e6d8232",
-    "crossing.sun.civil": "700c114a796c6fee11e9f3d4ddeb5196",
-    "crossing.moon.apparent": "f002be8c5ffbd8c4f7751bb3c5d8b1c3",
+    "position.nyc": "b30564b460720956dbe8946870737760",
+    "position.sydney.refraction": "d3a9bc59ab4e4d1b47390fcc4efac877",
+    "alignment.moon.liberty": "7f99618353d6932968a2903ecb888ed8",
+    "crossing.sun.civil": "a78cb83d59a55b4d55010534a0b2bab8",
+    "crossing.moon.apparent": "e131b27483676d68b142ee3668eefab5",
     "track.nyc": "7f9acae6c726ff78ec44b87d189f662d",
     "track.tromso.step": "996e668c5aaebd830a030f3aca6da6b3",
     "sightline.pier6": "f12bfcf96b29962660f09d6f3be080e2",

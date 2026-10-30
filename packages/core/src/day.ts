@@ -1,6 +1,6 @@
 // /v1/day: rise, set, transit, twilight, golden and blue hour for one local calendar day.
 import type { BlockSource, BodyName } from "./ephemeris.ts"
-import { type Epoch, type Geodetic, type Topocentric, angularRadius, apparent, epochAt, frameAt, topocentric } from "./observe.ts"
+import { type Epoch, type Geodetic, type Topocentric, angularRadius, apparent, epochAt, frameAt, topocentric, topocentricRates } from "./observe.ts"
 import { type Limb, P_DEFAULT, REFRACTION_FLOOR, T_DEFAULT, limbSign, refraction } from "./horizon.ts"
 import { instant, isoMs } from "./time.ts"
 import { type Vec3, DEG, wrap360 } from "./linalg.ts"
@@ -180,7 +180,6 @@ export interface CrossingInput {
   readonly aim?: "litCentroid" | undefined
 }
 export const MAX_CROSSING_WINDOW_MS = 31 * 86_400_000
-export const RATE_STEP_MS = 10_000
 export const crossing = (src: BlockSource, input: CrossingInput) => {
   const look = looker(src, input.geo, input.dut1 ?? 0), s = limbSign(input.limb), tg = input.target, body = input.body
   // True altitude and azimuth of the point that crosses: the chosen limb along the vertical, or the lit-area centroid.
@@ -202,7 +201,7 @@ export const crossing = (src: BlockSource, input: CrossingInput) => {
     .filter(c => input.direction === "either" || (input.direction === "rise") === c.rising)
     .map(c => {
       const ms = Math.round(c.ms), l = look(body, ms)
-      const rate = (look(body, ms + RATE_STEP_MS).tp.altitude - look(body, ms - RATE_STEP_MS).tp.altitude) / (2 * RATE_STEP_MS / 60_000)
+      const fr = frameAt(src, instant(ms, input.dut1 ?? 0), input.geo), rate = topocentricRates(src, fr, body, apparent(src, fr, body)).altitudeRate
       const aimOut = input.aim ? (() => { const p = point(c.ms); return { aimOffset: p.offset, aimAngle: p.angle } })() : {}
       return { time: isoMs(c.ms), direction: c.rising ? "rise" as const : "set" as const, azimuth: l.tp.azimuth, altitude: l.tp.altitude, altitudeRate: rate, ...aimOut }
     })

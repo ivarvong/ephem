@@ -1,7 +1,7 @@
 // Observer on the WGS-84 ellipsoid, light-time, aberration, and the topocentric/ecliptic projections.
-import { type BlockSource, type BodyName, AU_KM, C_KM_PER_DAY, bodySsb, earthSsb, nutation } from "./ephemeris.ts"
+import { type BlockSource, type BodyName, AU_KM, C_KM_PER_DAY, bodySsb, earthSsb, moonSsb, nutation, sunSsb } from "./ephemeris.ts"
 import { type EarthOrientation, earthOrientation, eclipticMatrix } from "./frames.ts"
-import { type Vec3, DEG, add, dot, mtxv, mxv, norm, scale, sub, wrap360 } from "./linalg.ts"
+import { type Vec3, ASEC, DEG, TAU, add, cross, dot, mtxv, mxv, norm, scale, sub, wrap360 } from "./linalg.ts"
 import type { Instant } from "./time.ts"
 
 export const WGS84 = { a: 6378.137, f: 1 / 298.257223563 } as const
@@ -101,6 +101,29 @@ export const topocentric = (f: Frame, v: Vec3): Topocentric => {
     azimuth: wrap360(Math.atan2(e, n) / DEG), altitude: Math.asin(u) / DEG,
     rightAscension: wrap360(ra / DEG) / 15, declination: dec / DEG, hourAngle: ha / DEG / 15,
   }
+}
+/** Analytic d(true altitude)/dt and d(azimuth)/dt, degrees per (UTC) minute, of the apparent vector `ap` from `apparent(src, f, body)`.
+ *  d/dt of w = C·a in ITRS: Ċ·a = −Ω × w (Ω = dGAST/dt about the pole; precession/nutation rates ≲ 3e-8 °/min are left out), and
+ *  ȧ = the DE440 Chebyshev velocity of the body at t − lt minus the observer's barycentric velocity, with the light-time rate
+ *  (−V·ṙ/c) and the first-order change of aberration (ṙ·V/c + r·A/c, A = diurnal centripetal acceleration; the annual part,
+ *  ≲ 7e-8 °/min, is left out). Exact up to those terms: no step, no truncation, no cancellation. Measured against a Richardson
+ *  h⁴ difference of the positions: docs/telemetry_and_profiling.md "Rates". */
+export const GAST_RATE = TAU * (1 + 0.00273781191135448) + 4612.156534 / 36525 * ASEC   // rad per UT1 day (ERA + precession in RA)
+export const topocentricRates = (src: BlockSource, f: Frame, body: BodyName, ap: { v: Vec3; lt: number }): { altitudeRate: number; azimuthRate: number } => {
+  const c = C_KM_PER_DAY, v = ap.v, r = norm(v)
+  const Vb = (body === "sun" ? sunSsb : moonSsb)(src, f.t.jdTDB - ap.lt).vel, Vo = f.obsVelSsb
+  const rel = sub(Vb, Vo)
+  const rdot = dot(v, rel) / r                                                     // range rate, km/day
+  const Wg = mtxv(f.eo.C, [0, 0, ANGVEL * 86400])                                 // Earth's rotation vector, ICRS axes, rad/day
+  const A = cross(Wg, cross(Wg, f.obsGcrs))                                       // diurnal centripetal acceleration, km/day²
+  // aberrate gives a = (v + lt·Vo)/(1 + p), p = v̂·Vo/c, with |a| = |v|: differentiate the bracket and keep the 1/(1 + p), or
+  // the transverse rate comes out high by p ≈ 1e-4 of the body's own motion (measured 5e-7 °/min on the Moon).
+  const adot = scale(add(sub(rel, scale(Vb, rdot / c)), add(scale(Vo, rdot / c), scale(A, ap.lt))), 1 / (1 + dot(v, Vo) / (r * c)))   // km/day
+  const w = mxv(f.eo.C, v), wd = sub(mxv(f.eo.C, adot), cross([0, 0, GAST_RATE], w))           // ITRS, km and km/day
+  const { up, north, east } = enuOf(f.geo)
+  const u = dot(w, up), n = dot(w, north), e = dot(w, east), du = dot(wd, up), dn = dot(wd, north), de = dot(wd, east)
+  const h2 = n * n + e * e, k = 1 / DEG / 1440                                    // rad/day → °/min
+  return { altitudeRate: (du * h2 - u * (n * dn + e * de)) / ((h2 + u * u) * Math.sqrt(h2)) * k, azimuthRate: (n * de - e * dn) / h2 * k }
 }
 export const ecliptic = (f: Frame, v: Vec3): { lon: number; lat: number } => {
   const e = mxv(eclipticMatrix(f.eo), v)

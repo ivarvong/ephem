@@ -393,6 +393,30 @@ counts of the default entrypoint. **Lag:** a row reaches Iceberg only when the s
 minimum), so the last minute or two are missing; compare closed windows. Basin SQL needs the same R2 admin token
 (`WRANGLER_BASIN_SQL_AUTH_TOKEN`, set by basin.py from the token file and never printed).
 
+## Rates (altitudeRate, azimuthRate)
+
+One function, `topocentricRates` (packages/core/src/observe.ts), for /v1/position, /v1/alignment points (`ratesAt`) and
+/v1/crossing: analytic from the DE440 Chebyshev velocity (design and terms: DESIGN.md "Rates"). /v1/track reports no rates.
+
+- Accuracy: `node --experimental-strip-types scripts/obs/rate-accuracy.ts 200000 11` (offline, fixture blocks; `ROOT=<old
+  worktree>` for a before/after). 2026-10-30, 200 000 samples, seed 11, `truth` = vs Richardson(30 s, 60 s), `test` = the
+  property test's ±2 s statistic (bound 1e-5):
+
+  | | truth alt (\|alt\| < 80) | truth az·cos | test, \|alt\| < 80 | test, nadir band (−89, −80) | test ≥ 1e-5, (−89, 80) | test ≥ 1e-5, last degree above the nadir |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | ±10 s difference (e1719ba) | 1.0e-6 | 1.6e-6 | 3.6e-6 | 5.6e-5 | 51 | 15 |
+  | analytic | 3.6e-7 | 3.9e-7 | 3.9e-6 | 3.1e-6 | 0 | 3 |
+
+- Floors: a JD is one double, so instants round to 40 µs. That puts ~2.5e-6 °/min of noise into any ±2 s difference (the
+  test's statistic) and ~2e-7 into the 30/60 s Richardson (it falls as 1/h from 15 s to 60 s, then truncation grows): the
+  analytic rate is at or below what a difference of these positions can resolve.
+- Within 1° of the zenith or nadir the ±2 s difference itself is off by > 1e-5 (cusp; measured 2.1e-5 at −89.6°), so
+  properties.test.ts checks nothing there. The ±10 s rate's flake was the nadir side: every failure below −80°.
+- Gotcha: aberrate returns a = (v + lt·V)/(1 + p) with |a| = |v|; differentiating the bracket without the 1/(1 + p) leaves
+  the transverse rate high by p ≈ 1e-4 of the body's own motion (5e-7 °/min on the Moon, invisible on the Sun).
+- fast-check: a failure prints `{ seed, path }`; `FC_SEED=<seed> npx vitest run packages/core/test/properties.test.ts`
+  replays it (test-setup.ts; `CI=1` pins seed 42).
+
 ## Profiling
 
 ```sh

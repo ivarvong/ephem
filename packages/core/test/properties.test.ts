@@ -98,11 +98,29 @@ describe("rates and observer heights", () => {
       const q = { lat: geo.lat, lon: geo.lon, height: geo.height }
       const r = positionRequest(diskBlocks, { ...q, utcMs: ms }), a = positionRequest(diskBlocks, { ...q, utcMs: ms - 2_000 }), b = positionRequest(diskBlocks, { ...q, utcMs: ms + 2_000 })
       for (const k of ["sun", "moon"] as const) {
-        // °/min; the steps differ by (10² − 2²)·f‴/6. Altitude has a cusp at the zenith (not differentiable), so within 1° of it only a loose bound holds.
-        if (r[k].altitude < 89) expect(Math.abs(r[k].altitudeRate - (b[k].altitude - a[k].altitude) * 15)).toBeLessThan(r[k].altitude < 80 ? 1e-5 : 1e-3)
+        // °/min; the rate is analytic, so this is the ±2 s difference's own error (2²·f‴/6 plus ~2.5e-6 from 40 µs JD rounding).
+        // Altitude has a cusp at the zenith and at the nadir (not differentiable): within 1° of either the ±2 s difference
+        // itself is off by more than 1e-5 (measured: 2e-5 at −89.6°), so no check there; to 80° only a loose bound holds.
+        if (Math.abs(r[k].altitude) < 89) expect(Math.abs(r[k].altitudeRate - (b[k].altitude - a[k].altitude) * 15)).toBeLessThan(r[k].altitude < 80 ? 1e-5 : 1e-3)
         if (r[k].altitude < 80) expect(Math.abs(r[k].azimuthRate - (((b[k].azimuth - a[k].azimuth) % 360 + 540) % 360 - 180) * 15)).toBeLessThan(1e-4 / Math.cos(r[k].altitude * Math.PI / 180) ** 2)
       }
     }), { numRuns: 300 })
+  })
+  it("analytic rates match a Richardson (h = 30 s, 60 s) difference of the positions to 1e-6 °/min away from the cusps", () => {
+    // Richardson's h⁴ truncation is ~1e-12 here; its floor is the 40 µs rounding of a JD double (~2e-7 °/min). Measured max
+    // over 200 000 samples: 3.6e-7 alt, 3.9e-7 az·cos(alt) (the ±10 s difference this replaced: up to 2.3e-5 near the nadir).
+    fc.assert(fc.property(arbMs, arbGeo, (ms, geo) => {
+      const P = (t: number) => position(diskBlocks, { utcMs: t, geo })
+      const r = P(ms), p1 = P(ms + 30_000), m1 = P(ms - 30_000), p2 = P(ms + 60_000), m2 = P(ms - 60_000)
+      const dAz = (b: number, a: number) => ((b - a) % 360 + 540) % 360 - 180
+      for (const k of ["sun", "moon"] as const) {
+        if (Math.abs(r[k].altitude) > 80) continue
+        const alt = (4 * (p1[k].altitude - m1[k].altitude) - (p2[k].altitude - m2[k].altitude) / 2) / 3
+        const az = (4 * dAz(p1[k].azimuth, m1[k].azimuth) - dAz(p2[k].azimuth, m2[k].azimuth) / 2) / 3
+        expect(Math.abs(r[k].altitudeRate - alt)).toBeLessThan(1e-6)
+        expect(Math.abs(r[k].azimuthRate - az) * Math.cos(r[k].altitude * Math.PI / 180)).toBeLessThan(1e-6)
+      }
+    }), { numRuns: 200 })
   })
   it("heightRef=msl and the same ellipsoidal height give the same sky; no height = on the geoid = msl 0", () => {
     const t = Date.parse("2026-10-28T11:51:00Z"), e = positionRequest(diskBlocks, { utcMs: t, lat: 40.7, lon: -74, height: 300 })

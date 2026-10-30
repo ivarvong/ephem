@@ -1,6 +1,6 @@
 // /v1/position, as a pure function of (blocks, request). Output shape = @ephem/api PositionResponse minus provenance.
 import { type BlockSource, type BodyName, bodySsb, earthSsb } from "./ephemeris.ts"
-import { type Frame, type Geodetic, angularRadius, apparent, astrometric, ecliptic, enuOf, frameAt, geocentricFrame, topocentric } from "./observe.ts"
+import { type Frame, type Geodetic, angularRadius, apparent, astrometric, ecliptic, enuOf, frameAt, geocentricFrame, topocentric, topocentricRates } from "./observe.ts"
 import { litGeometry } from "./aim.ts"
 import { apparentAltitudeOf } from "./horizon.ts"
 import { DEG, add, dot, mxv, norm, sub, wrap360 } from "./linalg.ts"
@@ -16,21 +16,17 @@ export interface PositionInput {
 export const PHASE_NAMES = ["new", "waxing crescent", "first quarter", "waxing gibbous", "full", "waning gibbous", "last quarter", "waning crescent"] as const
 export type PhaseName = typeof PHASE_NAMES[number]
 
-/** Rates by a symmetric difference over ±RATE_STEP_S: truncation error ~ h²·f‴/6 < 1e-7 °/min for the Sun and Moon. */
-export const RATE_STEP_S = 10
-const topoAt = (src: BlockSource, t: Instant, geo: Geodetic, body: BodyName) => { const f = frameAt(src, t, geo); return topocentric(f, apparent(src, f, body).v) }
+/** How altitudeRate / azimuthRate are computed, for every endpoint that reports them (observe.ts topocentricRates). */
+export const RATE_METHOD = "analytic: DE440 Chebyshev velocity through light time, aberration and Earth rotation (no finite difference)"
 
 const bodyPosition = (src: BlockSource, f: Frame, g: Frame, body: BodyName, T: number, P: number, horizon: number) => {
   const a = apparent(src, f, body)
   const tp = topocentric(f, a.v)
   const ec = ecliptic(g, apparent(src, g, body).v)
-  const before = topoAt(src, instant(f.t.utcMs - RATE_STEP_S * 1000, f.t.dut1), f.geo, body)
-  const after = topoAt(src, instant(f.t.utcMs + RATE_STEP_S * 1000, f.t.dut1), f.geo, body)
-  const perMin = 60 / (2 * RATE_STEP_S)
+  const rates = topocentricRates(src, f, body, a)
   return {
     azimuth: tp.azimuth, altitude: tp.altitude, apparentAltitude: apparentAltitudeOf(tp.altitude, T, P, horizon),
-    altitudeRate: (after.altitude - before.altitude) * perMin,
-    azimuthRate: (((after.azimuth - before.azimuth) % 360 + 540) % 360 - 180) * perMin,
+    ...rates,
     rightAscension: tp.rightAscension, declination: tp.declination,
     distanceKm: a.distanceKm, angularRadius: angularRadius(body, a.distanceKm),
     eclipticLongitude: ec.lon, eclipticLatitude: ec.lat,

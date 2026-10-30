@@ -208,10 +208,17 @@ true limb altitude, the twilight/golden/blue thresholds, the geoid). **/v1/cross
 for any altitude (true or apparent), limb and direction, over a start/end window (≤ 31 days) or a local date + tz, and gives
 each crossing's azimuth and altitude rate.
 
-**Rates.** `altitudeRate`, `azimuthRate` (°/min) in /v1/position: symmetric difference over ±10 s (truncation < 1e-7 °/min
-away from the zenith). Near the zenith altitude has a cusp and azimuth
-spins, so both rates are only meaningful a degree or more away from it. Checked against ±2 s differences of the API's own positions and against Skyfield's analytic
-`frame_latlon_and_rates` (≤ 1.5e-6 °/min altitude, ≤ 1.2e-5 °/min azimuth).
+**Rates.** `altitudeRate`, `azimuthRate` (°/min) in /v1/position, /v1/alignment (per point) and /v1/crossing:
+analytic, one function (`topocentricRates`, observe.ts). d/dt of w = C·a in ITRS: Ċ·a = −Ω × w (Ω = dGAST/dt), and
+ȧ = the DE440 Chebyshev velocity of the body at t − lt minus the observer's barycentric velocity, with the light-time rate,
+the first-order change of aberration (including the diurnal centripetal acceleration) and aberration's 1/(1 + v̂·V/c) scale.
+Left out: precession/nutation rates and the annual aberration change (each ≲ 1e-7 °/min). Measured against a Richardson
+(30 s, 60 s) difference of the API's own positions over 200 000 random (time, place) samples: ≤ 3.6e-7 °/min altitude,
+≤ 3.9e-7 °/min azimuth·cos(alt) away from the cusps, a floor set by the 40 µs rounding of a JD double, not by the rate. The ±10 s
+symmetric difference it replaced (until 2026-10-30) was off by up to 2.3e-5 °/min within 10° of the nadir and failed
+properties.test.ts about 1 run in 20. Near the zenith and nadir altitude has a cusp and azimuth spins, so both rates are
+only meaningful a degree or more away from them. Against Skyfield's `frame_latlon_and_rates`: ≤ 1.2e-6 °/min altitude,
+≤ 3.2e-6 °/min azimuth (was 1.5e-6 / 1.2e-5). It also costs less: no extra positions (position() 18.5 → 12.8 µs local).
 
 **Root finding.** Sample every 5 min (20 min for transit), bisect every sign change to 0.1 ms. Grazing events (the Sun
 skimming the horizon without a sign change at two consecutive samples) are caught by a golden-section search for the
@@ -248,7 +255,7 @@ ellipsoid by default and above the EGM96 geoid with `msl`, as on every endpoint;
 geoid (heightMsl 0; before 2026-10-30 it was 0 m above the ellipsoid). With `heightRef=msl` the eye's ellipsoidal height is
 `observerHeight + N(P)` at every candidate point inside the solver, so N varies along the track (cm per km here). Each track
 point reports `heightEllipsoid`, `heightMsl`, `geoidUndulation`, and the body's `altitudeRate` / `azimuthRate` seen from that
-point (±10 s, as /v1/position); `target` echoes the target's heights; a `conventions` block states the solve, what
+point (analytic, as /v1/position); `target` echoes the target's heights; a `conventions` block states the solve, what
 `azimuth` means, terrestrial refraction (modelled: constant k = 0.13 along the sight line), refraction and heights. The
 Worker prefetches the geoid bands for target lat ± maxDistanceKm. Evidence: the customer's Statue of Liberty repro
 (2026-11-17T03:44:30–03:46:00Z) in ellipsoidal heights (their hand-copied N = −32.81 m) and in msl heights (70 m / 5 m)

@@ -4,7 +4,7 @@ import type { BlockSource, BodyName } from "./ephemeris.ts"
 import { type AlignmentInput, alignment, ratesAt } from "./alignment.ts"
 import { type HeightRef, K_TERRESTRIAL, P_DEFAULT, R_MEAN_M, T_DEFAULT, observerHeights } from "./horizon.ts"
 import { GEOID, geoidUndulation } from "./geoid.ts"
-import { RATE_STEP_S } from "./position.ts"
+import { RATE_METHOD } from "./position.ts"
 import { REFRACTION_MODEL } from "./sky.ts"
 import { CONTEXT_CONVENTIONS, type Include, contextAt } from "./context.ts"
 import { type Aim, AIM_DEFINITIONS } from "./aim.ts"
@@ -28,7 +28,7 @@ export const ALIGNMENT_CONVENTIONS = {
   apparentAltitude: "track[].apparentAltitude: the body's apparent (refracted) altitude seen from the standing point = the target's apparent elevation from there, degrees. With aim, azimuth and apparentAltitude are the aim point's.",
   terrestrialRefraction: `Modelled, as a constant coefficient: the target's apparent elevation = its geometric elevation (exact WGS-84 ECEF vectors, eye to target) + k·θ/2, k = ${K_TERRESTRIAL}, θ = geodesic distance / ${R_MEAN_M} m (the sight line is an arc of curvature k/R). No atmospheric profile, inversion or ducting; real k near the ground varies roughly 0–0.3 with the temperature gradient, which moves the elevation by about ±k·θ/2 (±0.005° at 4 km).`,
   heights: "observerHeight and targetHeight are metres above the WGS-84 ellipsoid by default; heightRef=msl / targetHeightRef=msl make them metres above the EGM96 geoid (≈ mean sea level). With heightRef=msl the eye's ellipsoidal height is observerHeight + N at every standing point (N varies along the track). Without observerHeight the eye is on the geoid (heightMsl 0), as on every other endpoint. Each track point gives heightEllipsoid, heightMsl and geoidUndulation N (heightEllipsoid = heightMsl + N).",
-  rates: `altitudeRate, azimuthRate: degrees per minute, d(true altitude)/dt and d(azimuth)/dt of the body seen from the (fixed) standing point; symmetric difference over ±${RATE_STEP_S} s, as /v1/position.`,
+  rates: `altitudeRate, azimuthRate: degrees per minute, d(true altitude)/dt and d(azimuth)/dt of the body seen from the (fixed) standing point; ${RATE_METHOD}, as /v1/position.`,
 } as const
 
 const heightsOut = (lat: number, lon: number, hE: number) => { const N = geoidUndulation(lat, lon); return { heightEllipsoid: hE, heightMsl: hE - N, geoidUndulation: N } }

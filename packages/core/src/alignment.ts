@@ -6,11 +6,10 @@
 // Apparent elevation = geometric elevation (exact WGS-84 ECEF) + terrestrial refraction k·θ/2, θ = s / R_mean.
 import type { BlockSource, BodyName } from "./ephemeris.ts"
 import { directLine, inverse } from "./geodesic.ts"
-import { type Geodetic, angularRadius, apparent, enuOf, epochAt, frameAt, itrsOf, topocentric } from "./observe.ts"
+import { type Geodetic, angularRadius, apparent, enuOf, epochAt, frameAt, itrsOf, topocentric, topocentricRates } from "./observe.ts"
 import { type Vec3, DEG, dot, mxv, norm, sub, wrap360 } from "./linalg.ts"
 import { crossings, solve } from "./day.ts"
 import { instant, isoMs } from "./time.ts"
-import { RATE_STEP_S } from "./position.ts"
 
 import { type HeightRef, K_TERRESTRIAL, R_MEAN_M, refractTrue as refract } from "./horizon.ts"
 import { geoidUndulation } from "./geoid.ts"
@@ -163,12 +162,11 @@ export const standingPoint = (src: BlockSource, inp: AlignmentInput, utcMs: numb
   return { time: isoMs(utcMs), lat: P.lat, lon: P.lon, distanceKm: e.distanceM / 1000, azimuth: az, apparentAltitude: app, angularRadius: b.radius, heightEllipsoid: P.height, aimOffset: aimOff, aimAngle: aimAng, iterations: it }
 }
 
-/** d(true altitude)/dt and d(azimuth)/dt of the body seen from a fixed point, degrees per minute: the symmetric difference
- *  over ±RATE_STEP_S that /v1/position uses (same definition, same units). */
+/** d(true altitude)/dt and d(azimuth)/dt of the body seen from a fixed point, degrees per minute: the analytic rate that
+ *  /v1/position uses (observe.ts topocentricRates; same definition, same units). */
 export const ratesAt = (src: BlockSource, body: BodyName, P: Geodetic, utcMs: number, dut1 = 0): { altitudeRate: number; azimuthRate: number } => {
-  const at = (ms: number) => { const f = frameAt(src, instant(ms, dut1), P); return topocentric(f, apparent(src, f, body).v) }
-  const a = at(utcMs - RATE_STEP_S * 1000), b = at(utcMs + RATE_STEP_S * 1000), perMin = 60 / (2 * RATE_STEP_S)
-  return { altitudeRate: (b.altitude - a.altitude) * perMin, azimuthRate: (((b.azimuth - a.azimuth) % 360 + 540) % 360 - 180) * perMin }
+  const f = frameAt(src, instant(utcMs, dut1), P)
+  return topocentricRates(src, f, body, apparent(src, f, body))
 }
 
 export interface Pass { readonly time: string; readonly altitudeOffset: number; readonly angularRadius: number; readonly apparentAltitude: number }
