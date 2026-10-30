@@ -93,7 +93,7 @@ export const validateRum = (body: unknown, c: RumContext): RumResult => {
       transfer_bytes: (v => v === undefined ? undefined : Math.round(v))(num(x.b, 0, 1e10)), status: (v => v === undefined ? undefined : Math.round(v))(num(x.st, 0, 999)),
       protocol: typeof x.pr === "string" && PROTO.test(x.pr) ? x.pr : undefined,
       server_timing: st, cache: st ? /(?:^|,\s*)api;desc="?([A-Z_]{2,16})/.exec(st)?.[1] : undefined,
-      ray: typeof x.r === "string" && RAY.test(x.r) ? x.r : undefined,
+      ray: typeof x.r === "string" && RAY.test(x.r) ? x.r : st ? /(?:^|,\s*)ray;desc="?([0-9a-f]{16}(?:-[A-Z]{3})?)/.exec(st)?.[1] : undefined,
       detail: typeof x.dt === "string" && DETAIL.test(x.dt) && x.dt ? x.dt : undefined,
     }
     for (const k of Object.keys(row)) if (row[k] === undefined) delete row[k]

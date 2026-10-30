@@ -109,6 +109,12 @@ describe("Server-Timing", () => {
     expect(st).not.toMatch(/cpu/)
     expect(r.headers.get("timing-allow-origin")).toBe("*")
   })
+  it("the front door names its cf-ray first, so RUM resource rows (fonts, documents) join by ray", async () => {
+    const r = await makeHandler(makeBlocks(origin))(new Request("http://x/assets/7c1a2e7bc735/RPNDot-Regular.woff2", { headers: { "cf-ray": "a52e17c739d64350-EWR" } }))
+    expect(r.headers.get("server-timing")).toMatch(/^ray;desc="a52e17c739d64350-EWR", total;dur=/)
+    const v = validateRum(batch([span({ k: "resource", n: "css", r: undefined, sv: 'ray;desc="a52e17c739d64350-EWR", total;dur=0.1' })]), ctx()); if (!v.ok) throw new Error(v.reason)
+    expect(v.rows[0]!.ray).toBe("a52e17c739d64350-EWR")
+  })
   it("documents: trace first, then total", async () => {
     const r = await makeHandler(makeBlocks(origin))(new Request("http://x/instrument"))
     expect(r.headers.get("server-timing")).toMatch(/^trace;desc="00-[0-9a-f]{32}-[0-9a-f]{16}-01", total;dur=[0-9.]+$/)

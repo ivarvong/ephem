@@ -190,7 +190,10 @@ export const RequestLogging = HttpRouter.middleware(http => Effect.gen(function*
   const ct = attrs.map(a => a.get("client.trace_id")).find(v => typeof v === "string") as string | undefined
   const trace = ct && Option.isSome(reqSpan) && !prev?.includes("trace;") ? `00-${ct}-${reqSpan.value.spanId}-01` : undefined
   const fresh = attrs.map(a => a.get("ephem.api_server_timing")).find(v => typeof v === "string") as string | undefined
-  const st = [...(prev ? [prev] : []), ...serverTimingEntries(spans, trace, fresh)]
+  // ray;desc=<cf-ray>: lets the page's own Resource Timing (RUM) name the server invocation of every same-origin request,
+  // fonts and the document included, which carry no traceparent. Front door only (an Api answer is cached).
+  const ray = sink._tag === "Some" && sink.value.role === "api" ? undefined : (req.headers["cf-ray"] as string | undefined)
+  const st = [...(prev ? [prev] : []), ...(ray && /^[0-9a-f]{16}(-[A-Z]{3})?$/.test(ray) ? [`ray;desc="${ray}"`] : []), ...serverTimingEntries(spans, trace, fresh)]
   return st.length ? HttpServerResponse.setHeader(res, "server-timing", st.join(", ")) : res
 }), { global: true })
 

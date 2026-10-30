@@ -5,6 +5,7 @@
 //   geoid;desc="L1";dur=…     geoid.load
 //   feed;desc="HIT";dur=…     metar.feed (the MetarFeed loopback)
 //   trace;desc="00-<trace>-<server root span>-01"   when the request carried a valid traceparent (documents set their own)
+//   ray;desc="<cf-ray>"       front door (src/requestlog.ts), first: joins a RUM resource row to its invocation
 //   total;dur=…               added last by router.ts toHandler: the front door's I/O wall
 // Durations are the Workers clock, which only advances on I/O (frozen during compute): they are I/O wall, never CPU. CPU is not
 // readable inside a request, so no cpu entry is sent (a number would be invented); it is in Workers Observability
