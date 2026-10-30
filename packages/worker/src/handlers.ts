@@ -20,6 +20,8 @@ const jd = (ms: number) => instant(ms).jdTDB
 type Attrs = Record<string, string | number | boolean | undefined>
 const prefix = (p: string, o: object): Attrs => Object.fromEntries(Object.entries(o).map(([k, v]) => [p + k, v]))
 
+/** Computations this isolate has run, this one included: 1 = a fresh isolate (cold JIT, empty L1, lazy tables). */
+let isolateComputes = 0
 /** Run a pure computation over prefetched blocks, timing it and attaching diagnostics; spans carry cache tiers and work counts. */
 const compute = <A>(name: string, blocks: ReadonlyArray<number>, f: (src: Parameters<typeof instrumented>[0]) => A, attrs: (out: A) => Attrs = () => ({})) => Effect.gen(function* () {
   const { load } = yield* Blocks
@@ -32,7 +34,7 @@ const compute = <A>(name: string, blocks: ReadonlyArray<number>, f: (src: Parame
     Effect.tap(o => Effect.annotateCurrentSpan({ "ephem.block_reads": stats.reads, "ephem.blocks": stats.blocks.size, ...attrs(o) })),
     Effect.withSpan(`compute.${name}`))
   const computeMs = performance.now() - t0
-  yield* Effect.annotateCurrentSpan({ computeMs, blocks: stats.blocks.size, reads: stats.reads, ...loaded.stats })
+  yield* Effect.annotateCurrentSpan({ computeMs, blocks: stats.blocks.size, reads: stats.reads, ...loaded.stats, "ephem.isolate_computes": ++isolateComputes })
   return { out, provenance: { ...PROV, diagnostics: { blocks: [...stats.blocks].toSorted((a, b) => a - b), computeMs: Math.round(computeMs * 1000) / 1000, cache: { ...loaded.stats, reads: stats.reads } } } }
 })
 

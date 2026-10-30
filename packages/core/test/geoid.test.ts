@@ -3,12 +3,17 @@
 import { describe, expect, it } from "vitest"
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
-import { GEOID, geoidUndulation } from "../src/geoid.ts"
+import { GEOID, geoidBandsDecoded, geoidUndulation } from "../src/geoid.ts"
 import { observerHeights, seaDip } from "../src/horizon.ts"
 
 const fx = JSON.parse(readFileSync(resolve(__dirname, "fixtures/geoid/egm96.json"), "utf8")) as { nodes30: number[][]; ngaTestPoints: number[][]; bilinear15: number[][] }
 
 describe("EGM96 geoid undulation", () => {
+  it("a lookup decodes only the bands it touches (first test in the file: nothing decoded before it)", () => {
+    expect(geoidBandsDecoded()).toBe(0)
+    geoidUndulation(40.7, -74); expect(geoidBandsDecoded()).toBe(1)
+    geoidUndulation(90 - 7.5 * 0.5 - 0.1, 10); expect(geoidBandsDecoded()).toBe(3)   // rows 7 and 8 straddle bands 0 and 1
+  })
   it("every sampled 30′ node equals NGA's WW15MGH.GRD value to the centimetre rounding (≤ 0.005 m)", () => {
     for (const [lat, lon, n] of fx.nodes30) expect(Math.abs(geoidUndulation(lat!, lon! > 180 ? lon! - 360 : lon!) - n!), `${lat},${lon}`).toBeLessThanOrEqual(0.005 + 1e-9)
   })

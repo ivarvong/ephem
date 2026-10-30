@@ -176,8 +176,9 @@ MSL) are refused on /v1/day with a 422 that says so; /v1/position returns null t
 
 NGA's official 15′ grid (`WW15MGH.GRD`, earth-info.nga.mil "egm-96interpolation", SHA-256 pinned in
 `reference/geoid/inputs.sha256`) is subsampled to 30′ (361 × 720 nodes), rounded to 1 cm, and bundled
-(`egm96-grid.ts`, planar-predictor residuals as zigzag varints, base64: 374 KB raw / 250 KB gzip, decoded once per isolate,
-~7 ms in Node). Bilinear between nodes. Interpolation error against bilinear on the full 15′ grid (2 M area-uniform points):
+(`egm96-grid.ts`: 46 bands of 8 rows, each planar-predictor residuals as zigzag varints, base64: 384 KB raw / 258 KB gzip; a
+lookup decodes only the ≤ 2 bands it touches, once per isolate, 0.6 ms in Node; the single stream before 2026-10-30 cost every
+fresh isolate a 260 k-node decode, ~7 ms). Bilinear between nodes. Interpolation error against bilinear on the full 15′ grid (2 M area-uniform points):
 rms 0.12 m, p99 0.49 m, p99.9 1.06 m, max 3.48 m. Against NGA's published `OUTINTPT.DAT` test points: ≤ 0.244 m. For the dip
 this is negligible (1 m at 10 m changes the dip by 0.28′). Tests: `geoid.test.ts` (403 nodes equal NGA's values to the cm,
 NGA's test points, 2 000 points vs the 15′ grid). The oracle reads the same NGA grid from PROJ's GeoTIFF
