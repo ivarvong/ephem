@@ -74,8 +74,8 @@ export const Home = HttpRouter.use(router => Effect.gen(function* () {
     const tail = embeds.pipe(
       Effect.tap(parts => Effect.annotateCurrentSpan({ "home.embedded": parts.filter(Boolean).length })),
       Effect.withSpan("home.embed"),
-      Effect.map(parts => FONT_STYLE + parts.join("") + PAGE_END),
-      Effect.catchCause(() => Effect.succeed(FONT_STYLE + PAGE_END)))   // never fails: the page fetches what is missing
+      Effect.map(parts => parts.join("") + PAGE_END),
+      Effect.catchCause(() => Effect.succeed(PAGE_END)))   // never fails: the page fetches what is missing
     return yield* streamHtml(pageHead(v, tid), tail, { "cache-control": "private, no-store", ...documentTraceHeaders(tid) })
   }).pipe(Effect.withSpan("home"))
   }))
@@ -386,6 +386,26 @@ function trackSpan(pts, nowIdx, center, period) {
   for (j = Math.max(0, lo); j <= (hi < 0 ? n - 1 : hi); j++) out.push({ t: pts[j].t, rel: rel[j], alt: pts[j].alt });
   return out;
 }
+// A pass within ~10° of the zenith swings the azimuth through ~180° in minutes: in an azimuth × altitude chart the track
+// climbs a vertical side, runs flat along the top and drops down the other: a box. Above 80° the azimuth means little, so
+// that stretch is drawn as a half-ellipse from where the track crosses 80° on the way up to where it does on the way down,
+// its top at the pass's highest altitude: it reads as what it is, a pass overhead. The vertices are rewritten in place;
+// returns the point for "now" if now falls inside the arc (the body's marker goes there), else null.
+function zenithArc(sp, xs, ys, g, now) {
+  var hit = null;
+  for (var i = 0; i < sp.length; i++) {
+    if (sp[i].alt <= 80) continue;
+    var a = i, z = i; while (z + 1 < sp.length && sp[z + 1].alt > 80) z++;
+    i = z;
+    if (a === 0 || z === sp.length - 1 || Math.abs(sp[z].rel - sp[a].rel) < 30) continue;   // not a swing (or cut by the frame)
+    var p = a - 1, q = z + 1, top = Math.max.apply(null, sp.slice(a, z + 1).map(function (s) { return s.alt; }));
+    var x0 = xs[p], x1 = xs[q], yb = (ys[p] + ys[q]) / 2, yt = chY(top, g), t0 = sp[p].t, t1 = sp[q].t;
+    var at = function (t) { var u = (t - t0) / (t1 - t0), th = Math.PI * u; return [(x0 + x1) / 2 - (x1 - x0) / 2 * Math.cos(th), yb - (yb - yt) * Math.sin(th)]; };
+    for (var j = a; j <= z; j++) { var pt = at(sp[j].t); xs[j] = pt[0]; ys[j] = pt[1]; }
+    if (now >= t0 && now <= t1) hit = at(now);
+  }
+  return hit;
+}
 // The chart as geometry: st {W, H, insetL, insetR, center, now, ctl (rect|null), pose ({az, alt}|null), meas (text → px),
 // lh (label line height), bodies: [{key, name, az, alt, r, pts, nowIdx, period}]}. Tracks (screen polylines split at now),
 // discs, and one label per body (its name), laid out clear of every track, disc and button (layoutLabels).
@@ -398,10 +418,12 @@ function skyModel(st) {
     if (b.pts && b.pts.length > 1) {
       var sp = trackSpan(b.pts, b.nowIdx, c, b.period), xs = [], ys = [], split = 0;
       sp.forEach(function (q, i) { xs.push(g.W / 2 + q.rel * g.kx); ys.push(chY(q.alt, g)); if (q.t <= st.now) split = i; });
+      var arc = zenithArc(sp, xs, ys, g, st.now);
+      if (arc) b = Object.assign({}, b, { arcXY: arc });
       m.lines[b.key] = { xs: xs, ys: ys, split: split };
       for (var i = 1; i < xs.length; i++) m.segs.push([xs[i - 1], ys[i - 1], xs[i], ys[i]]);
     }
-    var bx = chX(b.az, g, c), by = chY(b.alt, g), rr = b.r + 4;
+    var bx = b.arcXY ? b.arcXY[0] : chX(b.az, g, c), by = b.arcXY ? b.arcXY[1] : chY(b.alt, g), rr = b.r + 4;
     m.discs.push({ key: b.key, x: bx, y: by, r: b.r, below: b.alt < 0 });
     m.hard.push({ id: b.key + "-disc", x: bx - rr, y: by - rr, w: 2 * rr, h: 2 * rr });
     m.items.push({ id: b.name, t: b.name, w: st.meas(b.name), h: st.lh, x: bx, y: by, r: rr - 2, prio: 0, body: true });
@@ -410,6 +432,40 @@ function skyModel(st) {
   return m;
 }
 function compass16(az) { return ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"][Math.round(wrap360(az) / 22.5) % 16]; }
+// The day's timeline as geometry (pure; test/home.test.ts runs it). Twilight is shading on the line (from the Sun's altitude
+// samples: day, civil, nautical, astronomical, night); nodes for sunrise, solar noon, sunset, moonrise and moonset, plus the
+// NEXT event (highlighted) if it is something else; each name with its time under it, one row of labels above the line and
+// one below, alternating; a label with no room in either row is left out (its node stays). A leader runs only across the gap
+// between the line and its own label, inside that label's span, so it never crosses other text.
+// evs [{body, kind, t}], sun [{t, alt}] (the day's samples), s0/span the local day, w px, next {body, kind, t}|null,
+// name(e) → caps name, time(t) → "HH:MM", meas(text, "name"|"time") → px.
+var TL_NODE = { sun: { rise: 1, transit: 1, set: 1 }, moon: { rise: 1, set: 1 } };
+function timelineLayout(evs, sun, s0, span, w, now, next, name, time, meas) {
+  var pad = 10, mid = 46, gap = 9, lh = 13, X = function (t) { return pad + Math.max(0, Math.min(1, (t - s0) / span)) * (w - 2 * pad); };
+  var out = { mid: mid, h: mid + gap + 2 * lh + 4, segs: [], nodes: [], labels: [], leaders: [] };
+  function phase(a) { return a >= -0.833 ? "day" : a >= -6 ? "civil" : a >= -12 ? "nautical" : a >= -18 ? "astro" : "night"; }
+  for (var i = 1; i < sun.length; i++) {
+    var k = phase((sun[i - 1].alt + sun[i].alt) / 2), x0 = X(sun[i - 1].t), x1 = X(sun[i].t), last = out.segs[out.segs.length - 1];
+    if (x1 <= x0) continue;
+    if (last && last.kind === k && Math.abs(last.x1 - x0) < 0.01) last.x1 = x1; else out.segs.push({ x0: x0, x1: x1, kind: k });
+  }
+  var isNext = function (e) { return next && next.body === e.body && next.kind === e.kind && Math.abs(next.t - e.t) < 60e3; };
+  var pick = evs.filter(function (e) { return (TL_NODE[e.body] && TL_NODE[e.body][e.kind]) || isNext(e); }).sort(function (a, b) { return a.t - b.t; });
+  var rows = [[], []], side = 0;
+  pick.forEach(function (e) {
+    var x = X(e.t), nm = name(e), tm = time(e.t), bw = Math.max(meas(nm, "name"), meas(tm, "time")), placed = null;
+    out.nodes.push({ x: x, body: e.body, kind: e.kind, past: e.t <= now, next: !!isNext(e) });
+    for (var tries = 0; tries < 2 && !placed; tries++) {
+      var r = (side + tries) % 2, bx = Math.max(0, Math.min(w - bw, x - bw / 2)), y = r === 0 ? mid - gap - 2 * lh : mid + gap;
+      var box = { x: bx, y: y, w: bw, h: 2 * lh };
+      if (rows[r].some(function (o) { return box.x < o.x + o.w + 8 && o.x < box.x + box.w + 8; })) continue;
+      rows[r].push(box); placed = box; side = 1 - r;
+      out.labels.push({ x: bx, y: y, w: bw, h: 2 * lh, name: nm, time: tm, cx: x, past: e.t <= now, next: !!isNext(e), body: e.body });
+      if (x >= bx + 2 && x <= bx + bw - 2) out.leaders.push(r === 0 ? [x, mid - 5, x, y + 2 * lh + 1] : [x, mid + 5, x, y - 1]);
+    }
+  });
+  return out;
+}
 // Pointing: where the phone's back camera looks, from a deviceorientation event. The camera is the device's -z axis; with the
 // W3C rotation R = Rz(alpha) Rx(beta) Ry(gamma) its east/north/up components give the altitude, and its azimuth too when alpha is
 // absolute (Android's deviceorientationabsolute). iOS gives webkitCompassHeading instead. Both headings are magnetic, so the
@@ -439,12 +495,13 @@ function aimText(name, b, pose) {
 `
 
 /** The whole page without embedded data (tests; the client then fetches everything). */
-export const page = (v: Visitor, trace?: DocumentTrace) => pageHead(v, trace) + FONT_STYLE + PAGE_END
+export const page = (v: Visitor, trace?: DocumentTrace) => pageHead(v, trace) + PAGE_END
 
 /** Everything the browser can parse, style, paint and boot before the data: flushed at once (src/embed.ts streamHtml). */
 export const pageHead = (v: Visitor, trace?: DocumentTrace) => `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
+${FONT_STYLE}
 ${traceparentMeta(trace)}
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>ephem · the sky over ${v.city.replace(/[<>&"]/g, "")}</title>
@@ -512,7 +569,7 @@ details.disc[open]>summary::before{transform:rotate(45deg)}
 details.disc>div,details.disc>pre,details.disc>dl{margin:0 0 14px}
 .kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:7px 16px}
 .kv dt{font:500 11px/1.5 var(--din);letter-spacing:.14em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
-.kv dd{margin:0;font:400 15px/1.3 var(--din);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.kv dd{margin:0;font:400 15px/1.3 var(--din);text-transform:uppercase;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
 main{padding-bottom:40px}
 .blk{padding:18px 0 4px;border-top:1px solid var(--line)}
 .blk>h2{margin:0 0 12px}
@@ -739,8 +796,8 @@ function draw() {
     return { key: o[0], name: o[1], az: L.az, alt: L.alt, r: o[0] === "moon" ? 6 : r, pts: S.track.length ? pts : [], nowIdx: at, period: PERIOD[o[0]] };
   }) : [];
   var sunAlt = live ? live.sun.alt : -30;
-  var m = skyModel({ W: W, H: H, insetL: insetL, insetR: insetR, center: c, now: nowMs, ctl: ctlR, pose: S.pose, lh: 15, bodies: bodies,
-    meas: function (t) { return meas(t.toUpperCase()); } });
+  var m = skyModel({ W: W, H: H, insetL: insetL, insetR: insetR, center: c, now: nowMs, ctl: ctlR, pose: S.pose, lh: 17, bodies: bodies,
+    meas: function (t) { return meas(t.toUpperCase()) + 10; } });
   var g = m.g, hy = g.hy;
   drawnAt = nowMs; drawnPx = bodies.map(function (b) { return [chX(b.az, g, c), chY(b.alt, g)]; });
   // the sky: its real colour, a subtle vertical gradient; below the horizon a darker, flat ground
@@ -788,9 +845,10 @@ function draw() {
   placed.forEach(function (pl) {
     if (pl.dropped) return;
     var t = pl.id.toUpperCase();
+    // a small dark pill at 60 % behind the name: legible on any sky, no outlined text
+    ctx.fillStyle = "rgba(6,7,8,.6)"; ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(pl.x, pl.y, pl.w, pl.h, 3); else ctx.rect(pl.x, pl.y, pl.w, pl.h); ctx.fill();
     ctx.font = LABEL_FONT; if ("letterSpacing" in ctx) ctx.letterSpacing = "1.6px"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
-    ctx.lineJoin = "round"; ctx.lineWidth = 3; ctx.strokeStyle = "rgba(6,7,8,.6)"; ctx.strokeText(t, pl.x + 1, pl.y + 7.5);
-    ctx.fillStyle = pl.id === "Sun" ? "rgba(245,184,96,.9)" : "rgba(201,209,222,.9)"; ctx.fillText(t, pl.x + 1, pl.y + 7.5);
+    ctx.fillStyle = pl.id === "Sun" ? "#f5b860" : "#d7deeb"; ctx.fillText(t, pl.x + 5, pl.y + pl.h / 2 + 0.5);
   });
   window.__sky = { labels: placed, hard: m.hard, lines: m.lines, W: W, H: H, draws: (window.__sky ? window.__sky.draws : 0) + 1,
     overlaps: overlaps(placed.filter(function (x) { return !x.dropped; }).map(function (x) { return Object.assign({ text: true }, x); }).concat(m.hard.filter(function (h) { return /disc|pose|ctl/.test(h.id); }))) };
@@ -855,7 +913,7 @@ function cardsHtml(p) {
   function ro(key, label, v, unit) { return '<div class="ro"><div class="cap"><i class="' + key.charAt(0) + '"></i>' + label + '</div><div class="v">' + v + '<span class="u">' + unit + "</span></div></div>"; }
   function body(key, name, b, extra) {
     var dt = dayTimes(key), m = azM(b.azimuth), a = altOf(b), app = !(b.apparentAltitude == null);
-    return '<section class="bd" aria-label="' + name + '">' + ro(key, name + " \u00b7 Altitude", (a < 0 ? "\u2212" : "") + Math.abs(a).toFixed(2), "\u00b0" + (app ? "" : " TRUE")) +
+    return '<section class="bd" aria-label="' + name + '">' + ro(key, name + " \u00b7 Altitude", (a < 0 ? "\u2212" : "") + Math.abs(a).toFixed(2), "\u00b0 " + (app ? "APP" : "TRUE")) +
       ro(key, "Azimuth", wrap360(b.azimuth).toFixed(2), "\u00b0 T") +
       '<div class="sec cap">' + [m ? "Mag <b>" + m.replace(" M", "") + "</b>" : "", "Rise <b>" + dt.rise + "</b>", "Set <b>" + dt.set + "</b>"].concat(extra || []).filter(Boolean).join(" \u00b7 ") + "</div></section>";
   }
@@ -954,35 +1012,28 @@ function tick() {
 // each side, a label that fits nowhere is left out: its node stays), past nodes filled, future hollow, a NOW marker.
 var TL = null;
 function el(tag, a, txt) { var e = document.createElementNS("http://www.w3.org/2000/svg", tag); for (var k in a) e.setAttribute(k, a[k]); if (txt != null) e.textContent = txt; return e; }
-var TL_KINDS = { rise: 1, set: 1, transit: 1, civilDawn: 1, civilDusk: 1, astronomicalDawn: 1, astronomicalDusk: 1 };
 function drawStrip() {
   var svg = $("tl"); svg.innerHTML = ""; TL = null; if (!S.day || S.day.loading) return;
-  var w = Math.max(300, Math.round(svg.getBoundingClientRect().width || 1000)), h = 104, mid = 52, pad = 10, s0 = Date.parse(S.day.start), span = Date.parse(S.day.end) - s0, now = tNow();
-  svg.setAttribute("viewBox", "0 0 " + w + " " + h);
-  var X = function (t) { return pad + (t - s0) / span * (w - 2 * pad); };
-  svg.appendChild(el("line", { x1: pad, x2: w - pad, y1: mid, y2: mid, stroke: "rgba(242,244,247,.28)", "stroke-width": 1 }));
-  [0, 6, 12, 18, 24].forEach(function (hh) { var x = X(s0 + hh * 3600e3); svg.appendChild(el("line", { x1: x, x2: x, y1: mid - 3, y2: mid + 3, stroke: "rgba(242,244,247,.28)" })); });
-  var evs = S.day.events.filter(function (e) { return TL_KINDS[e.kind]; }).map(function (e) { return { e: e, t: Date.parse(e.time) }; }).sort(function (a, b) { return a.t - b.t; });
-  var rows = { "-1": [-Infinity, -Infinity], "1": [-Infinity, -Infinity] }, side = -1;
-  evs.forEach(function (o) {
-    var x = X(o.t), past = o.t <= now, col = o.e.kind === "rise" || o.e.kind === "set" || o.e.kind === "transit" ? (o.e.body === "sun" ? "#f5b860" : "#c9d1de") : "#8d939c";
-    var name = evName(o.e).toUpperCase(), lw = name.length * 6.6 + 40, placed = false;
-    for (var tryS = 0; tryS < 2 && !placed; tryS++, side = -side) for (var r = 0; r < 2 && !placed; r++) {
-      var x0 = Math.max(0, Math.min(w - lw, x - lw / 2));
-      if (x0 < rows[side][r] + 8) continue;
-      rows[side][r] = x0 + lw; placed = true;
-      var y = side < 0 ? mid - 14 - r * 18 : mid + 22 + r * 18;
-      svg.appendChild(el("line", { x1: x, x2: x, y1: side < 0 ? y + 4 : mid + 4, y2: side < 0 ? mid - 4 : y - 10, stroke: "rgba(242,244,247,.16)" }));
-      var tx = el("text", { x: x0 + lw / 2, y: y, "text-anchor": "middle", "font-size": 10, "letter-spacing": "1.2", fill: past ? "#555b64" : "#8d939c" });
-      tx.appendChild(el("tspan", {}, name + " ")); tx.appendChild(el("tspan", { fill: past ? "#555b64" : "#f2f4f7", "font-size": 12, "letter-spacing": "0.3" }, hm(o.t)));
-      svg.appendChild(tx);
-    }
-    side = -side;
-    svg.appendChild(el("circle", { cx: x, cy: mid, r: 3.5, fill: past ? col : "#060708", stroke: col, "stroke-width": 1.5 }));
+  var w = Math.max(300, Math.round(svg.getBoundingClientRect().width || 1000)), s0 = Date.parse(S.day.start), span = Date.parse(S.day.end) - s0, now = tNow();
+  var evs = S.day.events.map(function (e) { return { body: e.body, kind: e.kind, t: Date.parse(e.time), e: e }; });
+  var sun = S.track.filter(function (x) { return x.t >= s0 - 20 * 60e3 && x.t <= s0 + span + 20 * 60e3; }).map(function (x) { return { t: x.t, alt: x.sun.altitude }; });
+  var L = timelineLayout(evs, sun, s0, span, w, now, nextEvent(now), function (e) { return evName(e).toUpperCase(); }, hm, function (t, k) { return Math.ceil(t.length * (k === "name" ? 6.4 : 6.6)) + 4; });
+  svg.setAttribute("viewBox", "0 0 " + w + " " + L.h);
+  var SH = { day: "rgba(242,244,247,.75)", civil: "rgba(242,244,247,.42)", nautical: "rgba(242,244,247,.26)", astro: "rgba(242,244,247,.15)", night: "rgba(242,244,247,.07)" };
+  L.segs.forEach(function (sg) { svg.appendChild(el("rect", { x: sg.x0, y: L.mid - 1.5, width: Math.max(0.5, sg.x1 - sg.x0), height: 3, fill: SH[sg.kind] })); });
+  L.leaders.forEach(function (ld) { svg.appendChild(el("line", { x1: ld[0], y1: ld[1], x2: ld[2], y2: ld[3], stroke: "rgba(242,244,247,.2)" })); });
+  L.nodes.forEach(function (n) {
+    var col = n.body === "sun" ? "#f5b860" : "#c9d1de";
+    if (n.next) svg.appendChild(el("circle", { cx: n.x, cy: L.mid, r: 7, fill: "none", stroke: "#6fd8f2", "stroke-width": 1.25 }));
+    svg.appendChild(el("circle", { cx: n.x, cy: L.mid, r: 3.5, fill: n.past ? col : "#060708", stroke: col, "stroke-width": 1.5 }));
   });
-  var nowG = el("g", {}); nowG.appendChild(el("line", { x1: 0, x2: 0, y1: mid - 9, y2: mid + 9, stroke: "#6fd8f2", "stroke-width": 1.5 }));
-  nowG.appendChild(el("title", {}, "Now"));
-  svg.appendChild(nowG); TL = { g: nowG, X: X, s0: s0, span: span, x: null };
+  L.labels.forEach(function (lb) {
+    var cx = lb.x + lb.w / 2, c1 = lb.next ? "#6fd8f2" : lb.past ? "#555b64" : "#8d939c", c2 = lb.next ? "#6fd8f2" : lb.past ? "#555b64" : "#f2f4f7";
+    svg.appendChild(el("text", { x: cx, y: lb.y + 10, "text-anchor": "middle", "font-size": 9.5, "letter-spacing": "1.2", fill: c1 }, lb.name));
+    svg.appendChild(el("text", { x: cx, y: lb.y + 24, "text-anchor": "middle", "font-size": 12, "letter-spacing": "0.4", fill: c2 }, lb.time));
+  });
+  var nowG = el("g", {}); nowG.appendChild(el("line", { x1: 0, x2: 0, y1: L.mid - 7, y2: L.mid + 7, stroke: "#6fd8f2", "stroke-width": 1.5 })); nowG.appendChild(el("title", {}, "Now"));
+  svg.appendChild(nowG); TL = { g: nowG, X: function (t) { return 10 + Math.max(0, Math.min(1, (t - s0) / span)) * (w - 20); }, s0: s0, span: span, x: null };
   drawStripNow();
 }
 function drawStripNow() {   // the NOW marker: moved only when it moves a visible half pixel (every few minutes)
@@ -1155,5 +1206,6 @@ setInterval(function () { if (!document.hidden) loadWx(); }, 60e3);
 </script>
 `
 const PAGE_END = "</body></html>"
-/** The page's face (src/din.ts), inline: in the streamed tail, so the head paints at once in the system face. */
+/** The page's face (src/din.ts), inline at the very top of the head (13.9 KB of woff2, caps only): it travels while the server
+ *  computes the embedded answers, instead of ahead of them in the tail. */
 const FONT_STYLE = `<style>${DIN_CSS}</style>`

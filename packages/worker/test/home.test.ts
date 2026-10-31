@@ -358,10 +358,11 @@ describe("home: the chart in every sky state", () => {
     for (let i = 0; i < count; i++) out.set(readFileSync(`${FIX}/${first + i}.bin`), i * REC)
     return out.buffer
   })))
-  const ch = new Function(CORE_JS + "; return { skyModel, layoutLabels, chartCenter, overlapArea, segHitsRect, altOf, chartAlt }")() as {
+  const ch = new Function(CORE_JS + "; return { skyModel, layoutLabels, chartCenter, overlapArea, segHitsRect, altOf, chartAlt, timelineLayout }")() as {
     skyModel(st: object): { lines: Record<string, { xs: number[]; ys: number[]; split: number }>; items: object[]; hard: Rect[]; segs: number[][]; bounds: { x0: number; y0: number; x1: number; y1: number }; g: { W: number; top: number; ky: number } }
     layoutLabels(items: object[], hard: Rect[], segs: number[][], b: object, pad: number): Array<Rect & { dropped?: boolean; crossed?: boolean }>
     chartCenter(lat: number, azs: number[]): number; overlapArea(a: Rect, b: Rect): number; segHitsRect(s: number[], r: Rect): boolean; altOf(b: object): number; chartAlt(h: number): number
+    timelineLayout(evs: object[], sun: object[], s0: number, span: number, w: number, now: number, next: object | null, name: (e: { kind: string }) => string, time: (t: number) => string, meas: (t: string, k: string) => number): { mid: number; labels: Rect[]; leaders: number[][]; nodes: object[] }
   }
   const STATES: Array<[string, number, number, string]> = [
     ["nyc day, Moon up", 40.7128, -74.006, "2026-10-30T14:00:00Z"], ["nyc day, Moon down", 40.7128, -74.006, "2026-10-30T19:00:00Z"],
@@ -385,6 +386,23 @@ describe("home: the chart in every sky state", () => {
       const nowIdx = pts.findIndex(p => p.t > now); pts.splice(nowIdx, 0, { t: now, az: b.azimuth, alt: ch.chartAlt(b.altitude) })
       return { key: k, name: k === "sun" ? "Sun" : "Moon", az: b.azimuth, alt: ch.chartAlt(b.altitude), r: k === "sun" ? 5 : 6, pts, nowIdx, period: PERIOD[k] }
     })
+    // the timeline: labels in one row above and one below, never overlapping; no leader crosses any label
+    const tz = name.startsWith("Tromsø") ? "Europe/Oslo" : name.startsWith("Sydney") ? "Australia/Sydney" : name.startsWith("Singapore") ? "Asia/Singapore" : "America/New_York"
+    const date = new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(now)), day = await get(`/v1/day?lat=${lat}&lon=${lon}&date=${date}&tz=${encodeURIComponent(tz)}`)
+    const ds = Date.parse(day.start), dspan = Date.parse(day.end) - ds
+    const sunS: Array<{ t: number; alt: number }> = []; for (let i = 0; i < tr.count; i++) { const t = s0 + i * tr.stepSeconds * 1000; if (t >= ds - 12e5 && t <= ds + dspan + 12e5) sunS.push({ t, alt: tr.sun.altitude[i] }) }
+    const evs = day.events.map((e: { body: string; kind: string; time: string }) => ({ body: e.body, kind: e.kind, t: Date.parse(e.time) }))
+    const nx = evs.filter((e: { t: number }) => e.t > now)[0] ?? null
+    for (const w of [358, 343]) {
+      const L = ch.timelineLayout(evs, sunS, ds, dspan, w, now, nx, e => e.kind.toUpperCase(), t => new Date(t).toISOString().slice(11, 16), (t, k) => Math.ceil(t.length * (k === "name" ? 6.4 : 6.6)) + 4)
+      expect(new Set(L.labels.map(l => l.y)).size, `${name} ${w}: label rows`).toBeLessThanOrEqual(2)
+      for (let i = 0; i < L.labels.length; i++) {
+        const a = L.labels[i]!
+        expect(a.x).toBeGreaterThanOrEqual(0); expect(a.x + a.w).toBeLessThanOrEqual(w)
+        for (let j = i + 1; j < L.labels.length; j++) expect(ch.overlapArea(a, L.labels[j]!), `${name} ${w}: labels ${i} x ${j}`).toBe(0)
+        for (const ld of L.leaders) expect(ch.segHitsRect(ld, a), `${name} ${w}: a leader crosses label ${i}`).toBe(false)
+      }
+    }
     for (const [W, H] of [[390, 354.5], [375, 280.1]] as const) {
       const st = { W, H, insetL: 0, insetR: 0, center: ch.chartCenter(lat, [pos.sun.azimuth, pos.moon.azimuth]), now, ctl: { id: "ctl", x: W - 44, y: 0, w: 44, h: 44 }, pose: null,
         meas: (t: string) => Math.ceil(t.length * 7.2) + 2, lh: 15, bodies }
@@ -403,7 +421,7 @@ describe("home: the chart in every sky state", () => {
         for (let i = 1; i < l.xs.length - 1; i++) {
           const a1 = Math.atan2(l.ys[i]! - l.ys[i - 1]!, l.xs[i]! - l.xs[i - 1]!), a2 = Math.atan2(l.ys[i + 1]! - l.ys[i]!, l.xs[i + 1]! - l.xs[i]!)
           const seg = Math.min(Math.hypot(l.xs[i]! - l.xs[i - 1]!, l.ys[i]! - l.ys[i - 1]!), Math.hypot(l.xs[i + 1]! - l.xs[i]!, l.ys[i + 1]! - l.ys[i]!))
-          turn.push(seg < 1.5 || l.ys[i]! < m.g.top + 10 * (m.g as unknown as { ky: number }).ky ? NaN : ((a2 - a1) * 180 / Math.PI + 540) % 360 - 180)
+          turn.push(seg < 1.5 || l.ys[i]! < m.g.top + 15 * m.g.ky ? NaN : ((a2 - a1) * 180 / Math.PI + 540) % 360 - 180)
         }
                 for (let i = 1; i < turn.length - 1; i++) if (![turn[i - 1], turn[i], turn[i + 1]].some(Number.isNaN)) worst = Math.max(worst, Math.abs(turn[i]! - (turn[i - 1]! + turn[i + 1]!) / 2))
         TURN.push(`${where} ${k} ${worst.toFixed(1)}`)
