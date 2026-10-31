@@ -1,4 +1,4 @@
-// Remote load: drive ephem from ephem-load's Generator Durable Objects in several regions (guide "Remote load").
+// Remote load: drive ephem from ephem-load's Generator Durable Objects in several regions (guide "Load").
 //   node --experimental-strip-types scripts/obs/load-remote.ts --mode mixed --rate 60 --duration 60 --regions enam,weur,apac
 //        [--pin ephem=<version id>] [--seed 1] [--mix position=40,warm=30,track=15,weather=14,search=1] [--run-id <id>]
 //        [--warmup 10 s before the measured window, sent on the same schedule, counted apart] [--shards N per region (more than the plan needs)] [--plan] [--json] [--quiet] [--base https://ephem-load.ivar.workers.dev]

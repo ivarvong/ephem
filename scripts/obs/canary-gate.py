@@ -236,7 +236,7 @@ BASE_T = threading.Thread(target=load_base); BASE_T.start()
 early = False; passed_early = None
 start = time.time(); deadline = start + a.wait; live_end = ms(a.since) + int(a.live * 1000)
 polls = 0
-POLLS = []   # per poll: arrival of each signal (guide "Telemetry gate": the measured arrival curve)
+POLLS = []   # per poll: arrival of each signal (the measured arrival curve)
 while True:
     polls += 1
     tq = time.time()

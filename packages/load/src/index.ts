@@ -1,5 +1,5 @@
 // ephem-load: open-loop load at ephem from inside Cloudflare, in several regions at once, so A/Bs stop depending on one laptop's
-// link (guide "Remote load"). The pattern is db-load's (~/code/db/bench/worker): a run is `shards` Generator Durable Objects per
+// link (guide "Load"). The pattern is db-load's (~/code/db/bench/worker): a run is `shards` Generator Durable Objects per
 // region, each created with a location hint; each runs its share of the schedule in an alarm and records client latencies;
 // GET /run/:id merges them. The Coordinator (one object) admits runs: one at a time, inside the per-hour request budget.
 //   GET  /health              no auth: service, colo, target, limits

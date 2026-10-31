@@ -18,7 +18,7 @@
 #          (.git/ephem-gate-pass/; NO_GATE_CACHE=1 runs it anyway). One `== timings` line per deploy (stage durations).
 #          A change to non-versioned settings (tailConsumers, observability, logpush in packages/worker/cloudflare.config.ts)
 #          deploys with cf deploy instead (no 0% stage: those settings apply on deployment), with the same live smoke + rollback.
-#   load   ephem-load (packages/load, the remote load generator; guide "Remote load"): cf deploy, wait until /health answers from
+#   load   ephem-load (packages/load, the remote load generator; guide "Load"): cf deploy, wait until /health answers from
 #          the new version, then check it: /health (target, limits), unauthenticated POST /run refused (401), and with the token
 #          (~/.config/ephem-load/token) an over-limit /plan refused (400) and a 10-request run from one region answered by
 #          ephem (scripts/obs/load-remote.ts). Any failure routes ephem-load back to its previous version. Tags deployed-load/<ts>.

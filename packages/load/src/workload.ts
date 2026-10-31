@@ -10,7 +10,7 @@ export const ORIGIN = "https://ephem.ivar.workers.dev"
 export const REGIONS = ["wnam", "enam", "sam", "weur", "eeur", "apac", "oc", "afr", "me"] as const
 export type Region = (typeof REGIONS)[number]
 
-/** Request kinds. Each matches an existing laptop workload (guide "Remote load"). */
+/** Request kinds. Each matches an existing laptop workload (guide "Load"). */
 export const KINDS = ["position", "warm", "track", "weather", "search"] as const
 export type Kind = (typeof KINDS)[number]
 

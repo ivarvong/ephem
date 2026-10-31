@@ -1,4 +1,4 @@
-"""Server side of an ephem-load run (guide "Remote load"): does the client see what ephem saw?
+"""Server side of an ephem-load run (guide "Load"): does the client see what ephem saw?
 
     python3 scripts/obs/load-check.py load-runs/<run id>.json [--json out.json]
 
