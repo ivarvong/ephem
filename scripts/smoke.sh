@@ -94,7 +94,7 @@ chk blocks-miss 200 "/v1/position?lat=40.7&lon=-74&time=$(python3 -c 'import ran
 # Link preview (src/og-render.ts): the font glyph fetches, the touch icon, and a live card: a place name never asked for (a fresh
 # Og MISS: data from the Api, a real glyph render) must come back as a glyph PNG (x-ephem-og: glyph, not the fallback card),
 # image/png, 2400×1260, 20-300 KB; then the same URL again is a Workers Cache HIT.
-chk og-font 200 "/assets/7dd8d6ff43f63a15/ephem-din-regular.woff2"
+chk og-font 200 "/assets/316a72622a0926ee/ephem-din-regular.woff2"
 chk touch-icon 200 "/apple-touch-icon.png" "PNG"
 og_one() {   # og_one <name> <path> <want x-ephem-og-cache or "">
   local name=$1 p=$2 wc=$3 b="$D/$1.b" h="$D/$1.h" c t why=""

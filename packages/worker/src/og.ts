@@ -8,6 +8,8 @@
 // are ported here, and test/og.test.ts runs both over the same inputs: the preview cannot drift from the page.
 // Privacy: everything that keys or names an image is rounded to 0.01° (≈1 km); no IP, no exact location in any URL we mint.
 import { isValidZone } from "@ephem/core"
+import { DIN_ADV } from "./din.ts"
+import { NOTO_FONTS, notoHas } from "./og-fonts.ts"
 
 // ---------- the homepage's projection, ported from CORE_JS (test/og.test.ts checks them against it) ----------
 export const wrap360 = (x: number) => ((x % 360) + 360) % 360
@@ -223,14 +225,14 @@ export const ogHead = ({ origin, v, now, live }: OgHeadInput) => {
 }
 
 // ---------- the glyph scene ----------
-/** Ephem DIN's characters (src/din.ts: ASCII without lowercase, ° · – ’) and advances (1000 units/em), for layout. */
-const ADV_R: Record<string, number> = { " ": 217, "!": 239, "\"": 308, "#": 511, "$": 457, "%": 830, "&": 597, "'": 172, "(": 288, ")": 288, "*": 377, "+": 512, ",": 172, "-": 393, ".": 194, "/": 392, ":": 194, ";": 194, "<": 512, "=": 512, ">": 512, "?": 429, "@": 872, A: 577, B: 614, C: 610, D: 621, E: 547, F: 539, G: 610, H: 629, I: 249, J: 313, K: 598, L: 529, M: 753, N: 663, O: 610, P: 577, Q: 610, R: 599, S: 546, T: 482, U: 635, V: 523, W: 796, X: 566, Y: 499, Z: 516, "[": 295, "\\": 392, "]": 295, "^": 512, "_": 457, "`": 500, "{": 340, "|": 303, "}": 340, "~": 512, "°": 411, "·": 194, "–": 417, "’": 172 }
-const ADV_B: Record<string, number> = { " ": 229, "!": 249, "\"": 381, "#": 539, "$": 502, "%": 904, "&": 598, "'": 193, "(": 310, ")": 310, "*": 377, "+": 529, ",": 193, "-": 365, ".": 215, "/": 405, ":": 215, ";": 215, "<": 529, "=": 529, ">": 529, "?": 451, "@": 873, A: 606, B: 598, C: 600, D: 600, E: 532, F: 527, G: 600, H: 609, I: 261, J: 331, K: 610, L: 516, M: 732, N: 634, O: 600, P: 567, Q: 600, R: 600, S: 548, T: 496, U: 614, V: 554, W: 833, X: 593, Y: 541, Z: 505, "[": 315, "\\": 405, "]": 316, "^": 529, "_": 500, "`": 500, "{": 360, "|": 295, "}": 360, "~": 529, "°": 394, "·": 215, "–": 417, "’": 193 }
-for (let d = 0; d < 10; d++) { ADV_R[String(d)] = 512; ADV_B[String(d)] = 525 }
+/** Ephem DIN's characters and advances (1000 units/em), generated with the font (scripts/fonts/din.py → src/din.ts), for layout. */
+const ADV_R = DIN_ADV.r, ADV_B = DIN_ADV.b
 export const DIN_CHARS: ReadonlySet<string> = new Set(Object.keys(ADV_R))
-const FOLD: Record<string, string> = { "Ø": "O", "Æ": "AE", "Œ": "OE", "ß": "SS", "Ł": "L", "Đ": "D", "Ð": "D", "Þ": "TH", "Ħ": "H", "I": "I", "−": "–", "—": "–", "‘": "’", "“": "\"", "”": "\"" }
-/** Text in Ephem DIN: caps, accents folded (TROMSØ → TROMSO), anything the font lacks dropped (glyph refuses a missing glyph). */
-export const din = (s: string) => [...s.toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "")].map(c => DIN_CHARS.has(c) ? c : FOLD[c] ?? (/\s/.test(c) ? " " : "")).join("").replace(/ +/g, " ").trim()
+/** A text as the card shows it: NFC, caps (what the page's text-transform does), whitespace runs as one space. It never folds,
+ *  swaps or drops a character: Tromsø is TROMSØ (2026-10-31: the card said TROMSO). */
+export const din = (s: string) => s.normalize("NFC").toUpperCase().replace(/\s+/g, " ").trim()
+/** The face that can set all of `t`: Ephem DIN, else Noto Sans (the whole item, so a word never mixes faces), else none. */
+export const faceFor = (t: string): "din" | "noto" | null => { const cs = [...t]; return cs.every(c => DIN_CHARS.has(c)) ? "din" : cs.every(notoHas) ? "noto" : null }
 export const textWidth = (s: string, size: number, bold = false, tracking = 0) => [...s].reduce((w, c) => w + ((bold ? ADV_B : ADV_R)[c] ?? 500) / 1000 * size + tracking, 0)
 
 export interface GlyphFont { readonly url: string; readonly sha256: string }
@@ -251,9 +253,11 @@ export interface OgModel { readonly spec: GlyphSpec; readonly labels: ReadonlyAr
 /** The scene: data → glyph spec (plus the label layout, for tests: no label may sit on a track or a disc). */
 export const ogScene = (d: OgData, fonts: { readonly regular: GlyphFont; readonly bold: GlyphFont }): OgModel => {
   const [W, H] = OG_SIZE, items: Item[] = [], at = d.at
+  let noto = false
   const text = (s: string, x: number, y: number, size: number, paint: Paint, o: { bold?: boolean; tracking?: number; align?: "start" | "center" | "end"; fit?: number } = {}) => {
-    const t = din(s); if (!t) return
-    items.push({ text: t, font: o.bold ? "b" : "r", size, at: [f1(x), f1(y)], paint, ...(o.tracking ? { tracking: o.tracking } : {}), ...(o.align && o.align !== "start" ? { align: o.align } : {}), ...(o.fit ? { fit: Math.round(o.fit) } : {}) })
+    const t = din(s), face = faceFor(t); if (!t || !face) return
+    if (face === "noto") noto = true
+    items.push({ text: t, font: (face === "noto" ? "n" : "") + (o.bold ? "b" : "r"), size, at: [f1(x), f1(y)], paint, ...(o.tracking ? { tracking: o.tracking } : {}), ...(o.align && o.align !== "start" ? { align: o.align } : {}), ...(o.fit ? { fit: Math.round(o.fit) } : {}) })
   }
   // ---- the chart (its own coordinates, shifted down by HEAD) ----
   const g = chartGeom(W, CHART_H, 18, 34), sunAlt = d.sun.altitude, sky = skyAt(sunAlt)
@@ -333,13 +337,13 @@ export const ogScene = (d: OgData, fonts: { readonly regular: GlyphFont; readonl
   items.unshift({ rect: [0, 0, W, HEAD], paint: BG })
   text("EPHEM", PAD, 47, 26, INK, { bold: true, tracking: 8 })
   const px = PAD + textWidth("EPHEM", 26, true, 8) + 22, dl = din(dateLine(at, d.tz)), dw = textWidth(dl, 19, false, 1.6)
-  text(d.place, px, 47, 26, MUTED, { tracking: 3.5, fit: W - PAD - dw - 36 - px })
+  text(faceFor(din(d.place)) ? d.place : coords(d.lat, d.lon), px, 47, 26, MUTED, { tracking: 3.5, fit: W - PAD - dw - 36 - px })
   text(dl, W - PAD, 46, 19, MUTED, { tracking: 1.6, align: "end" })
   // ---- hero: T− countdown and the event (left), telemetry (right) ----
   const nx = nextEvent(d.events, at), sa = altOf(d.sun)
   if (nx) {
     const t = Date.parse(nx.time), tomorrow = localDate(t, d.tz) !== localDate(at, d.tz)
-    text(`T–${hhmmss(t - at)}`, PAD - 4, 494, 118, INK, { tracking: 1 })
+    text(`T−${hhmmss(t - at)}`, PAD - 4, 494, 118, INK, { tracking: 1 })
     text(`${evName(nx)} · ${hm(t, d.tz)}${tomorrow ? " TOMORROW" : ""}`, PAD, 540, 24, INK, { bold: true, tracking: 4.8, fit: 560 })
   } else {
     text("NO RISE OR SET", PAD - 2, 486, 72, INK, { tracking: 1 })
@@ -355,13 +359,13 @@ export const ogScene = (d: OgData, fonts: { readonly regular: GlyphFont; readonl
   }
   for (const [i, key] of (["sun", "moon"] as const).entries()) {
     const b = d[key], a = altOf(b), app = b.apparentAltitude != null
-    readout(col[0]!, row[i]!, key === "sun" ? SUN : MOON, `${key === "sun" ? "Sun" : "Moon"} · Altitude`, `${a < 0 ? "–" : ""}${Math.abs(a).toFixed(2)}`, `° ${app ? "APP" : "TRUE"}`)
+    readout(col[0]!, row[i]!, key === "sun" ? SUN : MOON, `${key === "sun" ? "Sun" : "Moon"} · Altitude`, `${a < 0 ? "−" : ""}${Math.abs(a).toFixed(2)}`, `° ${app ? "APP" : "TRUE"}`)
     readout(col[1]!, row[i]!, null, "Azimuth", wrap360(b.azimuth).toFixed(2), `° T ${compass(b.azimuth)}`)
   }
   items.push({ line: [PAD, 372.5, W - PAD, 372.5], stroke: { width: 1 }, paint: rgba(INK, 0.06) })
   items.push({ line: [646.5, 404, 646.5, 590], stroke: { width: 1 }, paint: rgba(INK, 0.09) })
   void FAINT
-  return { spec: { glyph: 1, size: [W, H], background: BG, fonts: { r: fonts.regular, b: fonts.bold }, items }, labels, discs, segs }
+  return { spec: { glyph: 1, size: [W, H], background: BG, fonts: { r: fonts.regular, b: fonts.bold, ...(noto ? { nr: NOTO_FONTS.regular, nb: NOTO_FONTS.bold } : {}) }, items }, labels, discs, segs }
 }
 const overlap = (a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }) =>
   Math.min(a.x + a.w, b.x + b.w) > Math.max(a.x, b.x) && Math.min(a.y + a.h, b.y + b.h) > Math.max(a.y, b.y)

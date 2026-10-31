@@ -920,8 +920,14 @@ scratchpad `journey/`):
   so both ends sit on the edges; altitude via `altU`: linear above the horizon, 36·tanh(alt/36) below, C2), `layoutLabels`
   (each body's name, clear of every track, disc and button). test/home.test.ts runs them over 13 sky states from the API's own
   answers at 390 and 375: zero label crossings, one connected track per body with both ends on the edges, no kinks.
-- **Font:** "Ephem DIN" (D-DIN subset, OFL, renamed; src/din.ts, built by scripts/fonts/din.py) inline in the streamed tail;
-  licence at /licenses/din.txt. No font requests.
+- **Font:** "Ephem DIN" (D-DIN subset, OFL, renamed; src/din.ts, generated whole by scripts/fonts/din.py: base64 woff2,
+  per-character advances, licence; byte-reproducible, the sha256 is pinned) inline in the streamed tail; licence at
+  /licenses/din.txt. No font requests. Covers printable ASCII caps, the Latin-1 capitals, every Latin Extended-A capital but Ŋ,
+  Ș Ț, ° · ’ – — − ← ↑ → ↓ (D-DIN lacks Ext-A, − and the arrows: din.py composes them from its own letters, accents and
+  strokes). 10 624 + 10 840 B woff2 (was 6 896 + 7 056, ASCII caps only; +10.0 KB raw, +7.5 KB br on the page). Every DIN
+  element on / is set in caps (CSS) and, measured with CDP `CSS.getPlatformFontsForNode` at 390 for Tromsø, São Paulo,
+  Zürich, Reykjavík, is drawn entirely by Ephem DIN (before: Ø ã ü í − → by "DIN Alternate"). The `--din` stack keeps system
+  fallbacks, so a character outside the subset falls back per glyph, never tofu. Names are shown via textContent, unchanged.
 
 ## Link previews (`/og.png`, src/og.ts, 2026-10-31)
 
@@ -931,8 +937,11 @@ A shared link previews as a live 2400×1260 card of that place's sky (iMessage, 
 - **Scene** (src/og.ts, pure, test/og.test.ts): the homepage's chart (`trackSpan`, `altU`, `crBezier`, `zenithArc`,
   `skyAt` are ported from CORE_JS; the test runs both over the same inputs, so a CORE_JS change that the port lacks fails
   the gate), EPHEM + place, `T–HH:MM:SS` to the next event (the page's `upcoming` rule) with its name, Sun/Moon alt/az,
-  date/time and zone. Scene units 1200×630, rendered `dpr=2`. Text is Ephem DIN, caps, folded to the font (`din()`:
-  Tromsø → TROMSO; the font has no `−`, so minus is `–`); glyph refuses a missing glyph, so the test checks every text item.
+  date/time and zone. Scene units 1200×630, rendered `dpr=2`. Text is caps (`din()`: NFC + toUpperCase, never folded or
+  dropped: Tromsø → TROMSØ; until 2026-10-31 it folded to TROMSO because the font was ASCII-only). glyph has no per-glyph
+  fallback and refuses a missing glyph, so `faceFor()` picks per text item: Ephem DIN when it has every character, else Noto
+  Sans (OFL, pinned by commit + sha256 in src/og-fonts.ts, declared in the spec only when used: Cyrillic, Greek, Vietnamese),
+  else the place is shown as coordinates. test/og.test.ts checks ~50 real place names character by character.
 - **Routes** (front door, before the app; no request row, like /favicon.ico): `GET /og.png?lat&lon&place&tz&t` (no lat/lon:
   the requester's request.cf place), `GET /assets/<sha16>/ephem-din-{regular,bold}.woff2` (the font glyph fetches; pinned
   by sha256 in the spec, src/og-fonts.ts, hashes tested), `GET /apple-touch-icon.png` (180×180, rendered by glyph from

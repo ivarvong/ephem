@@ -21,6 +21,12 @@ const fixtures = () => makeBlocks(direct(async (first, count) => {
 const NYC_CF = { latitude: "40.71427", longitude: "-74.00597", city: "New York City", region: "New York", country: "US", timezone: "America/New_York", colo: "EWR" }
 const AT = Date.parse("2026-10-31T00:10:00Z"), T = og.bucketOf(AT)
 const NYC_Q: og.OgQuery = { lat: 40.71, lon: -74.01, place: "New York City", tz: "America/New_York", t: T }
+/** Real place names (Cloudflare city names and their own spellings) across the Latin scripts the font must cover. */
+const PLACES = ["Tromsø", "São Paulo", "Zürich", "Reykjavík", "Kraków", "Łódź", "Gdańsk", "Częstochowa", "Ząbki", "İstanbul", "Şanlıurfa",
+  "Muğla", "Győr", "Pécs", "Rīga", "Liepāja", "Ķekava", "Ogre Ļaudona", "Šiauliai", "Klaipėda", "Panevėžys", "Plzeň", "Ústí nad Labem",
+  "České Budějovice", "Třebíč", "Timișoara", "Constanța", "Brașov", "Đakovo", "Ħamrun", "Żabbar", "Għajnsielem", "Malmö", "Århus",
+  "Ærøskøbing", "Þórshöfn", "Göteborg", "Besançon", "Málaga", "A Coruña", "Užice", "Ľubotín", "Liptovský Mikuláš", "Luleå",
+  "Saint-Étienne", "Île-de-France", "Ōsaka", "Hāna", "Tōkyō", "Bălți"]
 const isPng = (b: Uint8Array) => b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47
 
 describe("og: the chart is the page's (ported from CORE_JS, checked against it)", () => {
@@ -54,12 +60,17 @@ describe("og: the chart is the page's (ported from CORE_JS, checked against it)"
 })
 
 describe("og: text in Ephem DIN, the font served for glyph", () => {
-  it("folds to the font's characters: caps, accents, Ø, the minus; drops the rest", () => {
-    expect(og.din("Tromsø")).toBe("TROMSO")
-    expect(og.din("São Paulo, Brasil")).toBe("SAO PAULO, BRASIL")
-    expect(og.din("Zürich − Œuvre — ok")).toBe("ZURICH – OEUVRE – OK")
-    expect(og.din("東京 Tokyo")).toBe("TOKYO")
-    for (const c of og.din("ÅÆÐŁßÞ ½ ☃ ab")) expect(og.DIN_CHARS.has(c), c).toBe(true)
+  it("the font covers real place names, capitals and the page's signs (every character, as displayed)", () => {
+    for (const name of PLACES) for (const c of og.din(name)) expect(og.DIN_CHARS.has(c), `${name}: ${c} U+${c.codePointAt(0)!.toString(16)}`).toBe(true)
+    for (const c of "0123456789°·−→←↑↓–’T:") expect(og.DIN_CHARS.has(c), c).toBe(true)
+    for (let cp = 0xc0; cp < 0x17f; cp++) { const c = String.fromCodePoint(cp); if (c !== c.toUpperCase() || c.toLowerCase() === c || cp === 0xd7 || cp === 0x14a) continue; expect(og.DIN_CHARS.has(c), c).toBe(true) }
+  })
+  it("never alters a name's characters: NFC caps only, no folding or dropping; a face that has them all sets it", () => {
+    for (const name of PLACES) { expect(og.din(name)).toBe(name.normalize("NFC").toUpperCase()); expect(og.faceFor(og.din(name))).toBe("din") }
+    expect(og.din("Tromsø")).toBe("TROMSØ"); expect(og.din("Zu\u0308rich")).toBe("ZÜRICH")   // NFD in, the same letters out
+    expect(og.din("São  Paulo\t")).toBe("SÃO PAULO")
+    expect(og.faceFor(og.din("Москва"))).toBe("noto"); expect(og.din("Hà Nội")).toBe("HÀ NỘI"); expect(og.faceFor("HÀ NỘI")).toBe("noto")
+    expect(og.faceFor("東京")).toBeNull()
   })
   it("the font paths are content-addressed by the sha256 of the bytes we serve", () => {
     for (const w of ["regular", "bold"] as const) {
@@ -111,7 +122,7 @@ describe("og: the scene from the API's own answers (fixture DE440 blocks)", () =
     const texts = m.spec.items.filter(i => "text" in i).map(i => i.text as string)
     for (const t of texts) for (const c of t) expect(og.DIN_CHARS.has(c), `${t}: ${c}`).toBe(true)
     expect(texts).toContain("EPHEM"); expect(texts).toContain("NEW YORK CITY")
-    expect(texts.some(t => /^T–\d\d:\d\d:\d\d$/.test(t))).toBe(true)
+    expect(texts.some(t => /^T−\d\d:\d\d:\d\d$/.test(t))).toBe(true)
     expect(m.spec.items.filter(i => "path" in i && "stroke" in i).length).toBe(4)   // two tracks, past and future
     expect(m.labels.map(l => l.id).toSorted()).toEqual(["MOON", "SUN"])
     for (const l of m.labels) {
@@ -119,6 +130,14 @@ describe("og: the scene from the API's own answers (fixture DE440 blocks)", () =
       expect(m.segs.filter(s => og.segHitsRect(s, l)).length, l.id).toBe(0)
     }
     expect(JSON.stringify(m.spec).length).toBeLessThan(60_000)   // POSTed to glyph per miss
+  })
+  it("the place on the card is the name's own letters: DIN when it covers them, else Noto Sans whole, else coordinates", async () => {
+    const d = await ogData(NYC_Q, api, {})
+    const place = (name: string) => { const m = og.ogScene({ ...d, place: name }, OG_FONTS); const it = m.spec.items.find(i => i.size === 26 && i.text !== "EPHEM")!; return { text: it.text, font: it.font, fonts: Object.keys(m.spec.fonts) } }
+    for (const name of PLACES) expect(place(name), name).toEqual({ text: name.normalize("NFC").toUpperCase(), font: "r", fonts: ["r", "b"] })
+    expect(place("Москва")).toEqual({ text: "МОСКВА", font: "nr", fonts: ["r", "b", "nr", "nb"] })
+    expect(place("Hà Nội")).toMatchObject({ text: "HÀ NỘI", font: "nr" })
+    expect(place("東京")).toMatchObject({ text: "40.71° N, 74.01° W", font: "r" })   // no face has it: the place as coordinates, never a mangled name
   })
   it("icon and fallback specs use only the font's characters", () => {
     for (const s of [og.iconSpec(), og.fallbackSpec(OG_FONTS)]) for (const i of s.items) if ("text" in i) for (const c of i.text as string) expect(og.DIN_CHARS.has(c)).toBe(true)

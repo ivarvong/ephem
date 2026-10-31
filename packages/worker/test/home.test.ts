@@ -24,6 +24,13 @@ describe("home: who is the sky for", () => {
     expect(visitor(u(), undefined)).toMatchObject({ lat: 40.6892, lon: -74.0445, city: "Liberty Island", source: "default", colo: null })
     expect(visitor(u(), { ...NYC, timezone: "Nowhere/Land" }).tz).toBe("UTC")
   })
+  it("never alters a place name's characters (the page shows it via textContent; caps come from CSS)", () => {
+    for (const name of ["Tromsø", "São Paulo", "Zürich", "Reykjavík", "Łódź", "İstanbul", "Москва"]) {
+      const v = visitor(u("?lat=1&lon=2&place=" + encodeURIComponent(name)), NYC)
+      expect(v.city).toBe(name)
+      expect(page(v)).toContain(JSON.stringify(name).slice(1, -1))
+    }
+  })
   it("embeds the visitor safely: no script breakout from place names", () => {
     const html = page({ ...V, place: "</script><script>alert(1)</script>", city: "</script><script>alert(1)</script>" })
     expect(html).not.toContain("</script><script>alert(1)")
