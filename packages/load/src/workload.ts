@@ -196,7 +196,7 @@ const DAY = 86_400_000
 const iso = (ms: number) => new Date(ms).toISOString().replace(".000Z", "Z")
 const fx = (x: number, d: number) => x.toFixed(d)
 
-/** 24 deterministic keys (split-ab/load.ts's warm set): every shard GETs each once before the start, then cycles them (HITs). */
+/** 24 deterministic keys (the 2026-10-30 compute-split A/B's warm set): every shard GETs each once before the start, then cycles them (HITs). */
 export const WARM_KEYS: readonly string[] = Array.from({ length: 8 }, (_, i) => {
   const d = String(i + 1).padStart(2, "0"), e = String(i + 2).padStart(2, "0")
   return [
@@ -213,11 +213,11 @@ const BOXES: ReadonlyArray<readonly [number, number, number, number]> = [
 
 /**
  * One request of a kind. `rand` is the shard's key PRNG (keyRand), `i` the arrival index, `now` epoch ms.
- *   position  GET /v1/position (live, no time: computed in the front door), split-ab's probe
+ *   position  GET /v1/position (live, no time: computed in the front door)
  *   warm      GET one of WARM_KEYS (pre-warmed: Workers Caching HITs)
  *   track     GET /v1/track, homepage-shaped (72 h from a UTC midnight, default 20-min grid) at a fresh lat/lon (load.sh LOAD=track)
  *   weather   GET /v1/weather at a random land-weighted lat/lon, n = 1..3 (load.sh LOAD=weather)
- *   search    POST /v1/alignment/search, 12-month Brooklyn Bridge Park scan at a fresh target height (split-ab's cold scan)
+ *   search    POST /v1/alignment/search, 12-month Brooklyn Bridge Park scan at a fresh target height
  */
 export const build = (kind: Kind, rand: () => number, i: number, now: number): Built => {
   switch (kind) {

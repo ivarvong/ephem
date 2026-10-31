@@ -87,7 +87,7 @@ describe("workloads", () => {
     expect(s.method).toBe("POST")
     const body = JSON.parse(s.body!)
     expect(body.target.height).toBeGreaterThanOrEqual(71)
-    expect(body.region).toEqual(JSON.parse(readFileSync(new URL("../../../scripts/obs/split-ab/brooklyn-bridge-park.geojson", import.meta.url), "utf8")))
+    expect(body.region).toEqual(JSON.parse(readFileSync(new URL("../../core/test/fixtures/regions/brooklyn-bridge-park.geojson", import.meta.url), "utf8")))
     expect(park.type).toBe("Feature")
   })
   it("cold keys never repeat across runs, even with the same seed and plan", () => {

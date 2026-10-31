@@ -6,7 +6,7 @@
 // --seed   the schedule and kind picks; cold keys also mix in the run id, so they are new in every run (never HITs from a rerun)
 // --pin    every request carries Cloudflare-Workers-Version-Overrides: ephem="<id>"; the table counts answers from any other version
 // --plan   print the validated spec and shard plan; start nothing
-// Prints the run id and window at the start (for queue.py / cpu-by-version.py / load-check.py --from/--to), then the client
+// Prints the run id and window at the start (for cpu-by-version.py --from/--to), then the client
 // table per region and kind. Writes $LOAD_DIR (default ./load-runs)/<run id>.json: the full report incl. the sampled rays.
 // Token: EPHEM_LOAD_TOKEN, else ~/.config/ephem-load/token (never printed). Ctrl-C stops the run on every shard.
 // Exit 0 when every region finished with no errors and (with --pin) no answer from another version.
@@ -101,7 +101,7 @@ const start = await call("POST", "/run", body).catch((e: Error) => { console.err
 const runId: string = start.runId
 const endAt: string = start.endAt
 console.log(`run ${runId}: ${body.mode} ${body.rate} req/s x ${body.duration} s (after ${start.spec.warmupS} s warmup from ${start.warmupAt}) from ${body.regions.join(",")} (${start.shardsPerRegion} shards/region, via ${start.viaColo})${pin ? ` pinned ephem=${pin}` : ""}`)
-console.log(`window ${start.startAt} .. ${endAt}   (measured; use it for queue.py / cpu-by-version.py --from/--to)`)
+console.log(`window ${start.startAt} .. ${endAt}   (measured; use it for cpu-by-version.py --from/--to)`)
 let stopping = false
 process.on("SIGINT", () => {
   if (stopping) process.exit(130)

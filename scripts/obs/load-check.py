@@ -7,11 +7,11 @@ status] per region and kind), then from Workers Observability:
   1. counts: front-door invocations carrying `x-ephem-load: <run>` per (route, answering colo, status, version), against the
      client's completed + prewarm requests (they should match to within ingest lag);
   2. per sampled request, joined on cf-ray: server e2e = end of the Effect request span - start of the runtime request span
-     (pull.py's definition: the isolate's wait + the handler, no network) and the colo that ran it;
+     (the isolate's wait + the handler, no network) and the colo that ran it;
   3. per (region, kind): client p50/p90/p99 of the joined requests next to server e2e p50/p90/p99 of the same requests, and
      the per-request difference client - server (network + TLS + the generator's own scheduling): it should be small, >= 0,
      and alike across kinds within a region.
-Pull >= 5 min after the run ends (ingest lag; gotcha "cold-split.py / cpu-by-version.py right after a load run undercount").
+Pull >= 5 min after the run ends (ingest lag).
 """
 import argparse, collections, json, math, os, sys
 from datetime import datetime

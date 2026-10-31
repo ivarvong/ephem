@@ -1,8 +1,7 @@
 """Shared helper: run a Workers Observability query through the cf CLI and return the parsed JSON."""
 import json, os, subprocess, threading, time
 
-# The Worker queried: "ephem" (front door, MetarFeed) or "ephem-compute" (Api, BlockStore; since the compute split). Scripts
-# take --service; EPHEM_SERVICE sets the default.
+# The Worker queried (EPHEM_SERVICE overrides; every entrypoint of ephem is in it).
 SERVICE = os.environ.get("EPHEM_SERVICE", "ephem")
 # At most this many cf queries at once per process: canary-gate.py's concurrent polls (+ events_all's 8 slices) hit
 # "[10500] Internal authentication error" 500s twice in 3 live gates (2026-10-31); the sequential gate never did in 25.
@@ -44,7 +43,6 @@ def events_all(filters: list, window: tuple[int, int], step: int = 60_000, worke
     1000-row cap is halved and re-queried, so busy windows are never silently truncated. Deduplicated by the whole $metadata
     (slice edges can repeat an event). Never by $metadata.id: distinct events share ids (78 rows, 67 ids for 78 distinct
     rays, 2026-10-30), and deduplicating by it dropped 14-24% of events."""
-    import threading   # not concurrent.futures: it imports the stdlib `queue`, which scripts/obs/queue.py shadows
     def pmap(ws: list) -> list:
         res: list = [None] * len(ws); nxt = iter(range(len(ws))); lock = threading.Lock(); err: list = [None]
         def run() -> None:
@@ -74,6 +72,3 @@ def events_all(filters: list, window: tuple[int, int], step: int = 60_000, worke
                 if i not in seen:
                     seen.add(i); out.append(e)
     return out
-# ship.sh proof commit 1 (2026-10-31T01:25:06Z): comment only
-# ship.sh proof commit 2 (2026-10-31T01:25:13Z): comment only
-# ship.sh proof commit 3 (2026-10-31T01:25:17Z): comment only

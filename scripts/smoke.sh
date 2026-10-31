@@ -8,8 +8,7 @@
 # --expect-compute  require the compute check's fresh MISS to be computed by <id> (x-ephem-compute-version: the Api's version;
 #                   deploy.sh passes the version under test, so a canary's forwarded MISS must run on the canary itself)
 # The compute / compute-hit checks prove the Api loopback end to end on every deploy: a never-seen deterministic key is a MISS
-# computed by the Api (x-ephem-cache MISS, x-ephem-compute-version), and the same key again is a HIT (Workers Caching
-# of the callee across the service binding).
+# computed by the Api (x-ephem-cache MISS, x-ephem-compute-version), and the same key again is a HIT (Workers Caching).
 # --run       send `x-ephem-smoke: <id>` on every request (curl checks and the MCP probe): scripts/obs/canary-gate.py selects
 #             exactly these front-door invocations in Workers Observability
 #             and, with --pin, fails any response whose x-ephem-errors (the answering isolate's error count) is non-zero
@@ -63,8 +62,6 @@ chk_one() {
 ORDER=()
 chk() { want "$1" || return 0; ORDER+=("$1"); chk_one "$@" & }
 chk home 200 "/"
-chk instrument-gone 404 "/instrument"   # removed 2026-10-31 (ivar: "delete /instrument")
-chk fonts-gone 404 "/fonts/0123456789ab/SofiaSansCondensed-Core.woff2"   # removed 2026-10-31: `/` uses system fonts only
 chk page-trace 200 "/?lat=40.7&lon=-74&tz=America/New_York" '<meta name="traceparent" content="00-'   # document trace context (src/clienttrace.ts)
 RT=$(openssl rand -hex 16); RS=$(openssl rand -hex 8)
 chk rum 204 "/rum" "" '{"tp":"00-'"$RT"'-'"$RS"'-01","page":"/","seq":0,"s":[{"k":"app","n":"smoke","sid":"'"$RS"'","t":0}]}'   # RUM ingest (src/rum.ts), stored synthetic

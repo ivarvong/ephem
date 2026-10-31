@@ -829,7 +829,7 @@ $("bExp").onclick = () => {
 new ResizeObserver(() => schedule()).observe(sc);
 
 /* ---------- header, key numbers, run details ---------- */
-const page = meta.page === "instrument" ? "/instrument" : "/";
+const page = "/";
 const dev = rumSrc ? "production RUM" : [String(meta.device || "").replace(/ @\dx$/, ""), meta.net === "none" || !meta.net ? "unthrottled" : String(meta.net).split(" (")[0], meta.cpu > 1 ? meta.cpu + "× CPU" : "", meta.mode].filter(Boolean).join(" · ");
 $("h1").textContent = page + " · " + dev;
 document.title = "Trace " + page + " · " + dev;

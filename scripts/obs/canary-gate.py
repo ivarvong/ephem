@@ -36,7 +36,7 @@ FAIL on (rule; see docs/telemetry_and_profiling.md "Telemetry gate"):
                baseline window; a signature the previous version also shows is a warning (pre-existing)
 WARN only: CPU p50/max per (entrypoint, path) vs the previous version's last --baseline-min minutes: new p50 > 2x base p50
   and +5 ms, or new max > base p99 + 50 ms (base n >= 10). Not a failure: the smoke sends 1-3 requests per route to fresh
-  isolates, whose first request pays isolate start-up (cold-split.py: 1.2-2x CPU), so the noise exceeds any rule we could
+  isolates, whose first request pays isolate start-up (1.2-2x CPU), so the noise exceeds any rule we could
   defend at that n.
 Exit 0 pass, 1 fail.
 """
@@ -49,7 +49,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import telemetry as t  # noqa: E402
 
 ap = argparse.ArgumentParser()
-ap.add_argument("worker", choices=["ephem"])   # ephem-compute (a separate Api Worker) was removed 2026-10-30, DESIGN §12.0
+ap.add_argument("worker", choices=["ephem"])
 ap.add_argument("new"); ap.add_argument("prev")
 ap.add_argument("--since", required=True); ap.add_argument("--run", required=True); ap.add_argument("--manifest", required=True)
 ap.add_argument("--wait", type=float, default=90); ap.add_argument("--live", type=float, default=0)
@@ -99,7 +99,7 @@ def from_root_span(sp):
 
 def par(fns):
     """Run thunks concurrently (each is one or more cf CLI queries, ~1 s apiece): a poll was ~10 sequential queries."""
-    import threading   # not concurrent.futures: it imports the stdlib `queue`, which scripts/obs/queue.py shadows
+    import threading
     res, errs = [None] * len(fns), []
     def run(i):
         try: res[i] = fns[i]()

@@ -19,7 +19,7 @@ if [ "${LOAD:-}" = weather ]; then
   wait; exit 0
 fi
 if [ "${LOAD:-}" = search ]; then
-  PARK=$(cat "$(dirname "$0")/split-ab/brooklyn-bridge-park.geojson")
+  PARK=$(cat "$(dirname "$0")/../../packages/core/test/fixtures/regions/brooklyn-bridge-park.geojson")
   for i in $(seq 1 "$N"); do
     H=$(awk -v r=$RANDOM -v s=$RANDOM -v t="$(date +%s)" 'BEGIN{printf "%.6f", 71 + ((t % 1000) * 1e6 + r * 32768 + s) % 1e9 / 1e9}')
     curl -s -o /dev/null -w "s %{http_code} %{time_total}\n" -X POST -H 'content-type: application/json' "$B/v1/alignment/search" \

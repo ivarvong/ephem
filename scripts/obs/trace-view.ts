@@ -84,9 +84,9 @@ const rays = reqs.filter(r => r.ray).map(r => r.ray!)
 const last = Math.max(...R.map(r => (n(r.start_ms) ?? 0) + (n(r.dur_ms) ?? 0)))
 const server = await pullServer({ from: t0Wall - 60_000, to: t0Wall + last + 120_000, clientTraceId: traceId, rays, waitS, log })
 const synthetic = R.some(r => r.synthetic === "true")
-const model = buildModel(client, server, { page: page === "/instrument" ? "instrument" : "home", url: page, client: `${R[0]!.ua_family}, ${R[0]!.vw} px @${R[0]!.dpr}x, ${R[0]!.colo ?? "?"}${synthetic ? ", synthetic" : ", real user"}`,
+const model = buildModel(client, server, { page: "home", url: page, client: `${R[0]!.ua_family}, ${R[0]!.vw} px @${R[0]!.dpr}x, ${R[0]!.colo ?? "?"}${synthetic ? ", synthetic" : ", real user"}`,
   started: new Date(t0Wall).toISOString(), durationS: Math.round(last / 1000), basin: { rum: rows.length, requests: srv.length, routes: srv.map(x => x.route) } })
-const name = opt("name", `rum-${page === "/" ? "home" : "instrument"}-${traceId.slice(0, 8)}`)
+const name = opt("name", `rum-home-${traceId.slice(0, 8)}`)
 writeFileSync(join(outDir, `${name}.model.json`), JSON.stringify(model, null, 1))
 writeFileSync(join(outDir, `${name}.html`), viewerHtml(model, name))
 writeFileSync(join(outDir, `${name}.perfetto.json`), JSON.stringify(perfetto(model)))
