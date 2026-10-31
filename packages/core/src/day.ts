@@ -130,17 +130,24 @@ export const looker = (src: BlockSource, geo: Geodetic, dut1: number) => {
 }
 type Look = ReturnType<typeof looker>
 
+/** True altitude and azimuth of the limb `s` (+1 upper, −1 lower, 0 centre): the centre moved by r along the local vertical
+ *  (aimVector's definition). Past the zenith (or nadir) that great circle comes down the other side, at the opposite azimuth. */
+export const limbPoint = (alt: number, az: number, s: number, r: number): { alt: number; az: number } => {
+  const x = alt + s * r
+  return x > 90 ? { alt: 180 - x, az: wrap360(az + 180) } : x < -90 ? { alt: -180 - x, az: wrap360(az + 180) } : { alt: x, az }
+}
+
 /** Rise/set function of time: positive when the chosen limb is above the horizon (apparent upper limb vs horizon H, refraction
  *  from `refraction`). With H = 0, upper limb and defaults this is exactly the old altitude + 34′ + radius. */
 export const riseSetFn = (look: Look, body: BodyName, horizon: number | HorizonProfile, limb: Limb, T: number, P: number) => {
   const s = limbSign(limb)
   if (typeof horizon === "number") {
     const off = refraction(horizon, T, P) - horizon
-    return (ms: number) => { const l = look(body, ms); return l.tp.altitude + off + s * angularRadius(body, l.dist) }
+    return (ms: number) => { const l = look(body, ms); return limbPoint(l.tp.altitude, l.tp.azimuth, s, angularRadius(body, l.dist)).alt + off }
   }
   return (ms: number) => {
-    const l = look(body, ms), H = profileAt(horizon, l.tp.azimuth)
-    return l.tp.altitude + (refraction(H, T, P) - H) + s * angularRadius(body, l.dist)
+    const l = look(body, ms), p = limbPoint(l.tp.altitude, l.tp.azimuth, s, angularRadius(body, l.dist)), H = profileAt(horizon, p.az)
+    return p.alt + (refraction(H, T, P) - H)
   }
 }
 
@@ -202,12 +209,23 @@ export const crossing = (src: BlockSource, input: CrossingInput) => {
       const l = look(body, ms), x = aimVector("litCentroid", enu(l), [0, 0, 1], angularRadius(body, l.dist), enu(look("sun", ms)))
       return { alt: Math.asin(x.dir[2]) / DEG, az: wrap360(Math.atan2(x.dir[0], x.dir[1]) / DEG), offset: x.offset, angle: x.angleFromVertical }
     }
-    : (ms: number) => { const l = look(body, ms); return { alt: l.tp.altitude + s * angularRadius(body, l.dist), az: l.tp.azimuth, offset: 0, angle: null } }
+    : (ms: number) => { const l = look(body, ms); return { ...limbPoint(l.tp.altitude, l.tp.azimuth, s, angularRadius(body, l.dist)), offset: 0, angle: null } }
   const f = tg.kind === "true" ? (ms: number) => point(ms).alt - tg.altitude
     : tg.kind === "apparent" ? (() => { const thr = tg.altitude - refraction(tg.altitude, tg.temperature, tg.pressure)
       return (ms: number) => point(ms).alt - thr })()
     : (ms: number) => { const p = point(ms), A = profileAt(tg.profile, p.az); return p.alt - (A - refraction(A, tg.temperature, tg.pressure)) }
-  const out = crossings(f, input.startMs, input.endMs, SAMPLE_MS)
+  // A constant threshold thr and a limb: the limb is at thr where alt + s·r = thr and, past the zenith (nadir), where
+  // alt + s·r = s·180 − thr (the limb has come down the other side; it moves against the centre there). Both are smooth in
+  // time, unlike the folded limb, whose cusp at the zenith hides two roots per side from a 5-minute grid.
+  const thr = tg.kind === "true" ? tg.altitude : tg.kind === "apparent" ? tg.altitude - refraction(tg.altitude, tg.temperature, tg.pressure) : null
+  const raw = thr === null || input.aim === "litCentroid" || s === 0 ? crossings(f, input.startMs, input.endMs, SAMPLE_MS) : (() => {
+    const unfolded = (k: number) => (ms: number) => { const l = look(body, ms); return l.tp.altitude + s * angularRadius(body, l.dist) - k }
+    const near = crossings(unfolded(thr), input.startMs, input.endMs, SAMPLE_MS)
+    if (s * thr < 89.5 || s * thr >= 90) return near     // far roots need alt + s·r past ±90° by 90° − |thr| (< r ≤ 0.3°); at ±90° they are the near ones
+    const far = crossings(unfolded(s * 180 - thr), input.startMs, input.endMs, SAMPLE_MS).map(c => ({ ms: c.ms, rising: !c.rising }))
+    return [...near, ...far].toSorted((a, b) => a.ms - b.ms)
+  })()
+  const out = raw
     .filter(c => input.direction === "either" || (input.direction === "rise") === c.rising)
     .map(c => {
       const ms = Math.round(c.ms), l = look(body, ms)

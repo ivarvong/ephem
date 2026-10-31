@@ -9,6 +9,9 @@ import { REFRACTION_FLOOR, apparentAltitudeOf, refraction, refractTrue as refrac
 import { crossingRequest, dayRequest, positionRequest } from "../src/sky.ts"
 import { profileAt, parseProfile } from "../src/day.ts"
 import { instant, taiMinusUtc } from "../src/time.ts"
+import { angularRadius } from "../src/observe.ts"
+import { aimVector } from "../src/aim.ts"
+import { DEG } from "../src/linalg.ts"
 import { diskBlocks } from "./helpers/blocks.ts"
 import { readFileSync } from "node:fs"
 
@@ -207,6 +210,28 @@ describe("alignment self-consistency", () => {
       expect(Math.abs(((tp.azimuth - e.azimuth + 540) % 360) - 180)).toBeLessThan(1e-7)       // (1)
       expect(Math.abs(refract(tp.altitude, 10, 1010) - e.elevation)).toBeLessThan(1e-7)        // (2)
       expect(p.iterations).toBeLessThanOrEqual(12)
+    }
+  })
+})
+
+describe("limbs past the zenith (sweep 2026-10-31)", () => {
+  // aim=upper / lower is the disc centre moved by r along the local vertical (AIM_DEFINITIONS, aimVector). Past the zenith that
+  // great circle comes down the other side: the limb's altitude is 180° − (alt + r), never alt + r > 90°. /crossing used alt ± r.
+  const vecAlt = (aim: "upper" | "lower", ms: number, geo: { lat: number; lon: number; height: number }) => {
+    const f = frameAt(diskBlocks, instant(ms), geo), a = apparent(diskBlocks, f, "sun"), tp = topocentric(f, a.v), z = tp.azimuth * DEG, h = tp.altitude * DEG
+    const x = aimVector(aim, [Math.cos(h) * Math.sin(z), Math.cos(h) * Math.cos(z), Math.sin(h)], [0, 0, 1], angularRadius("sun", a.distanceKm))
+    return Math.asin(x.dir[2]) / DEG
+  }
+  it("a Sun that passes within its radius of the zenith: /crossing's upper-limb instants are where aimVector's upper limb is at the altitude, all of them", () => {
+    const noon = Date.parse("2026-10-31T11:44:00Z"), dec = positionRequest(diskBlocks, { utcMs: noon, lat: 0, lon: 0 }).sun.declination
+    const geo = { lat: dec + 0.1, lon: 0, height: 0 }   // culminates ~0.1° from the zenith: the upper limb goes over the top
+    const startMs = noon - 1_800_000, endMs = noon + 1_800_000
+    for (const [aim, thr] of [["upper", 89.95], ["upper", 89.5], ["lower", 89.5]] as const) {
+      const r = crossingRequest(diskBlocks, { startMs, endMs, lat: geo.lat, lon: geo.lon, height: 0, body: "sun", altitude: thr, aim }); if (!("ok" in r)) throw new Error(r.error)
+      let brute = 0, prev = vecAlt(aim, startMs, geo) - thr
+      for (let t = startMs + 1000; t <= endMs; t += 1000) { const v = vecAlt(aim, t, geo) - thr; if ((v > 0) !== (prev > 0)) brute++; prev = v }
+      expect(r.ok.crossings.length, `${aim} ${thr}`).toBe(brute)
+      for (const c of r.ok.crossings) expect(Math.abs(vecAlt(aim, Date.parse(c.time), geo) - thr), `${aim} ${thr} ${c.time}`).toBeLessThan(1e-4)
     }
   })
 })

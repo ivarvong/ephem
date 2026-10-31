@@ -1,6 +1,6 @@
 {
-  "cacheVersion": 12,
-  "recorded": "2026-10-31T05:57:58.443Z",
+  "cacheVersion": 13,
+  "recorded": "2026-10-31T06:00:18.261Z",
   "requests": {
     "day.nyc": "/day?date=2026-10-28&tz=America/New_York&lat=40.7127&lon=-74.0059&height=10",
     "day.tromso": "/day?date=2026-11-15&tz=Europe/Oslo&lat=69.6492&lon=18.9553",
