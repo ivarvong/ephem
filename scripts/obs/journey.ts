@@ -199,7 +199,7 @@ const cmarks: CMark[] = [
 const inputs = trace.filter(e => e.name === "EventDispatch" && e.pid === mainPid && /^(pointerdown|touchstart|mousedown)$/.test(e.args?.data?.type))
 for (const m of cmarks.filter(m => m.kind === "input")) {
   const ev = inputs.find(e => rel(e.ts / 1000) >= m.t - 5); if (!ev) continue
-  const t = rel(ev.ts / 1000), paint = main.find(x => x[0] > t && (x[3] === "Paint" || x[3] === "Commit"))
+  const t = rel(ev.ts / 1000), paint = main.find(x => x[0] > t && x[0] < t + 1000 && (x[3] === "Paint" || x[3] === "Commit"))   // none within 1 s: no frame, no latency
   m.t = t; m.latency = paint ? +(paint[0] + paint[1] - t).toFixed(1) : null
 }
 const lats = cmarks.map(m => m.latency).filter((x): x is number => x != null)
@@ -235,6 +235,9 @@ const checks: Array<{ what: string; rum: number; cdp: number; diff: number }> = 
 const chk = (what: string, a: number | null, z: number | null | undefined) => { if (a != null && z != null) checks.push({ what, rum: a, cdp: +z.toFixed(2), diff: +(a - z).toFixed(2) }) }
 const fcpRow = rum.find(r => r.kind === "paint" && r.name === "fcp"); chk("FCP", fl(fcpRow?.start_ms), client.fcp)
 const lcpRow = rum.find(r => r.kind === "lcp"); chk("LCP", fl(lcpRow?.value), client.lcp)
+// INP: the browser's own Event Timing (the RUM row), not the scripted-input heuristic. Headless Chrome only produces a frame
+// on damage, so a headless INP can be long for an input that changes nothing on screen: compare headed runs only.
+const inpRow = rum.find(r => r.kind === "inp"); if (inpRow) { client.inp = fl(inpRow.value); model.kpi.inp = client.inp }
 const dr = rum.find(r => r.kind === "app" && r.name === "data-ready"); chk("data-ready vs ephem:data", fl(dr?.start_ms), client.data)
 const navRow = rum.find(r => r.kind === "navigation"), docC = creqs.find(r => r.type === "Document")
 if (navRow && docC?.ph.wait) chk("document TTFB (responseStart)", fl(navRow.ttfb_ms), docC.ph.wait[1] - 0)
