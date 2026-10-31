@@ -243,7 +243,8 @@ const navRow = rum.find(r => r.kind === "navigation"), docC = creqs.find(r => r.
 if (navRow && docC?.ph.wait) chk("document TTFB (responseStart)", fl(navRow.ttfb_ms), docC.ph.wait[1] - 0)
 for (const r of rum.filter(x => x.kind === "resource" && x.ray)) {
   const c = creqs.find(q => q.ray && ray0(q.ray) === ray0(r.ray)); if (!c) continue
-  chk(`start ${r.target}`, fl(r.start_ms), c.start); if (c.ph.wait) chk(`first byte ${r.target}`, fl(r.start_ms)! + fl(r.ttfb_ms)!, c.ph.wait[1])
+  // a memory-cache hit's CDP timing is the original request's (stale): only its start and end are comparable
+  chk(`start ${r.target}`, fl(r.start_ms), c.start); if (c.ph.wait && !c.fromCache) chk(`first byte ${r.target}`, fl(r.start_ms)! + fl(r.ttfb_ms)!, c.ph.wait[1])
   if (c.end != null) chk(`end ${r.target}`, fl(r.start_ms)! + fl(r.dur_ms)!, c.end)
 }
 for (const r of rum.filter(x => x.kind === "fetch")) { const c = creqs.find(q => q.spanId === r.span_id); if (c) chk(`fetch span ${r.target} start (traceparent ${r.span_id.slice(0, 6)})`, fl(r.start_ms), c.start) }
