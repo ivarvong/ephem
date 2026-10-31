@@ -4,9 +4,11 @@ import * as Effect from "effect/Effect"
 import * as Option from "effect/Option"
 import * as HttpRouter from "effect/http/HttpRouter"
 import * as HttpServerRequest from "effect/http/HttpServerRequest"
+import * as HttpServerResponse from "effect/http/HttpServerResponse"
 import { isValidZone } from "@ephem/core"
 import { RUM_JS } from "./rum.ts"
 import { ICON_LINK } from "./favicon.ts"
+import { DIN_CSS, DIN_LICENSE } from "./din.ts"
 import { READ_EMBED_JS, jsonScript, routeText, streamHtml } from "./embed.ts"
 import { CLIENT_TRACE_JS, documentTrace, documentTraceHeaders, traceparentMeta, type DocumentTrace } from "./clienttrace.ts"
 
@@ -57,7 +59,10 @@ export const initialQueries = (v: Visitor, now: number) => {
 const EMBED_TIMEOUT_MS = 1500
 // GET /: the head (CSS, markup, boot script) is flushed at once; the three first-load answers follow, computed in-process
 // through the router (src/embed.ts), then </body>. An answer that is not a 200 is left out and the page fetches it.
-export const Home = HttpRouter.use(router => router.add("GET", "/", req => Effect.gen(function* () {
+export const Home = HttpRouter.use(router => Effect.gen(function* () {
+  // the licence of the page's inline font (src/din.ts), as the OFL asks
+  yield* router.add("GET", "/licenses/din.txt", HttpServerResponse.text(DIN_LICENSE, { headers: { "cache-control": "public, max-age=86400" } }))
+  yield* router.add("GET", "/", req => Effect.gen(function* () {
   const tid = yield* documentTrace(req)   // on the root span; the page's fetches are its children (src/clienttrace.ts)
   return yield* Effect.gen(function* () {
     const url = Option.getOrElse(HttpServerRequest.toURL(req), () => new URL("http://localhost/"))
@@ -69,11 +74,12 @@ export const Home = HttpRouter.use(router => router.add("GET", "/", req => Effec
     const tail = embeds.pipe(
       Effect.tap(parts => Effect.annotateCurrentSpan({ "home.embedded": parts.filter(Boolean).length })),
       Effect.withSpan("home.embed"),
-      Effect.map(parts => parts.join("") + PAGE_END),
-      Effect.catchCause(() => Effect.succeed(PAGE_END)))   // never fails: the page fetches what is missing
+      Effect.map(parts => FONT_STYLE + parts.join("") + PAGE_END),
+      Effect.catchCause(() => Effect.succeed(FONT_STYLE + PAGE_END)))   // never fails: the page fetches what is missing
     return yield* streamHtml(pageHead(v, tid), tail, { "cache-control": "private, no-store", ...documentTraceHeaders(tid) })
   }).pipe(Effect.withSpan("home"))
-})))
+  }))
+}))
 
 const json = (x: unknown) => JSON.stringify(x).replace(/</g, "\\u003c")
 
@@ -416,7 +422,7 @@ function aimText(name, b, pose) {
 `
 
 /** The whole page without embedded data (tests; the client then fetches everything). */
-export const page = (v: Visitor, trace?: DocumentTrace) => pageHead(v, trace) + PAGE_END
+export const page = (v: Visitor, trace?: DocumentTrace) => pageHead(v, trace) + FONT_STYLE + PAGE_END
 
 /** Everything the browser can parse, style, paint and boot before the data: flushed at once (src/embed.ts streamHtml). */
 export const pageHead = (v: Visitor, trace?: DocumentTrace) => `<!doctype html>
@@ -429,158 +435,145 @@ ${traceparentMeta(trace)}
 <meta name="theme-color" content="#07090c"><meta name="color-scheme" content="dark">
 ${ICON_LINK}
 <style>
-/* Calm, sparse, precise (ivar 2026-10-31: "If NASA and Linear redesigned…"). One dark theme. The chart shows where things
-   are; the numbers live below. System font at 400/500, mono tabular numerals for numbers only, sizes 13/15/28. Cool greys,
-   one soft cyan accent used sparingly, amber Sun, silver Moon. No borders but one hairline between sections. */
-:root{--bg:#08090b;--ink:#e6e8ec;--muted:#8a8f98;--faint:#5c616b;--line:rgba(230,232,236,.08);--accent:#7dd3e8;--sun:#f5b860;--moon:#c9d1de;
+/* Mission control (ivar 2026-10-31: "More SpaceX control center style"): white on near-black; DIN for labels and values
+   (labels small caps letter-spaced, values large with tabular figures); one accent (cyan) only for LIVE and NOW; amber Sun,
+   silver Moon; nothing else. Calm: the chart shows where things are, the countdown what is next, the readouts the numbers. */
+:root{--bg:#060708;--ink:#f2f4f7;--muted:#8d939c;--faint:#555b64;--line:rgba(242,244,247,.09);--accent:#6fd8f2;--sun:#f5b860;--moon:#c9d1de;
 --caution:#e8a64a;--alert:#ef6a5e;--maxw:1080px;
---sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Inter","Helvetica Neue",system-ui,"Segoe UI",Roboto,sans-serif;
---mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;color-scheme:dark}
+--din:"Ephem DIN","DIN Alternate","DIN 2014","Bahnschrift",-apple-system,system-ui,sans-serif;
+--sans:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,"Segoe UI",Roboto,sans-serif;
+--mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,monospace;color-scheme:dark}
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--bg);color:var(--ink);font:400 15px/1.5 var(--sans);-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%}
-a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
-.num,.tn{font-family:var(--mono);font-variant-numeric:tabular-nums}
+a{color:var(--ink);text-decoration:underline;text-decoration-color:var(--faint);text-underline-offset:3px}
+.tn{font-family:var(--din);font-variant-numeric:tabular-nums}
+.cap{font:500 11px/1.3 var(--din);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
 .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .gut{padding-left:max(16px,env(safe-area-inset-left),calc((100% - var(--maxw)) / 2));padding-right:max(16px,env(safe-area-inset-right),calc((100% - var(--maxw)) / 2))}
 /* header: one row */
-.hd{display:flex;align-items:center;gap:10px;padding-top:max(12px,env(safe-area-inset-top));padding-bottom:12px;font-size:15px}
-.brand{font-weight:500;color:var(--ink);letter-spacing:-.01em}
-h1{margin:0;font:400 15px/1.3 var(--sans);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1}
-h1.coords{font-family:var(--mono);font-size:13px}
-.clock{font:400 15px/1.3 var(--mono);font-variant-numeric:tabular-nums;color:var(--ink);white-space:nowrap}
+.hd{display:flex;align-items:center;gap:12px;padding-top:max(12px,env(safe-area-inset-top));padding-bottom:12px}
+.brand{font:700 13px/1 var(--din);letter-spacing:.3em;color:var(--ink)}
+h1{margin:0;font:500 12px/1.2 var(--din);letter-spacing:.14em;text-transform:uppercase;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1}
+.clock{font:400 16px/1 var(--din);font-variant-numeric:tabular-nums;letter-spacing:.04em;color:var(--ink);white-space:nowrap}
 .dot{width:6px;height:6px;border-radius:50%;background:var(--faint);flex:none}
-.dot.ok{background:var(--accent)}.dot.caution{background:var(--caution)}.dot.alert{background:var(--alert)}
+.dot.ok{background:var(--accent);box-shadow:0 0 6px var(--accent)}.dot.caution{background:var(--caution)}.dot.alert{background:var(--alert)}
 /* the sky */
-.sky{position:relative;height:clamp(260px,42svh,560px);touch-action:pan-y;cursor:grab;user-select:none;-webkit-user-select:none;background:#090b10;
+.sky{position:relative;height:clamp(250px,40svh,540px);touch-action:pan-y;cursor:grab;user-select:none;-webkit-user-select:none;background:#090b10;
 padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
 .sky:active{cursor:grabbing}
 .sky canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 .ctl{position:absolute;top:0;right:env(safe-area-inset-right);z-index:2;display:flex}
-.ctl button{width:44px;height:44px;display:grid;place-items:center;color:rgba(230,232,236,.55);background:transparent;border:0;padding:0;cursor:pointer;font:500 13px/1 var(--sans)}
+.ctl button{width:44px;height:44px;display:grid;place-items:center;color:rgba(242,244,247,.55);background:transparent;border:0;padding:0;cursor:pointer;font:500 11px/1 var(--din);letter-spacing:.14em;text-transform:uppercase}
+.ctl button[hidden]{display:none}
 .ctl button:hover,.ctl button[aria-pressed=true]{color:var(--accent)}
 .ctl #recenter{width:auto;padding:0 12px}
-.ctl button[hidden]{display:none}
-/* now */
-.now{padding-top:16px;padding-bottom:4px}
-.line{margin:0;font-size:15px;color:var(--ink)}
-.line .ph{color:var(--muted)}
-.line .cd{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--muted)}
-.guide{margin:6px 0 0;font:400 13px/1.5 var(--mono);color:var(--accent)}
-/* bodies */
-.bodies{display:grid;grid-template-columns:minmax(0,1fr);gap:18px 48px;padding-top:18px;padding-bottom:18px}
-.bd .nm{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
-.bd .nm i{width:7px;height:7px;border-radius:50%}
-.bd .nm i.s{background:var(--sun);box-shadow:0 0 6px rgba(245,184,96,.6)}.bd .nm i.m{background:var(--moon)}
-.bd .big{display:flex;gap:28px;margin-top:4px}
-.bd .big span{display:flex;flex-direction:column}
-.bd .big small{font-size:13px;color:var(--faint);line-height:1.3}
-.bd .big b{font:400 28px/1.15 var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
-.bd .sec{margin-top:6px;font:400 13px/1.4 var(--sans);font-variant-numeric:tabular-nums;color:var(--muted)}
-details.more{border-top:1px solid var(--line);padding:4px 0}
-details.more>summary{cursor:pointer;list-style:none;min-height:44px;display:flex;align-items:center;font-size:13px;color:var(--muted)}
-details.more>summary::-webkit-details-marker{display:none}
-details.more>summary::after{content:"+";margin-left:8px;color:var(--faint)}
-details.more[open]>summary::after{content:"\\2212"}
-.kv{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 16px;font-size:13px;padding-bottom:12px}
-.kv dt{color:var(--muted)}.kv dd{margin:0;font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right}
+/* countdown hero */
+.cdh{text-align:center;padding-top:18px;padding-bottom:6px}
+.cdh .t{font:400 44px/1 var(--din);font-variant-numeric:tabular-nums;letter-spacing:.02em;white-space:nowrap}
+.cdh .ev{margin-top:8px;font:700 12px/1.3 var(--din);letter-spacing:.2em;color:var(--ink)}
+.cdh .ph{margin-top:4px}
+.guide{margin:8px 0 0;text-align:center;font:500 12px/1.4 var(--din);letter-spacing:.1em;text-transform:uppercase;color:var(--accent)}
+/* timeline */
+.tl{padding-top:14px;padding-bottom:6px}
+.tl svg{display:block;width:100%;height:auto;overflow:visible}
+.tl text{font-family:var(--din);fill:var(--muted)}
+/* telemetry */
+.tel{display:grid;grid-template-columns:minmax(0,1fr);gap:18px 32px;padding-top:18px;padding-bottom:14px;border-top:1px solid var(--line);margin-top:12px}
+.bd{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:4px 16px}
+.ro .v{font:400 34px/1.05 var(--din);font-variant-numeric:tabular-nums;letter-spacing:.01em;white-space:nowrap}
+.ro .u{font:500 13px/1 var(--din);letter-spacing:.08em;color:var(--muted);margin-left:3px}
+.ro .cap i{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:7px;vertical-align:1px}
+.ro .cap i.s{background:var(--sun)}.ro .cap i.m{background:var(--moon)}
+.bd .sec{grid-column:1/-1;margin-top:2px;color:var(--faint)}
+.bd .sec b{font-weight:500;color:var(--muted)}
+/* disclosures: a chevron, closed by default */
+details.disc{border-top:1px solid var(--line)}
+details.disc>summary{cursor:pointer;list-style:none;min-height:44px;display:flex;align-items:center;gap:10px;font:500 11px/1.3 var(--din);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+details.disc>summary::-webkit-details-marker{display:none}
+details.disc>summary::before{content:"";width:6px;height:6px;border-right:1.5px solid var(--muted);border-bottom:1.5px solid var(--muted);transform:rotate(-45deg);transition:transform .15s;margin:0 2px}
+details.disc[open]>summary::before{transform:rotate(45deg)}
+details.disc>div,details.disc>pre,details.disc>dl{margin:0 0 14px}
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:7px 16px}
+.kv dt{font:500 11px/1.5 var(--din);letter-spacing:.14em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+.kv dd{margin:0;font:400 15px/1.3 var(--din);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
 main{padding-bottom:40px}
-.blk{padding:24px 0 28px;border-top:1px solid var(--line)}
-.blk>h2,.hood>summary{margin:0 0 12px;font:500 13px/1.3 var(--sans);color:var(--muted)}
-.big2{font:500 15px/1.3 var(--sans);margin:0}
-.sub{color:var(--faint);margin:4px 0 14px;font-size:13px}
-.strip svg{display:block;width:100%;height:auto}
-.strip text{font-family:var(--mono);fill:var(--faint)}
-.strip .nowl{stroke:var(--ink)}
-.strip line.es{stroke:var(--sun)}.strip circle.es{fill:var(--sun)}.strip line.em{stroke:var(--moon)}.strip circle.em{fill:var(--moon)}
-.evs{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:0 40px;margin-top:12px;font-size:13px}
-.evs>div{display:flex;justify-content:space-between;gap:12px;padding:7px 0}
-.evs>div .tn{color:var(--ink)}
+.blk{padding:18px 0 4px;border-top:1px solid var(--line)}
+.blk>h2{margin:0 0 12px}
+.evs{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:0 40px;font-size:13px}
+.evs>div{display:flex;justify-content:space-between;gap:12px;padding:5px 0}
+.evs .tn{font-size:15px}
 .evs .past,.evs .past .tn{color:var(--faint)}
-.evs details.more{grid-column:1/-1;border:0}.evs details.more .evs{margin-top:0}
 .evs .s::before,.evs .m::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:10px;vertical-align:1px}
 .evs .s::before{background:var(--sun)}.evs .m::before{background:var(--moon)}
-.row{display:flex;flex-wrap:wrap;gap:16px;margin-top:16px;align-items:center}
-.btn{min-height:44px;display:inline-flex;align-items:center;font:500 13px/1 var(--sans);color:var(--accent);background:transparent;border:0;padding:0;cursor:pointer}
-.btn:hover{text-decoration:underline}
+.row{display:flex;flex-wrap:wrap;gap:20px;margin:6px 0 14px;align-items:center}
+.btn{min-height:44px;display:inline-flex;align-items:center;font:500 11px/1 var(--din);letter-spacing:.14em;text-transform:uppercase;color:var(--ink);background:transparent;border:0;padding:0;cursor:pointer}
+.btn:hover{color:var(--accent)}
 .note{font-size:13px;color:var(--muted)}
-.wxc{display:grid;gap:10px}
-.wxtop{display:flex;align-items:baseline;gap:8px 16px;flex-wrap:wrap}
-.temp{font:400 28px/1 var(--mono);font-variant-numeric:tabular-nums}
-.wxtop .cond{font-size:15px}
-.wxtop .wind{color:var(--muted);font:13px/1.4 var(--mono)}
-.wxc dl.cells{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin:0;gap:0 24px}
-.wxc dl.cells>div{padding:4px 0;min-width:0}
-.wxc dl.cells dt{font-size:13px;color:var(--muted)}
-.wxc dl.cells dd{margin:2px 0 0;font:13px/1.4 var(--mono)}
-.station{margin:0;color:var(--faint);font:12px/1.6 var(--mono)}
-.age{white-space:nowrap}
-.age.warn{color:var(--caution)}
-details:not(.more)>summary{cursor:pointer;list-style:none;min-height:44px;display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px}
-details:not(.more)>summary::-webkit-details-marker{display:none}
-details.raw pre{margin:4px 0 0;font:12px/1.65 var(--mono);color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere}
+.wx{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 24px;align-items:end;margin-bottom:12px}
+.wx .temp .v{font:400 44px/1 var(--din);font-variant-numeric:tabular-nums}
+.wx .cond{font:500 12px/1.3 var(--din);letter-spacing:.14em;text-transform:uppercase;color:var(--ink);padding-bottom:6px}
+.wxg{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 16px;margin-bottom:10px}
+.wxg .v{font:400 18px/1.2 var(--din);font-variant-numeric:tabular-nums;white-space:nowrap}
+.wxg .v .u{font-size:11px;letter-spacing:.08em;color:var(--muted);margin-left:2px}
+.station{margin:0 0 4px;font:500 11px/1.6 var(--din);letter-spacing:.12em;text-transform:uppercase;color:var(--faint)}
+.age{color:var(--muted)}.age.warn{color:var(--caution)}
+pre{margin:0;font:12px/1.65 var(--mono);color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere}
 pre .c{color:var(--faint)}
-.hood{border-top:1px solid var(--line);padding:12px 0 24px}
-.hood .in{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:32px;margin-top:12px}
-.hood h3{font:500 13px/1.3 var(--sans);margin:0 0 8px}
-.hood p{color:var(--muted);font-size:13px;margin:0 0 12px}
-.hood pre{margin:0;overflow-x:auto;font:12px/1.7 var(--mono);color:var(--muted)}
-footer.tel{border-top:1px solid var(--line);padding-top:14px;padding-bottom:max(14px,env(safe-area-inset-bottom));display:flex;flex-wrap:wrap;gap:6px 24px;font:12px/1.5 var(--mono);color:var(--faint)}
-footer.tel i{font:500 12px/1 var(--sans);font-style:normal;color:var(--faint);margin-right:8px}
+.hood .in{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px}
+.hood h3{margin:0 0 8px}
+.hood p{color:var(--muted);font-size:13px;margin:0 0 10px}
+footer.tel2{border-top:1px solid var(--line);padding-top:14px;padding-bottom:max(14px,env(safe-area-inset-bottom));display:flex;flex-wrap:wrap;gap:6px 24px;font:500 11px/1.5 var(--din);letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
+footer.tel2 i{font-style:normal;color:var(--faint);margin-right:8px}
 :focus-visible{outline:1px solid var(--accent);outline-offset:3px}
 .err{color:var(--alert)}
-@media (max-width:760px){.hood .in{grid-template-columns:minmax(0,1fr)}.wxc dl.cells{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
-@media (min-width:760px){.bodies{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+@media (max-width:760px){.hood .in{grid-template-columns:minmax(0,1fr)}.wxg{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+@media (min-width:760px){.tel{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
 </style>
 </head><body>
 <header class="hd gut" id="top">
-  <span class="brand">ephem</span><h1 id="place"></h1><span class="clock" id="clock" aria-label="Local time">--:--:--</span><i class="dot" id="live" role="status"></i><span class="vh" id="liveT">Acquiring</span>
+  <span class="brand">EPHEM</span><h1 id="place"></h1><span class="clock" id="clock" aria-label="Local time">--:--:--</span><i class="dot" id="live" role="status"></i><span class="vh" id="liveT">Acquiring</span>
 </header>
 <section class="sky" id="sky" aria-label="Where the Sun and the Moon are: the whole sky, above and below the horizon">
   <canvas id="cv" tabindex="0" aria-label="Sky chart"></canvas>
   <div class="ctl" id="ctl"><button type="button" id="recenter" hidden>Recenter</button><button type="button" id="point" aria-pressed="false" aria-label="Point your phone at the sky" title="Point your phone" hidden><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="9" cy="9" r="5.5"/><path d="M9 1v3.5M9 13.5V17M1 9h3.5M13.5 9H17"/></svg></button></div>
 </section>
-<div class="now gut" id="bottom">
-  <p class="line" id="line"><span class="ph" id="phase"></span><span id="next">&nbsp;</span></p>
+<div class="cdh gut" id="bottom" aria-live="off">
+  <div class="t" id="tminus">T−--:--:--</div>
+  <div class="ev cap" id="next">&nbsp;</div>
+  <div class="ph cap" id="phase">&nbsp;</div>
   <p class="guide" id="guide" aria-live="polite" hidden></p>
 </div>
-<div class="bodies gut" id="bodies" aria-label="Sun and Moon"></div>
-<div class="gut"><details class="more" id="details"><summary>Details</summary><div id="detailsBody"></div></details></div>
+<section class="tl gut" aria-label="Today's events"><svg id="tl" role="img" aria-label="Today's events on a timeline"></svg></section>
+<div class="tel gut" id="bodies" aria-label="Sun and Moon readouts"></div>
 <main class="gut">
-  <section class="blk day">
-    <h2>Day</h2>
-    <div>
-      <p class="big2" id="dayTitle">Today</p>
-      <p class="sub">The sky's colour at the horizon, hour by hour.</p>
-      <div class="strip" id="strip"></div>
-      <div class="evs" id="evs"></div>
-      <div class="row">
-        <button class="btn" type="button" id="locate">Use my exact location</button>
-        <button class="btn" type="button" id="share">Copy link</button>
-        <span class="note" id="locnote"></span>
-      </div>
-    </div>
+  <details class="disc" id="details"><summary>Details</summary><div id="detailsBody"></div></details>
+  <details class="disc" id="evmore"><summary id="dayTitle">All events today</summary><div class="evs" id="evs"></div></details>
+  <section class="blk" aria-live="polite">
+    <h2 class="cap">Weather</h2>
+    <div id="wx"><span class="note">Finding the nearest station…</span></div>
   </section>
-  <section class="blk wx" aria-live="polite">
-    <h2>Weather</h2>
-    <div class="wxc" id="wx"><span class="note">Finding the nearest station…</span></div>
-  </section>
-  <details class="hood" id="hood">
+  <div class="row">
+    <button class="btn" type="button" id="locate">Use my exact location</button>
+    <button class="btn" type="button" id="share">Copy link</button>
+    <span class="note" id="locnote"></span>
+  </div>
+  <details class="disc hood" id="hood">
     <summary>Under the hood</summary>
     <div class="in">
       <div>
-        <h3>It's an API</h3>
+        <h3 class="cap">It's an API</h3>
         <p>Apparent topocentric positions from JPL DE440, rise, set and twilight, Moon phase and landmark alignments, in TypeScript on Cloudflare Workers and cross-checked against Skyfield. These are calls this page made:</p>
         <pre id="curl"></pre>
-        <div class="row"><a class="btn" href="/docs">API reference</a><a class="btn" href="/openapi.json">openapi.json</a></div>
+        <div class="row"><a class="btn" href="/docs">API reference</a><a class="btn" href="/openapi.json">openapi.json</a><a class="btn" href="/licenses/din.txt">Font licence (D-DIN, OFL)</a></div>
       </div>
       <div>
-        <h3>Diagnostics</h3>
+        <h3 class="cap">Diagnostics</h3>
         <p>Each answer reads 8 KiB Chebyshev blocks of DE440 through an isolate LRU, the Workers Cache, then a byte-range read of the 102 MB file in R2.</p>
         <pre id="diag"><span class="c">waiting for the first answer…</span></pre>
       </div>
     </div>
   </details>
-  <footer class="tel" id="foot"></footer>
+  <footer class="tel2" id="foot"></footer>
 </main>
 <script>const LOC = ${json(v)};</script>
 <script>
@@ -669,7 +662,7 @@ function resize() {
 }
 function defaultCenter(p) { return S.pose ? S.pose.az : chartCenter(loc.lat, [p.sun.azimuth, p.moon.azimuth]); }
 var mw = {};
-function meas(t) { if (mw[t] == null) { ctx.font = LABEL_FONT; if ("letterSpacing" in ctx) ctx.letterSpacing = "0px"; mw[t] = Math.ceil(ctx.measureText(t).width) + 2; } return mw[t]; }
+function meas(t) { if (mw[t] == null) { ctx.font = LABEL_FONT; if ("letterSpacing" in ctx) ctx.letterSpacing = "1.6px"; mw[t] = Math.ceil(ctx.measureText(t).width) + 2; } return mw[t]; }
 // The live position: the last answer moved on by its own rates (deg/min) to now; the readouts keep the answer's numbers.
 function livePos(now) {
   var p = S.to; if (!p) return null;
@@ -717,7 +710,7 @@ function trackInfo(nowMs) {
 }
 function nextEvent(now) { var up = upcoming(now); return up.length ? { body: up[0].body, kind: up[0].kind, t: Date.parse(up[0].time) } : null; }
 var PERIOD = { sun: 864e5, moon: 89428e3 };   // a solar day; a mean lunar day, 24 h 50 min 28 s
-var COLOR = { sun: "#f5b860", moon: "#c9d1de" }, LABEL_FONT = "500 12px -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif";
+var COLOR = { sun: "#f5b860", moon: "#c9d1de" }, DIN = "'Ephem DIN', 'DIN Alternate', Bahnschrift, -apple-system, system-ui, sans-serif", LABEL_FONT = "700 10.5px " + DIN;
 function draw() {
   if (!W) return;
   var p = S.to, nowMs = tNow(), live = livePos(nowMs), r = 5, c = S.center == null ? (loc.lat >= 0 ? 180 : 0) : S.center;
@@ -730,16 +723,20 @@ function draw() {
   }) : [];
   var sunAlt = live ? live.sun.alt : -30;
   var m = skyModel({ W: W, H: H, insetL: insetL, insetR: insetR, center: c, now: nowMs, ctl: ctlR, pose: S.pose, lh: 15, bodies: bodies,
-    meas: function (t) { return meas(t); } });
+    meas: function (t) { return meas(t.toUpperCase()); } });
   var g = m.g, hy = g.hy;
   drawnAt = nowMs; drawnPx = bodies.map(function (b) { return [chX(b.az, g, c), chY(b.alt, g)]; });
   // the sky: its real colour, a subtle vertical gradient; below the horizon a darker, flat ground
   var sc = skyAt(sunAlt), grad = ctx.createLinearGradient(0, 0, 0, hy); grad.addColorStop(0, sc[0]); grad.addColorStop(1, sc[1]);
   ctx.fillStyle = grad; ctx.fillRect(0, 0, W, hy);
   ctx.fillStyle = "#0b0d12"; ctx.fillRect(0, hy, W, H - hy);
-  ctx.strokeStyle = "rgba(230,232,236,.22)"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, Math.round(hy) + 0.5); ctx.lineTo(W, Math.round(hy) + 0.5); ctx.stroke();
-  // N E S W, tiny, along the bottom
-  ctx.font = "500 10px -apple-system, system-ui, sans-serif"; if ("letterSpacing" in ctx) ctx.letterSpacing = "0.5px"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = "rgba(230,232,236,.38)";
+  // one altitude reference (±30°, 10 %), the horizon, small ticks every 30° on it
+  ctx.lineWidth = 1; ctx.strokeStyle = "rgba(242,244,247,.10)";
+  [30, -30].forEach(function (a) { var y = Math.round(chY(a, g)) + 0.5; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); });
+  ctx.strokeStyle = "rgba(242,244,247,.32)"; ctx.beginPath(); ctx.moveTo(0, Math.round(hy) + 0.5); ctx.lineTo(W, Math.round(hy) + 0.5); ctx.stroke();
+  for (var az = 0; az < 360; az += 30) chXs(az, g, c).forEach(function (x) { if (x < 0 || x > W) return; x = Math.round(x) + 0.5; ctx.beginPath(); ctx.moveTo(x, hy); ctx.lineTo(x, hy + (az % 90 ? 3 : 6)); ctx.stroke(); });
+  // N E S W, small caps, along the bottom
+  ctx.font = "700 10px " + DIN; if ("letterSpacing" in ctx) ctx.letterSpacing = "1.6px"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = "rgba(242,244,247,.45)";
   ["N", "E", "S", "W"].forEach(function (t, i) { chXs(i * 90, g, c).forEach(function (x) { if (x > g.x0 + 8 && x < g.x1 - 8) ctx.fillText(t, x, g.bot + CH_AXIS / 2); }); });
   // tracks: one polyline per body, past ~70 %, future ~35 %, sharing the vertex at now
   Object.keys(m.lines).forEach(function (key) {
@@ -773,9 +770,10 @@ function draw() {
   var placed = layoutLabels(m.items, m.hard, m.segs, m.bounds, 3);
   placed.forEach(function (pl) {
     if (pl.dropped) return;
-    ctx.font = LABEL_FONT; if ("letterSpacing" in ctx) ctx.letterSpacing = "0px"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
-    ctx.lineJoin = "round"; ctx.lineWidth = 3; ctx.strokeStyle = "rgba(8,9,11,.6)"; ctx.strokeText(pl.id, pl.x + 1, pl.y + 7.5);
-    ctx.fillStyle = "rgba(230,232,236,.72)"; ctx.fillText(pl.id, pl.x + 1, pl.y + 7.5);
+    var t = pl.id.toUpperCase();
+    ctx.font = LABEL_FONT; if ("letterSpacing" in ctx) ctx.letterSpacing = "1.6px"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    ctx.lineJoin = "round"; ctx.lineWidth = 3; ctx.strokeStyle = "rgba(6,7,8,.6)"; ctx.strokeText(t, pl.x + 1, pl.y + 7.5);
+    ctx.fillStyle = pl.id === "Sun" ? "rgba(245,184,96,.9)" : "rgba(201,209,222,.9)"; ctx.fillText(t, pl.x + 1, pl.y + 7.5);
   });
   window.__sky = { labels: placed, hard: m.hard, lines: m.lines, W: W, H: H, draws: (window.__sky ? window.__sky.draws : 0) + 1,
     overlaps: overlaps(placed.filter(function (x) { return !x.dropped; }).map(function (x) { return Object.assign({ text: true }, x); }).concat(m.hard.filter(function (h) { return /disc|pose|ctl/.test(h.id); }))) };
@@ -834,33 +832,35 @@ function dayTimes(key) {
   var ti = S.track.length ? trackInfo(tNow()) : {}, tr = ev.find(function (x) { return x.kind === "transit"; }), info = ti[key] && tr ? ti[key].find(function (e) { return e.kind === "transit" && Math.abs(e.t - Date.parse(tr.time)) < 40 * 60e3; }) : null;
   return { rise: f("rise"), set: f("set"), transit: f("transit"), transitAlt: info ? d2(info.alt) : "" };
 }
-// Per body: the name, ALT and AZ (true) big, and one muted line (magnetic, rise and set, the Moon's phase). Everything else is
-// in Details, closed by default.
+// Telemetry, per body: ALTITUDE and AZIMUTH big (DIN, tabular), a tiny unit, and one muted line: magnetic azimuth, rise, set
+// (and the Moon's illumination). The rest is in Details.
 function cardsHtml(p) {
+  function ro(key, label, v, unit) { return '<div class="ro"><div class="cap"><i class="' + key.charAt(0) + '"></i>' + label + '</div><div class="v">' + v + '<span class="u">' + unit + "</span></div></div>"; }
   function body(key, name, b, extra) {
-    var dt = dayTimes(key), m = azM(b.azimuth);
-    var sec = [m ? m.replace(" M", " mag") : "", "rises " + dt.rise, "sets " + dt.set].concat(extra || []).filter(Boolean).join(" \u00b7 ");
-    return '<section class="bd" aria-label="' + name + '"><div class="nm"><i class="' + key.charAt(0) + '"></i>' + name + '</div>' +
-      '<div class="big"><span><small>Alt</small><b>' + d2(altOf(b)) + '</b></span><span><small>Az</small><b>' + azT(b.azimuth).replace(" T", "") + '</b></span></div>' +
-      '<div class="sec">' + sec + '</div></section>';
+    var dt = dayTimes(key), m = azM(b.azimuth), a = altOf(b), app = !(b.apparentAltitude == null);
+    return '<section class="bd" aria-label="' + name + '">' + ro(key, name + " \u00b7 Altitude", (a < 0 ? "\u2212" : "") + Math.abs(a).toFixed(2), "\u00b0" + (app ? "" : " TRUE")) +
+      ro(key, "Azimuth", wrap360(b.azimuth).toFixed(2), "\u00b0 T") +
+      '<div class="sec cap">' + [m ? "Mag <b>" + m.replace(" M", "") + "</b>" : "", "Rise <b>" + dt.rise + "</b>", "Set <b>" + dt.set + "</b>"].concat(extra || []).filter(Boolean).join(" \u00b7 ") + "</div></section>";
   }
   var ph = p.moon.phase;
-  return body("sun", "Sun", p.sun) + body("moon", "Moon", p.moon, [(ph.illuminatedFraction * 100).toFixed(0) + "% lit"]);
+  return body("sun", "Sun", p.sun) + body("moon", "Moon", p.moon, ["Lit <b>" + (ph.illuminatedFraction * 100).toFixed(0) + "%</b>"]);
 }
+// Short caps labels (nothing wraps at 375). Apparent altitude is the API's: refracted, and null when the centre would lie below
+// the observer's horizon (it can be null while the upper limb, which defines rise and set, is already up).
 function detailsHtml(p) {
   function kv(k, v) { return "<dt>" + k + "</dt><dd>" + v + "</dd>"; }
   function app(b) { return b.apparentAltitude == null ? "below horizon" : d2(b.apparentAltitude); }
   var s = p.sun, mo = p.moon, ds = dayTimes("sun"), dm = dayTimes("moon");
   return '<dl class="kv">' +
-    kv("Sun altitude (true \u00b7 apparent)", d2(s.altitude) + " \u00b7 " + app(s)) +
-    kv("Sun azimuth (true \u00b7 magnetic)", azT(s.azimuth) + (azM(s.azimuth) ? " \u00b7 " + azM(s.azimuth) : "")) +
-    kv("Sun transit", ds.transit + (ds.transitAlt ? " \u00b7 " + ds.transitAlt : "")) +
-    kv("Sun distance", (s.distanceKm / AU).toFixed(5) + " au") +
-    kv("Moon altitude (true \u00b7 apparent)", d2(mo.altitude) + " \u00b7 " + app(mo)) +
-    kv("Moon azimuth (true \u00b7 magnetic)", azT(mo.azimuth) + (azM(mo.azimuth) ? " \u00b7 " + azM(mo.azimuth) : "")) +
-    kv("Moon transit", dm.transit + (dm.transitAlt ? " \u00b7 " + dm.transitAlt : "")) +
-    kv("Moon distance", Math.round(mo.distanceKm).toLocaleString("en-US") + " km") +
-    kv("Moon phase", esc(mo.phase.name) + " \u00b7 " + (mo.phase.illuminatedFraction * 100).toFixed(1) + "% lit") + "</dl>";
+    kv("Sun alt true \u00b7 app", d2(s.altitude) + " \u00b7 " + app(s)) +
+    kv("Sun az T \u00b7 M", azT(s.azimuth).replace(" T", "") + (azM(s.azimuth) ? " \u00b7 " + azM(s.azimuth).replace(" M", "") : "")) +
+    kv("Solar noon", ds.transit + (ds.transitAlt ? " \u00b7 " + ds.transitAlt : "")) +
+    kv("Sun dist", (s.distanceKm / AU).toFixed(5) + " au") +
+    kv("Moon alt true \u00b7 app", d2(mo.altitude) + " \u00b7 " + app(mo)) +
+    kv("Moon az T \u00b7 M", azT(mo.azimuth).replace(" T", "") + (azM(mo.azimuth) ? " \u00b7 " + azM(mo.azimuth).replace(" M", "") : "")) +
+    kv("Moon culmination", dm.transit + (dm.transitAlt ? " \u00b7 " + dm.transitAlt : "")) +
+    kv("Moon dist", Math.round(mo.distanceKm).toLocaleString("en-US") + " km") +
+    kv("Moon phase", esc(mo.phase.name) + " \u00b7 " + (mo.phase.illuminatedFraction * 100).toFixed(1) + "%") + "</dl>";
 }
 function setBodies() { if (!S.to) return; patchHtml("bodies", cardsHtml(S.to)); patchHtml("detailsBody", detailsHtml(S.to)); }
 // Update in place: when the new markup has the same shape, only the text of changed leaves is rewritten, so the readouts are
@@ -875,7 +875,7 @@ function patchHtml(id, h) {
   domMemo[id] = h;
 }
 // "Night", "Civil twilight", ... from the Sun's altitude
-function skyPhase(a) { return a >= 0 ? "Day" : a >= -6 ? "Civil twilight" : a >= -12 ? "Nautical twilight" : a >= -18 ? "Astronomical twilight" : "Night"; }
+function skyPhase(a) { return a >= 0 ? "Daylight" : a >= -6 ? "Civil twilight" : a >= -12 ? "Nautical twilight" : a >= -18 ? "Astronomical twilight" : "Night"; }
 function setPos(p) {
   if (!S.to) __rum.mark("data-ready");
   // The chart redraws for a new answer only when it shows: the first one, a body crossing the horizon, a new frame, or a minute
@@ -883,7 +883,7 @@ function setPos(p) {
   var prev = S.to, c0 = S.center; S.to = p;
   if (S.center == null || (!S.userPanned && !S.pose)) S.center = defaultCenter(p);
   if (!prev || S.center !== c0 || (altOf(prev.sun) < 0) !== (altOf(p.sun) < 0) || (altOf(prev.moon) < 0) !== (altOf(p.moon) < 0) || tNow() - drawnAt >= 60e3) requestDraw();
-  setBodies(); setText("phase", skyPhase(altOf(p.sun)) + " \u00b7 "); aimUpdate();
+  setBodies(); setText("phase", skyPhase(altOf(p.sun))); aimUpdate();
   cv.setAttribute("aria-description", lede(p.sun, p.moon));
   function ariaAlt(b) { return b.apparentAltitude == null ? "below the horizon (true altitude " + b.altitude.toFixed(2) + " degrees)" : b.apparentAltitude.toFixed(2) + " degrees apparent altitude"; }
   cv.setAttribute("aria-label", "Sun " + ariaAlt(p.sun) + ", azimuth " + p.sun.azimuth.toFixed(2) + " degrees true; Moon " + ariaAlt(p.moon) + ", azimuth " + p.moon.azimuth.toFixed(2) + " degrees true");
@@ -895,9 +895,11 @@ function setText(id, t) { if (domMemo[id] !== t) { domMemo[id] = t; $(id).textCo
 
 var NAMES = { sun: { rise: "Sunrise", set: "Sunset", transit: "Solar noon", civilDawn: "Civil dawn", civilDusk: "Civil dusk", nauticalDawn: "Nautical dawn", nauticalDusk: "Nautical dusk",
   astronomicalDawn: "Astronomical dawn", astronomicalDusk: "Astronomical dusk", goldenHourStart: "Golden hour", goldenHourEnd: "Golden hour ends", blueHourStart: "Blue hour", blueHourEnd: "Blue hour ends" },
-  moon: { rise: "Moonrise", set: "Moonset", transit: "Moon at its highest" } };
+  moon: { rise: "Moonrise", set: "Moonset", transit: "Moon culmination" } };
 // "Moon rises", "Sun sets", "Civil dusk", ...: the NEXT line's subject
 function evPhrase(e) { var B = e.body === "sun" ? "Sun" : "Moon"; return e.kind === "rise" ? B + " rises" : e.kind === "set" ? B + " sets" : e.kind === "transit" ? B + " at its highest" : evName(e); }
+// The countdown: always HH:MM:SS
+function hhmmss(ms) { var s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60; s = s % 60; return (h < 10 ? "0" : "") + h + ":" + (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s; }
 // "16:58", "1:16:58": a countdown that ticks every second
 function clockDelta(ms) { var s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60; s = s % 60; return (h ? h + ":" + (m < 10 ? "0" : "") : "") + m + ":" + (s < 10 ? "0" : "") + s; }
 function evName(e) { return (NAMES[e.body] && NAMES[e.body][e.kind]) || e.kind; }
@@ -914,13 +916,15 @@ function tick() {
   if (domMemo.live !== st) { domMemo.live = st; $("live").className = "dot " + st; }
   setText("liveT", st === "alert" ? "No signal" : AT != null && st ? "Fixed time" : st === "ok" ? "Live" : st === "caution" ? "Delayed" : "Acquiring");
   liveCheck(now);   // the chart: a marker that moved half a pixel, or a minute
-  var up = upcoming(now), html = lastNext;
+  var up = upcoming(now), html = lastNext, tm = "T\u2212--:--:--";
   if (up.length) {
     var e = up[0], t = Date.parse(e.time);
-    html = esc(evPhrase(e)) + ' at <span class="tn">' + hm(t) + "</span>" + (localDate(t) !== localDate(now) ? " tomorrow" : "") + ' <span class="cd">in ' + clockDelta(t - now) + "</span>";
+    html = esc(evName(e).toUpperCase()) + ' \u00b7 <span class="tn">' + hm(t) + "</span>" + (localDate(t) !== localDate(now) ? " TOMORROW" : "");
+    tm = "T\u2212" + hhmmss(t - now);
   } else if (S.day && !S.day.loading && S.tomorrowFor === S.day.date) {
-    if (S.tomorrow) html = "No rise, set or twilight in the next two days.";
+    if (S.tomorrow) html = "No rise, set or twilight in the next two days";
   } else if (S.day && !S.day.loading) loadTomorrow();   // today has nothing left: only now is tomorrow's /v1/day needed
+  setText("tminus", tm);
   if (html !== lastNext) { lastNext = html; $("next").innerHTML = html; }
   if (S.day && localDate(now) !== S.day.date) loadDay();
   if (S.trackDay != null && Math.floor(now / 864e5) !== S.trackDay) loadTrack();   // a new UTC day: the next track window
@@ -929,40 +933,51 @@ function tick() {
 }
 
 // ---------- day strip ----------
-var stripSvg = null;
+// The mission timeline: today's events on one line (local midnight to midnight), labels alternating above and below (two rows
+// each side, a label that fits nowhere is left out: its node stays), past nodes filled, future hollow, a NOW marker.
+var TL = null;
 function el(tag, a, txt) { var e = document.createElementNS("http://www.w3.org/2000/svg", tag); for (var k in a) e.setAttribute(k, a[k]); if (txt != null) e.textContent = txt; return e; }
+var TL_KINDS = { rise: 1, set: 1, transit: 1, civilDawn: 1, civilDusk: 1, astronomicalDawn: 1, astronomicalDusk: 1 };
 function drawStrip() {
-  var box = $("strip"); box.innerHTML = ""; if (!S.day || S.day.loading) return;
-  var w = Math.max(300, Math.round(box.clientWidth || 1000)), h = 84, y0 = 16, bh = 36, s = Date.parse(S.day.start), span = Date.parse(S.day.end) - s;
-  var svg = el("svg", { viewBox: "0 0 " + w + " " + h, role: "img", "aria-label": "Sky colour and events through the day" });
-  var defs = el("defs", {}), lg = el("linearGradient", { id: "dayg", x1: "0", x2: "1", y1: "0", y2: "0" });
-  S.track.forEach(function (p) { var f = (p.t - s) / span; if (f >= 0 && f <= 1) lg.appendChild(el("stop", { offset: f.toFixed(4), "stop-color": skyAt(altOf(p.sun))[1] })); });
-  defs.appendChild(lg); svg.appendChild(defs);
-  svg.appendChild(el("rect", { x: 0, y: y0, width: w, height: bh, rx: 2, fill: S.track.length ? "url(#dayg)" : "#111628" }));
-  for (var hh = 0; hh <= 24; hh += w < 600 ? 6 : 3) { var x = Math.min(w, hh * 3600e3 / span * w); svg.appendChild(el("text", { x: x, y: y0 + bh + 20, "text-anchor": hh === 0 ? "start" : x >= w - 1 ? "end" : "middle", "font-size": 10.5 }, String(hh).padStart(2, "0") + ":00")); }
-  S.day.events.forEach(function (e) {
-    if (!(e.kind === "rise" || e.kind === "set" || e.kind === "transit")) return;
-    var x = (Date.parse(e.time) - s) / span * w, col = e.body === "sun" ? "#a39bdc" : "#6cd1d1", cls = e.body === "sun" ? "es" : "em";
-    svg.appendChild(el("line", { x1: x, x2: x, y1: y0 - 6, y2: y0 + bh, stroke: col, "stroke-width": 1, "stroke-opacity": 0.9, class: cls }));
-    svg.appendChild(el("circle", { cx: x, cy: y0 - 8, r: 2.5, fill: col, class: cls }));
+  var svg = $("tl"); svg.innerHTML = ""; TL = null; if (!S.day || S.day.loading) return;
+  var w = Math.max(300, Math.round(svg.getBoundingClientRect().width || 1000)), h = 104, mid = 52, pad = 10, s0 = Date.parse(S.day.start), span = Date.parse(S.day.end) - s0, now = tNow();
+  svg.setAttribute("viewBox", "0 0 " + w + " " + h);
+  var X = function (t) { return pad + (t - s0) / span * (w - 2 * pad); };
+  svg.appendChild(el("line", { x1: pad, x2: w - pad, y1: mid, y2: mid, stroke: "rgba(242,244,247,.28)", "stroke-width": 1 }));
+  [0, 6, 12, 18, 24].forEach(function (hh) { var x = X(s0 + hh * 3600e3); svg.appendChild(el("line", { x1: x, x2: x, y1: mid - 3, y2: mid + 3, stroke: "rgba(242,244,247,.28)" })); });
+  var evs = S.day.events.filter(function (e) { return TL_KINDS[e.kind]; }).map(function (e) { return { e: e, t: Date.parse(e.time) }; }).sort(function (a, b) { return a.t - b.t; });
+  var rows = { "-1": [-Infinity, -Infinity], "1": [-Infinity, -Infinity] }, side = -1;
+  evs.forEach(function (o) {
+    var x = X(o.t), past = o.t <= now, col = o.e.kind === "rise" || o.e.kind === "set" || o.e.kind === "transit" ? (o.e.body === "sun" ? "#f5b860" : "#c9d1de") : "#8d939c";
+    var name = evName(o.e).toUpperCase(), lw = name.length * 6.6 + 40, placed = false;
+    for (var tryS = 0; tryS < 2 && !placed; tryS++, side = -side) for (var r = 0; r < 2 && !placed; r++) {
+      var x0 = Math.max(0, Math.min(w - lw, x - lw / 2));
+      if (x0 < rows[side][r] + 8) continue;
+      rows[side][r] = x0 + lw; placed = true;
+      var y = side < 0 ? mid - 14 - r * 18 : mid + 22 + r * 18;
+      svg.appendChild(el("line", { x1: x, x2: x, y1: side < 0 ? y + 4 : mid + 4, y2: side < 0 ? mid - 4 : y - 10, stroke: "rgba(242,244,247,.16)" }));
+      var tx = el("text", { x: x0 + lw / 2, y: y, "text-anchor": "middle", "font-size": 10, "letter-spacing": "1.2", fill: past ? "#555b64" : "#8d939c" });
+      tx.appendChild(el("tspan", {}, name + " ")); tx.appendChild(el("tspan", { fill: past ? "#555b64" : "#f2f4f7", "font-size": 12, "letter-spacing": "0.3" }, hm(o.t)));
+      svg.appendChild(tx);
+    }
+    side = -side;
+    svg.appendChild(el("circle", { cx: x, cy: mid, r: 3.5, fill: past ? col : "#060708", stroke: col, "stroke-width": 1.5 }));
   });
-  stripSvg = { svg: svg, now: el("line", { y1: y0 - 3, y2: y0 + bh + 3, stroke: "#fff", "stroke-width": 2, class: "nowl" }), s: s, span: span, w: w };
-  svg.appendChild(stripSvg.now); box.appendChild(svg); drawStripNow();
+  var nowG = el("g", {}); nowG.appendChild(el("line", { x1: 0, x2: 0, y1: mid - 9, y2: mid + 9, stroke: "#6fd8f2", "stroke-width": 1.5 }));
+  nowG.appendChild(el("title", {}, "Now"));
+  svg.appendChild(nowG); TL = { g: nowG, X: X, s0: s0, span: span, x: null };
+  drawStripNow();
 }
-function drawStripNow() {   // only when the line moves a visible half pixel (24 h over a few hundred px: every few minutes)
-  if (!stripSvg) return; var f = (tNow() - stripSvg.s) / stripSvg.span, x = Math.round(f * stripSvg.w * 2) / 2;
-  if (stripSvg.x === x) return; stripSvg.x = x;
-  stripSvg.now.setAttribute("x1", x); stripSvg.now.setAttribute("x2", x); stripSvg.now.style.display = f >= 0 && f <= 1 ? "" : "none";
+function drawStripNow() {   // the NOW marker: moved only when it moves a visible half pixel (every few minutes)
+  if (!TL) return; var t = tNow(), x = Math.round(TL.X(t) * 2) / 2, on = t >= TL.s0 && t <= TL.s0 + TL.span;
+  if (TL.x === x) return; TL.x = x;
+  TL.g.setAttribute("transform", "translate(" + x + ",0)"); TL.g.style.display = on ? "" : "none";
 }
-var evMoreOpen = false;
 function drawEvents() {
   var now = tNow();
   function row(e) { var t = Date.parse(e.time); return '<div class="' + (t < now ? "past" : "") + '"><span class="' + (e.body === "sun" ? "s" : "m") + '">' + evName(e) + '</span><span class="tn">' + hm(t) + "</span></div>"; }
-  var main = S.day.events.filter(function (e) { return e.kind === "rise" || e.kind === "set" || e.kind === "transit"; }), more = S.day.events.filter(function (e) { return main.indexOf(e) < 0; });
-  $("evs").innerHTML = (main.map(row).join("") || '<div>No rise or set today.</div>') +
-    (more.length ? '<details class="more" id="evmore"' + (evMoreOpen ? " open" : "") + '><summary>Twilight, golden and blue hours</summary><div class="evs">' + more.map(row).join("") + '</div></details>' : "");
-  if ($("evmore")) $("evmore").addEventListener("toggle", function (e) { evMoreOpen = e.target.open; });
-  $("dayTitle").textContent = fmt({ weekday: "long", day: "numeric", month: "long" }).format(new Date(Date.parse(S.day.start) + 12 * 3600e3));
+  $("evs").innerHTML = S.day.events.map(row).join("") || "<div>No events today.</div>";
+  $("dayTitle").textContent = "All events \u00b7 " + fmt({ weekday: "long", day: "numeric", month: "long" }).format(new Date(Date.parse(S.day.start) + 12 * 3600e3));
 }
 
 // ---------- loading ----------
@@ -1007,7 +1022,7 @@ function wxDt() { return (Date.now() - S.wxAt) / 1000; }
 function wxAges() {
   var e = $("wxage"); if (!e || !S.wx || !S.wx.stations.length) return;
   var oa = S.wx.stations[0].observationAgeSeconds + wxDt(); // METARs are hourly; amber once one is a quarter-hour overdue
-  var cn = "age" + (oa > 4500 ? " warn" : ""), tx = "updated " + ago(oa); if (e.className !== cn) e.className = cn; if (e.textContent !== tx) e.textContent = tx;
+  var cn = "age" + (oa > 3600 ? " warn" : ""), tx = "METAR " + ago(oa).toUpperCase(); if (e.className !== cn) e.className = cn; if (e.textContent !== tx) e.textContent = tx;
   if ($("hood").open) diag();
 }
 function drawWx() {
@@ -1017,13 +1032,15 @@ function drawWx() {
   var raws = w.stations.map(function (x) {
     return '<span class="c"># ' + esc(x.stationId) + ', ' + x.distanceKm.toFixed(2) + ' km, observed ' + esc(utcHm(x.observationTime)) + ' (' + hm(Date.parse(x.observationTime)) + ' local)</span>\\n' + esc(x.raw);
   }).join("\\n\\n");
-  var vis = s.visibility.statuteMiles == null ? "\\u2014" : '<span class="tn">' + s.visibility.statuteMiles + (s.visibility.orMore ? "+" : "") + "</span> mi";
-  box.innerHTML = '<div class="wxtop"><span class="temp tn">' + (s.temperatureC == null ? "\\u2014" : s.temperatureC.toFixed(1) + "\\u00b0C") + '</span>' +
-    '<div><div class="cond">' + esc(condition(s)) + '</div><div class="wind tn">' + esc(windText(s.wind, decl)) + '</div></div></div>' +
-    '<dl class="cells"><div><dt>Dew point</dt><dd class="num">' + num(s.dewpointC, 1, "\\u00b0C") + '</dd></div><div><dt>Visibility</dt><dd class="num">' + vis + '</dd></div>' +
-    '<div><dt>Pressure</dt><dd class="num">' + (s.altimeterHpa != null ? num(s.altimeterHpa, 1, " hPa") : num(s.altimeterInHg, 2, " inHg")) + '</dd></div><div><dt>Clouds</dt><dd>' + clouds(s) + '</dd></div></dl>' +
-    '<p class="station">' + esc(s.stationId) + ' \\u00b7 ' + s.distanceKm.toFixed(2) + ' km \\u00b7 bearing ' + azT(s.bearing.true) + ' \\u00b7 ' + s.bearing.magnetic.toFixed(2) + '\\u00b0 M<br><span class="age" id="wxage"></span></p>' +
-    '<details class="raw" id="rawd"' + (S.rawOpen ? " open" : "") + '><summary>Raw METAR</summary><pre>' + raws + '</pre></details>';
+  function cell(k, v) { return '<div><div class="cap">' + k + '</div><div class="v">' + v + "</div></div>"; }
+  function n(x, d, u) { return x == null ? "\u2014" : x.toFixed(d) + '<span class="u">' + u + "</span>"; }
+  var wd = s.wind, wind = wd.speedKt == null ? "\u2014" : wd.calm ? "Calm" : (wd.variable || wd.directionDegTrue == null ? "VRB" : Math.round(wrap360(wd.directionDegTrue)) + '<span class="u">\u00b0</span>') + " " + wd.speedKt + '<span class="u">KT' + (wd.gustKt ? " G" + wd.gustKt : "") + "</span>";
+  var vis = s.visibility.statuteMiles == null ? "\u2014" : s.visibility.statuteMiles + (s.visibility.orMore ? "+" : "") + '<span class="u">MI</span>';
+  box.innerHTML = '<div class="wx"><div class="temp ro"><div class="cap">Temperature</div><div class="v">' + n(s.temperatureC, 1, "\u00b0C") + '</div></div><div class="cond">' + esc(condition(s)) + "</div></div>" +
+    '<div class="wxg">' + cell("Wind", wind) + cell("Dew point", n(s.dewpointC, 1, "\u00b0C")) + cell("Pressure", s.altimeterHpa != null ? n(s.altimeterHpa, 0, "HPA") : n(s.altimeterInHg, 2, "INHG")) + cell("Visibility", vis) + "</div>" +
+    '<p class="station">' + esc(s.stationId) + " \u00b7 " + s.distanceKm.toFixed(1) + " KM " + compass(s.bearing.true) + ' \u00b7 <span class="age" id="wxage"></span></p>' +
+    '<p class="vh">' + esc(windText(wd, decl)) + ". Clouds: " + clouds(s).replace(/<[^>]+>/g, "") + "</p>" +
+    '<details class="disc" id="rawd"' + (S.rawOpen ? " open" : "") + '><summary>Raw METAR</summary><pre>' + raws + "</pre></details>";
   $("rawd").addEventListener("toggle", function (e) { S.rawOpen = e.target.open; });
   wxAges();
 }
@@ -1121,3 +1138,5 @@ setInterval(function () { if (!document.hidden) loadWx(); }, 60e3);
 </script>
 `
 const PAGE_END = "</body></html>"
+/** The page's face (src/din.ts), inline: in the streamed tail, so the head paints at once in the system face. */
+const FONT_STYLE = `<style>${DIN_CSS}</style>`

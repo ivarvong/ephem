@@ -38,7 +38,7 @@ describe("home: who is the sky for", () => {
   })
   it("keeps precision behind one collapsed Under the hood section", () => {
     const html = page(V)
-    expect(html).toMatch(/<details class="hood" id="hood">\s*<summary>Under the hood<\/summary>/)
+    expect(html).toMatch(/<details class="disc hood" id="hood">\s*<summary>Under the hood<\/summary>/)
     expect(html).toContain('id="curl"'); expect(html).toContain('id="diag"')
     expect(html).not.toMatch(/details class="hood"[^>]* open/)
   })
