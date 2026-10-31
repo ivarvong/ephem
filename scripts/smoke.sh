@@ -91,9 +91,32 @@ U="/v1/position?lat=40.$(printf '%07d' $((RANDOM * 32768 + RANDOM)))&lon=-74&tim
 want compute && ORDER+=(compute); want compute-hit && ORDER+=(compute-hit)
 { chk_one compute 200 "$U" '"provenance"' "" MISS "${CEXPECT:-any}"; chk_one compute-hit 200 "$U" '"provenance"' "" HIT any; } &   # in order
 chk blocks-miss 200 "/v1/position?lat=40.7&lon=-74&time=$(python3 -c 'import random,datetime as d; print((d.datetime(1972,1,2)+d.timedelta(seconds=random.randrange(5_617_000_000))).strftime("%Y-%m-%dT%H:%M:%SZ"))')" '"provenance"' "" MISS "${CEXPECT:-any}"
-# Link preview (src/og-render.ts): the font glyph fetches (from the public host, so it must be live before a canary renders) and the touch icon.
+# Link preview (src/og-render.ts): the font glyph fetches, the touch icon, and a live card: a place name never asked for (a fresh
+# Og MISS: data from the Api, a real glyph render) must come back as a glyph PNG (x-ephem-og: glyph, not the fallback card),
+# image/png, 2400×1260, 20-300 KB; then the same URL again is a Workers Cache HIT.
 chk og-font 200 "/assets/7dd8d6ff43f63a15/ephem-din-regular.woff2"
 chk touch-icon 200 "/apple-touch-icon.png" "PNG"
+og_one() {   # og_one <name> <path> <want x-ephem-og-cache or "">
+  local name=$1 p=$2 wc=$3 b="$D/$1.b" h="$D/$1.h" c t why=""
+  c=$(curl -s -o "$b" -D "$h" -w '%{http_code} %{time_total}' --max-time 30 ${H[@]+"${H[@]}"} "$B$p"); t=${c#* }; c=${c%% *}; touch "$h" "$b"
+  hd() { tr -d '\r' < "$h" | awk -F': ' -v k="$1" 'tolower($1)==k{print $2}' | tail -1; }
+  local v sz og ca ct er wh; v=$(hd x-ephem-version); og=$(hd x-ephem-og); ca=$(hd x-ephem-og-cache); ct=$(hd content-type); er=$(hd x-ephem-errors); sz=$(wc -c < "$b" | tr -d ' ')
+  wh=$(python3 -c 'import sys,struct; d=open(sys.argv[1],"rb").read(24); print("%dx%d" % struct.unpack(">II", d[16:24]) if d[:8]==b"\x89PNG\r\n\x1a\n" else "not-png")' "$b")
+  [ "$c" = 200 ] || why="status $c"
+  [ -z "$why" ] && [ "$ct" != image/png ] && why="content-type $ct"
+  [ -z "$why" ] && [ "$og" != glyph ] && why="x-ephem-og ${og:-none} (the fallback card, not a render)"
+  [ -z "$why" ] && [ "$wh" != 2400x1260 ] && why="image $wh, want 2400x1260"
+  [ -z "$why" ] && { [ "$sz" -lt 20000 ] || [ "$sz" -gt 300000 ]; } && why="size $sz B, want 20-300 KB"
+  [ -z "$why" ] && [ -n "$EXPECT" ] && [ "$v" != "$EXPECT" ] && why="answered by version ${v:-none}, want ${EXPECT:0:8}"
+  [ -z "$why" ] && [ -n "$PIN" ] && [ -n "$RUN" ] && [ "${er:-0}" != 0 ] && why="isolate logged ${er} errors (x-ephem-errors)"
+  [ -z "$why" ] && [ -n "$wc" ] && [ "$ca" != "$wc" ] && why="x-ephem-og-cache ${ca:-none}, want $wc"
+  [ -n "$MANIFEST" ] && echo "$(hd cf-ray | grep . || echo -) $c GET ${p%%\?*} $name" >> "$MANIFEST"
+  if [ -z "$why" ]; then echo "ok   $name $c ${v:0:8} $og ${ca:-} ${sz} B ${t}s $p" > "$D/$name.res"; else echo "FAIL $name: $why ($(hd cf-ray)) $p" > "$D/$name.res"; fi
+}
+OGP="/og.png?lat=40.71&lon=-74.01&tz=America%2FNew_York&place=SMOKE+$(openssl rand -hex 3 | tr a-f A-F)&t=$(( $(date +%s) / 600 ))"
+[[ "$ONLY" == *",og-hit,"* ]] && ONLY="$ONLY,og,"   # og-hit needs og's render first
+want og && ORDER+=(og); want og-hit && ORDER+=(og-hit)
+{ want og && og_one og "$OGP" ""; want og-hit && og_one og-hit "$OGP" HIT; } &   # in order: render, then the cached copy
 if want mcp; then
   ORDER+=(mcp)
   { if EPHEM_VERSION=$PIN EPHEM_SMOKE_RUN=$RUN EPHEM_SMOKE_MANIFEST=$MANIFEST node --experimental-strip-types "$(dirname "$0")/obs/mcp-probe.ts" "$B" > "$D/mcp" 2>&1; then echo "ok   mcp $(tail -1 "$D/mcp")" > "$D/mcp.res"

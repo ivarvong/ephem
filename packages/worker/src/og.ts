@@ -340,7 +340,7 @@ export const ogScene = (d: OgData, fonts: { readonly regular: GlyphFont; readonl
   if (nx) {
     const t = Date.parse(nx.time), tomorrow = localDate(t, d.tz) !== localDate(at, d.tz)
     text(`T–${hhmmss(t - at)}`, PAD - 4, 494, 118, INK, { tracking: 1 })
-    text(`${evName(nx)} · ${hm(t, d.tz)}${tomorrow ? " TOMORROW" : ""}`, PAD, 540, 24, INK, { bold: true, tracking: 4.8, fit: 600 })
+    text(`${evName(nx)} · ${hm(t, d.tz)}${tomorrow ? " TOMORROW" : ""}`, PAD, 540, 24, INK, { bold: true, tracking: 4.8, fit: 560 })
   } else {
     text("NO RISE OR SET", PAD - 2, 486, 72, INK, { tracking: 1 })
     text("IN THE NEXT TWO DAYS", PAD, 540, 24, INK, { bold: true, tracking: 4.8 })

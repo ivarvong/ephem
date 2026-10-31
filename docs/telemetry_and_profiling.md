@@ -923,6 +923,46 @@ scratchpad `journey/`):
 - **Font:** "Ephem DIN" (D-DIN subset, OFL, renamed; src/din.ts, built by scripts/fonts/din.py) inline in the streamed tail;
   licence at /licenses/din.txt. No font requests.
 
+## Link previews (`/og.png`, src/og.ts, 2026-10-31)
+
+A shared link previews as a live 2400×1260 card of that place's sky (iMessage, Slack, X, Facebook…), rendered by **glyph**
+(https://glyph.ivar.workers.dev, github.com/ivarvong/glyph: JSON scene spec → PNG, pure JS).
+
+- **Scene** (src/og.ts, pure, test/og.test.ts): the homepage's chart (`trackSpan`, `altU`, `crBezier`, `zenithArc`,
+  `skyAt` are ported from CORE_JS; the test runs both over the same inputs, so a CORE_JS change that the port lacks fails
+  the gate), EPHEM + place, `T–HH:MM:SS` to the next event (the page's `upcoming` rule) with its name, Sun/Moon alt/az,
+  date/time and zone. Scene units 1200×630, rendered `dpr=2`. Text is Ephem DIN, caps, folded to the font (`din()`:
+  Tromsø → TROMSO; the font has no `−`, so minus is `–`); glyph refuses a missing glyph, so the test checks every text item.
+- **Routes** (front door, before the app; no request row, like /favicon.ico): `GET /og.png?lat&lon&place&tz&t` (no lat/lon:
+  the requester's request.cf place), `GET /assets/<sha16>/ephem-din-{regular,bold}.woff2` (the font glyph fetches; pinned
+  by sha256 in the spec, src/og-fonts.ts, hashes tested), `GET /apple-touch-icon.png` (180×180, rendered by glyph from
+  `iconSpec`; regenerate it and the fallback card with `node --experimental-strip-types scripts/og/assets.ts
+  [--glyph-lib <glyph clone>]` → src/og-png.generated.ts).
+- **Cache** (Workers Cache only): the front door normalises (lat/lon to 0.01°, `t` = the 10-minute bucket, clamped to
+  [now − 2 d, now + 1 bucket], a valid zone) and calls the cache-enabled **`Og`** entrypoint (src/og-entry.ts) through
+  src/loopback.ts, key `/v<N>/og/png?<query>`. A miss reads the bucket's /v1 answers from the Api (position at the bucket's
+  start, the page's track window, today's and tomorrow's /v1/day: all deterministic, cached, shared with the page), builds
+  the scene and POSTs it to glyph over the **`GLYPH` service binding** (a public fetch between two `*.ivar.workers.dev`
+  Workers is refused as same-zone; glyph got `global_fetch_strictly_public` on 2026-10-31 so it can fetch our font). A
+  render is `public, max-age=600`. If glyph errors or exceeds `GLYPH_BUDGET_MS` (2.5 s), the static fallback card answers
+  (`x-ephem-og: fallback:<why>`, `max-age=60`) and the render finishes in waitUntil (glyph's own cache then has it).
+- **Head tags** (src/og-head.ts → `pageHead(v, trace, og)`): og:title/description/url/image(+type, width, height, alt),
+  twitter:card=summary_large_image, apple-touch-icon; the og:image URL carries the rounded place and the bucket, so a
+  crawler never keeps a stale sky. For a preview fetcher (`PREVIEW_BOT` UA) the head first reads position + day in-process
+  (span `home.og`, ≤ 1.2 s) for a live og:description ("Moon 6.4° ENE · Moon culmination 05:41 · Sun −51° · Night"); a
+  person's page never waits and makes no new request (the touch icon is fetched only by iOS when it needs it).
+- **Spans:** `og.front` (front door: `og.outcome` glyph|fallback:*, `og.cache` = Og's cf-cache-status, `og.ms`, `og.bytes`,
+  `og.t`), `og.render` (Og: `og.data_ms`, `og.glyph_ms`, `og.glyph_cache` = glyph's x-glyph-cache, `og.bytes`, `og.ms`).
+  Response headers `x-ephem-og`, `x-ephem-og-cache`.
+- **Measured** (b11dcdb2, 2026-10-31, client EWR): Og MISS 755–820 ms in `og.render` (data 30–232 ms, glyph 523–790 ms,
+  the first after glyph's deploy cold incl. its font fetch), 846–886 ms at the front door; HIT 3–5 ms at the front door,
+  0.15–0.3 s for the client. PNG 160–171 KB (NYC, Tromsø); 2× day scenes ~176 KB (local render). Crawlers (iMessage,
+  Slack, Twitter, Facebook UAs) get 15 og/twitter tags and the live description; page 0.15–0.26 s.
+- **Smoke:** `og-font`, `touch-icon`, `og` (a never-asked place: x-ephem-og glyph, image/png, 2400×1260, 20–300 KB) and
+  `og-hit` (the same URL: x-ephem-og-cache HIT).
+- **Look at it:** `curl -o og.png 'https://ephem.ivar.workers.dev/og.png?lat=40.71&lon=-74.01&tz=America%2FNew_York&place=New+York+City'`;
+  `sips -Z 300 og.png --out og-300.png` is how iMessage shows it (~300 pt wide).
+
 ## Request logs (Basin)
 
 One row per request in an Iceberg table, queryable with SQL: **Basin Pipelines** (stream) → **Basin Catalog** (Iceberg on
