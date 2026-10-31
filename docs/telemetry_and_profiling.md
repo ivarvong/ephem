@@ -944,9 +944,9 @@ A shared link previews as a live 2400×1260 card of that place's sky (iMessage, 
   else the place is shown as coordinates. test/og.test.ts checks ~50 real place names character by character.
 - **A font change is two deploys.** glyph fetches the font from the public host, i.e. the live (100 %) version, not the
   canary whose spec names it; 352678e (2026-10-31) named a path only its canary served, got the fallback card in the canary
-  smoke and was removed. Deploy 1 serves the new font beside the previous one (src/din-prev.ts, `servedFont`) with
-  `OG_DIN = "prev"` in src/og-fonts.ts (the card picks faces from that font's characters); deploy 2 sets `"current"` and
-  deletes din-prev.ts.
+  smoke and was removed. Deploy 1 serves the new font beside the previous one (the old base64 + advances in a
+  temporary src/din-prev.ts, both returned by `servedFont`, OG_FONTS / OG_DIN_ADV on the old font: the card picks faces from
+  that font's characters); deploy 2 points the card at the new font and drops the old (90d178e, then the next commit).
 - **Routes** (front door, before the app; no request row, like /favicon.ico): `GET /og.png?lat&lon&place&tz&t` (no lat/lon:
   the requester's request.cf place), `GET /assets/<sha16>/ephem-din-{regular,bold}.woff2` (the font glyph fetches; pinned
   by sha256 in the spec, src/og-fonts.ts, hashes tested), `GET /apple-touch-icon.png` (180×180, rendered by glyph from

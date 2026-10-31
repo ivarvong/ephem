@@ -227,8 +227,7 @@ export const ogHead = ({ origin, v, now, live }: OgHeadInput) => {
 /** Ephem DIN's characters and advances (1000 units/em), generated with the font (scripts/fonts/din.py → src/din.ts), for layout and face choice. */
 const ADV_R = OG_DIN_ADV.r, ADV_B = OG_DIN_ADV.b
 export const DIN_CHARS: ReadonlySet<string> = new Set(Object.keys(ADV_R))
-/** The page's minus where the OG font has it (the previous font, during a font change, had only the en dash). */
-const MINUS = DIN_CHARS.has("−") ? "−" : "–"
+const MINUS = "−"   // the page's minus (Ephem DIN has it since 2026-10-31)
 /** A text as the card shows it: NFC, caps (what the page's text-transform does), whitespace runs as one space. It never folds,
  *  swaps or drops a character: Tromsø is TROMSØ (2026-10-31: the card said TROMSO). */
 export const din = (s: string) => s.normalize("NFC").toUpperCase().replace(/\s+/g, " ").trim()

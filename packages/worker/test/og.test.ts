@@ -7,7 +7,7 @@ import { makeHandler } from "../src/app.ts"
 import { CORE_JS } from "../src/home.ts"
 import { REC, direct, makeBlocks } from "../src/blocks.ts"
 import * as og from "../src/og.ts"
-import { DIN_PREV_SHA256, DIN_SHA256, OG_DIN, OG_FONTS, fontBytes, fontPath, prevFontBytes, prevFontPath, servedFont } from "../src/og-fonts.ts"
+import { DIN_SHA256, OG_FONTS, fontBytes, fontPath, servedFont } from "../src/og-fonts.ts"
 import { DIN_ADV } from "../src/din.ts"
 import { OG_CACHE, OG_FALLBACK_CACHE, fallbackPng, ogData, ogFront, renderGlyph } from "../src/og-render.ts"
 import { makeLoopback, ogCacheKey, type Binding, type Loopback } from "../src/loopback.ts"
@@ -63,7 +63,7 @@ describe("og: the chart is the page's (ported from CORE_JS, checked against it)"
 })
 
 describe("og: text in Ephem DIN, the font served for glyph", () => {
-  const PAGE = new Set(Object.keys(DIN_ADV.r))   // the page's font (src/din.ts); the card uses it once OG_DIN is "current"
+  const PAGE = new Set(Object.keys(DIN_ADV.r))   // the page's font (src/din.ts), also the card's
   it("the font covers real place names, capitals and the page's signs (every character, as displayed)", () => {
     expect(Object.keys(DIN_ADV.b)).toEqual([...PAGE])
     for (const name of PLACES) for (const c of og.din(name)) expect(PAGE.has(c), `${name}: ${c} U+${c.codePointAt(0)!.toString(16)}`).toBe(true)
@@ -71,7 +71,7 @@ describe("og: text in Ephem DIN, the font served for glyph", () => {
     for (let cp = 0xc0; cp < 0x17f; cp++) { const c = String.fromCodePoint(cp); if (c !== c.toUpperCase() || c.toLowerCase() === c || cp === 0xd7 || cp === 0x14a) continue; expect(PAGE.has(c), c).toBe(true) }
   })
   it("never alters a name's characters: NFC caps only, no folding or dropping; a face that has them all sets it", () => {
-    for (const name of PLACES) { expect(og.din(name)).toBe(name.normalize("NFC").toUpperCase()); expect(og.faceFor(og.din(name))).toBe(face(og.din(name))) }
+    for (const name of PLACES) { expect(og.din(name)).toBe(name.normalize("NFC").toUpperCase()); expect(og.faceFor(og.din(name))).toBe("din") }
     expect(og.din("Tromsø")).toBe("TROMSØ"); expect(og.din("Zu\u0308rich")).toBe("ZÜRICH")   // NFD in, the same letters out
     expect(og.din("São  Paulo\t")).toBe("SÃO PAULO")
     expect(og.faceFor(og.din("Москва"))).toBe("noto"); expect(og.din("Hà Nội")).toBe("HÀ NỘI"); expect(og.faceFor("HÀ NỘI")).toBe("noto")
@@ -80,11 +80,9 @@ describe("og: text in Ephem DIN, the font served for glyph", () => {
   it("the font paths are content-addressed by the sha256 of the bytes we serve", () => {
     for (const w of ["regular", "bold"] as const) {
       expect(createHash("sha256").update(fontBytes(w)).digest("hex")).toBe(DIN_SHA256[w])
-      expect(createHash("sha256").update(prevFontBytes(w)).digest("hex")).toBe(DIN_PREV_SHA256[w])
       expect(fontPath(w)).toBe(`/assets/${DIN_SHA256[w].slice(0, 16)}/ephem-din-${w}.woff2`)
-      expect(servedFont(fontPath(w))).toEqual(fontBytes(w)); expect(servedFont(prevFontPath(w))).toEqual(prevFontBytes(w))
-      const sha = (OG_DIN === "prev" ? DIN_PREV_SHA256 : DIN_SHA256)[w]
-      expect(OG_FONTS[w]).toEqual({ url: `https://ephem.ivar.workers.dev/assets/${sha.slice(0, 16)}/ephem-din-${w}.woff2`, sha256: sha })
+      expect(servedFont(fontPath(w))).toEqual(fontBytes(w))
+      expect(OG_FONTS[w]).toEqual({ url: `https://ephem.ivar.workers.dev${fontPath(w)}`, sha256: DIN_SHA256[w] })
     }
   })
 })
@@ -130,7 +128,7 @@ describe("og: the scene from the API's own answers (fixture DE440 blocks)", () =
     const texts = m.spec.items.filter(i => "text" in i).map(i => i.text as string)
     for (const t of texts) for (const c of t) expect(og.DIN_CHARS.has(c), `${t}: ${c}`).toBe(true)
     expect(texts).toContain("EPHEM"); expect(texts).toContain("NEW YORK CITY")
-    expect(texts.some(t => /^T[−–]\d\d:\d\d:\d\d$/.test(t))).toBe(true)
+    expect(texts.some(t => /^T−\d\d:\d\d:\d\d$/.test(t))).toBe(true)
     expect(m.spec.items.filter(i => "path" in i && "stroke" in i).length).toBe(4)   // two tracks, past and future
     expect(m.labels.map(l => l.id).toSorted()).toEqual(["MOON", "SUN"])
     for (const l of m.labels) {
@@ -143,7 +141,7 @@ describe("og: the scene from the API's own answers (fixture DE440 blocks)", () =
     const d = await ogData(NYC_Q, api, {})
     const place = (name: string) => { const m = og.ogScene({ ...d, place: name }, OG_FONTS); const it = m.spec.items.find(i => i.size === 26 && i.text !== "EPHEM")!; return { text: it.text, font: it.font, fonts: Object.keys(m.spec.fonts) } }
     for (const name of PLACES) { const t = name.normalize("NFC").toUpperCase(), din = face(t) === "din"; expect(place(name), name).toEqual({ text: t, font: din ? "r" : "nr", fonts: din ? ["r", "b"] : ["r", "b", "nr", "nb"] }) }
-    if (OG_DIN === "current") expect(place("Tromsø")).toMatchObject({ text: "TROMSØ", font: "r" })
+    expect(place("Tromsø")).toMatchObject({ text: "TROMSØ", font: "r" })
     expect(place("Москва")).toEqual({ text: "МОСКВА", font: "nr", fonts: ["r", "b", "nr", "nb"] })
     expect(place("Hà Nội")).toMatchObject({ text: "HÀ NỘI", font: "nr" })
     expect(place("東京")).toMatchObject({ text: "40.71° N, 74.01° W", font: "r" })   // no face has it: the place as coordinates, never a mangled name
