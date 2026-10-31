@@ -147,7 +147,8 @@ function placeLabels(items, obstacles, bounds, soft) {
       var h = hit(r, taken), s = h > hard ? Infinity : hit(r, soft);
       if (h < hard || (h === hard && s < sft)) { hard = h; sft = s; best = r; }
     }
-    best.id = it.id; best.clear = hard === 0; out.push(best); taken.push(best);
+    best.id = it.id; best.clear = hard === 0; out.push(best);
+    if (it.optional && !best.clear) best.dropped = true; else taken.push(best);   // an optional label with no clear spot is not drawn
   });
   return out;
 }
@@ -189,6 +190,64 @@ function ringLabelSpot(y, w, h, bounds, segs, obstacles, pad) {
   }
   return null;
 }
+// ---- the sky chart: all 360° of azimuth by the whole altitude range, zenith to nadir ----
+// Altitude to chart units: true scale from the zenith down to -18° (the sky and the three twilight bands), a quarter scale
+// below (the deep ground, -18° to the nadir). 126 units in all; the sky above the horizon gets 90 of them.
+var DEEP = 0.25;
+function altU(a) { a = Math.max(-90, Math.min(90, a)); return a >= -18 ? a : -18 + (a + 18) * DEEP; }
+var U_TOP = 90, U_BOT = altU(-90);
+// A continuous azimuth sequence (no 360° jumps), so a track crosses the chart's seam as one line.
+function unwrapAz(azs) { var out = [], prev = null; for (var i = 0; i < azs.length; i++) { var a = prev == null ? azs[i] : prev + wrap180(azs[i] - prev); out.push(a); prev = a; } return out; }
+// The default frame shows all 360°, centred on the meridian (south in the north, north in the south) unless that puts a body
+// within 30° of the seam (the chart's left/right edge, centre ± 180°); then the nearest centre, in 5° steps, that keeps both clear.
+function chartCenter(lat, azs) {
+  var mer = lat >= 0 ? 180 : 0, best = mer, bestS = -Infinity;
+  for (var k = 0; k < 72; k++) {
+    var c = wrap360(mer + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 5), d = 180;
+    azs.forEach(function (a) { d = Math.min(d, Math.abs(wrap180(a - c - 180))); });
+    var s = Math.min(d, 30) - 0.01 * Math.abs(wrap180(c - mer));
+    if (s > bestS) { bestS = s; best = c; }
+  }
+  return best;
+}
+// Horizon crossings and culminations from track samples [{t, alt (true), az}]: h0 is the centre's true altitude at rise/set.
+// Crossings interpolate linearly between samples; transit and anti-transit (upper and lower culmination) take the vertex of a
+// parabola through three samples. Times here are within a minute or so; the page prefers /v1/day's exact time when it has one.
+function trackEvents(s, h0) {
+  var out = [], az = unwrapAz(s.map(function (p) { return p.az; }));
+  for (var i = 1; i < s.length; i++) {
+    var a = s[i - 1].alt - h0, b = s[i].alt - h0;
+    if ((a < 0) !== (b < 0)) { var f = a / (a - b); out.push({ kind: b > a ? "rise" : "set", t: s[i - 1].t + f * (s[i].t - s[i - 1].t), az: wrap360(az[i - 1] + f * (az[i] - az[i - 1])), alt: h0 }); }
+    if (i < s.length - 1) {
+      var y0 = s[i - 1].alt, y1 = s[i].alt, y2 = s[i + 1].alt;
+      if ((y1 > y0 && y1 >= y2) || (y1 < y0 && y1 <= y2)) {
+        var den = y0 - 2 * y1 + y2, v = den ? Math.max(-1, Math.min(1, 0.5 * (y0 - y2) / den)) : 0;
+        var azv = v >= 0 ? az[i] + v * (az[i + 1] - az[i]) : az[i] + v * (az[i] - az[i - 1]);
+        out.push({ kind: y1 > y0 ? "transit" : "antitransit", t: s[i].t + v * (s[i].t - s[i - 1].t), az: wrap360(azv), alt: y1 - 0.25 * (y0 - y2) * v });
+      }
+    }
+  }
+  return out.sort(function (x, y) { return x.t - y.t; });
+}
+// Pointing: where the phone's back camera looks, from a deviceorientation event. The camera is the device's -z axis; with the
+// W3C rotation R = Rz(alpha) Rx(beta) Ry(gamma) its east/north/up components give the altitude, and its azimuth too when alpha is
+// absolute (Android's deviceorientationabsolute). iOS gives webkitCompassHeading instead. Both headings are magnetic, so the
+// WMM declination (east positive) turns them true. Returns {az, alt} in degrees, or null without a heading.
+function poseFrom(e, decl) {
+  if (e.beta == null || e.gamma == null) return null;
+  var a = (e.alpha || 0) * Math.PI / 180, b = e.beta * Math.PI / 180, g = e.gamma * Math.PI / 180;
+  var vx = -Math.sin(g) * Math.cos(a) - Math.cos(g) * Math.sin(b) * Math.sin(a), vy = -Math.sin(g) * Math.sin(a) + Math.cos(g) * Math.sin(b) * Math.cos(a), vz = -Math.cos(b) * Math.cos(g);
+  var mag = e.webkitCompassHeading != null ? e.webkitCompassHeading : e.absolute && e.alpha != null ? Math.atan2(vx, vy) * 180 / Math.PI : null;
+  if (mag == null) return null;
+  return { az: wrap360(mag + (decl || 0)), alt: Math.asin(Math.max(-1, Math.min(1, vz))) * 180 / Math.PI };
+}
+// "Moon, 23.4° below the horizon: turn 40° left, tilt 41° down". b: {az, alt}; pose: {az, alt}. Within 3° is on target.
+function aimText(name, b, pose) {
+  var d = wrap180(b.az - pose.az), e = b.alt - pose.alt, parts = [];
+  if (Math.abs(d) >= 3) parts.push("turn " + Math.round(Math.abs(d)) + "\\u00b0 " + (d < 0 ? "left" : "right"));
+  if (Math.abs(e) >= 3) parts.push("tilt " + Math.round(Math.abs(e)) + "\\u00b0 " + (e < 0 ? "down" : "up"));
+  return name + (b.alt < 0 ? ", " + Math.abs(b.alt).toFixed(1) + "\\u00b0 below the horizon" : "") + ": " + (parts.length ? parts.join(", ") : "dead ahead");
+}
 `
 
 export const page = (v: Visitor, trace?: DocumentTrace) => `<!doctype html>
@@ -198,7 +257,7 @@ ${traceparentMeta(trace)}
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>ephem · the sky over ${v.city.replace(/[<>&"]/g, "")}</title>
 <meta name="description" content="Where the Sun and the Moon are right now, from JPL DE440, computed on Cloudflare's edge.">
-<meta name="theme-color" content="#05070b">
+<meta name="theme-color" content="#05070b" media="(prefers-color-scheme: dark)"><meta name="theme-color" content="#f3f4f6" media="(prefers-color-scheme: light)">
 ${ICON_LINK}
 <style>
 /* Mission-ops idiom: near-black, 1px hairlines, a strict grid, uppercase tracked labels, tabular mono readouts,
@@ -215,13 +274,12 @@ a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 .num,.tn{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:0}
 .lbl{font:500 11px/1.3 var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
 .gut{padding-left:max(16px,env(safe-area-inset-left),calc((100% - var(--maxw)) / 2));padding-right:max(16px,env(safe-area-inset-right),calc((100% - var(--maxw)) / 2))}
-/* the sky is always a night instrument, whatever the page scheme */
-.sky{--ink:#eef1f6;--muted:#9aa3b5;--line2:rgba(255,255,255,.22);--ok:#3ddc97;--caution:#ffb547;--alert:#ff6b5e;color:var(--ink);background:#05070b;
-position:relative;height:min(76svh,740px);min-height:470px;overflow:hidden;touch-action:pan-y;cursor:grab;user-select:none;-webkit-user-select:none}
-.sky:active{cursor:grabbing}
-.sky canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
-.sky::before{content:"";position:absolute;left:0;right:0;top:0;height:140px;background:linear-gradient(rgba(5,7,11,.45),rgba(5,7,11,0));pointer-events:none;z-index:1}
-.hud{position:absolute;inset:0;z-index:2;pointer-events:none;display:flex;flex-direction:column;justify-content:space-between;padding-top:max(16px,env(safe-area-inset-top));padding-bottom:18px}
+/* the page header, then the sky chart: an instrument display, always dark (it is the sky), framed like the cards below */
+.hero{padding-top:max(14px,env(safe-area-inset-top));padding-bottom:12px}
+.sky{padding-top:0;padding-bottom:0}
+.scr{position:relative;height:clamp(232px,40svh,460px);border:1px solid var(--line);border-radius:2px;overflow:hidden;background:#05070b;touch-action:pan-y;cursor:grab;user-select:none;-webkit-user-select:none}
+.scr:active{cursor:grabbing}
+.scr canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 .top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
 .brand{display:flex;align-items:center;gap:14px;font:600 11px/1 var(--sans);letter-spacing:.22em;color:var(--ink)}
 .live{display:inline-flex;align-items:center;gap:6px;font:500 10px/1 var(--sans);letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
@@ -232,11 +290,12 @@ h1.coords{font-size:clamp(22px,3.4vw,44px);font-family:var(--mono);letter-spacin
 .now{text-align:right;flex:none}
 .now .lbl{display:block;margin-top:2px}
 .clock{font:400 clamp(24px,2.6vw,32px)/1 var(--mono);font-variant-numeric:tabular-nums;margin-top:6px}
-.ctl{margin-top:4px;min-height:44px;display:flex;align-items:center;justify-content:flex-end;font:400 12px/1.2 var(--sans);color:var(--muted)}
-#hint{transition:opacity .6s}#hint.gone{opacity:0}
-.ctl button{pointer-events:auto;min-height:44px;font:500 11px/1 var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--ink);background:rgba(5,7,11,.4);border:1px solid var(--line2);border-radius:2px;padding:0 14px;cursor:pointer}
-.ctl button:hover{border-color:var(--ink)}
-.bottom{max-width:42rem}
+.ctl{position:absolute;top:0;right:0;z-index:2;display:flex}
+.ctl button{min-height:44px;font:500 10px/1 var(--sans);letter-spacing:.14em;text-transform:uppercase;color:#eef1f6;background:transparent;border:0;padding:0 12px;cursor:pointer}
+.ctl button span{display:inline-block;padding:6px 9px;background:rgba(5,7,11,.72);border:1px solid rgba(255,255,255,.24);border-radius:2px}
+.ctl button:hover span{border-color:#eef1f6}
+.bottom{max-width:42rem;padding-top:14px;padding-bottom:4px}
+.guide{margin:0 0 10px;font:12.5px/1.5 var(--mono);color:var(--accent);white-space:pre-line}
 .lede{font:400 clamp(19px,2.3vw,26px)/1.3 var(--sans);letter-spacing:-.01em;margin:0;text-wrap:pretty}
 .next{margin:10px 0 0;font:14px/1.45 var(--sans);color:var(--muted);display:flex;gap:12px;align-items:baseline}
 .next .lbl{flex:none;color:var(--accent)}
@@ -311,29 +370,32 @@ footer.tel i{font:500 10px/1 var(--sans);font-style:normal;letter-spacing:.14em;
 .inst{margin:0 0 8px;font:500 11px/1 var(--sans);letter-spacing:.14em;text-transform:uppercase}.inst a{color:var(--faint);display:inline-flex;align-items:center;min-height:44px}.inst a:hover{color:var(--accent)}
 @media (max-width:760px){.bodies,.hood .in{grid-template-columns:minmax(0,1fr)}.wxc dl.cells{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
 .wxc dl.cells>div:nth-child(n+3){border-top:1px solid var(--line)}.wxc dl.cells>div:nth-child(3){border-left:0}}
-@media (min-width:900px){.blk{grid-template-columns:200px minmax(0,1fr);gap:32px}.blk>h2{padding-top:3px}.hud{padding-bottom:26px}.hud{padding-top:max(22px,env(safe-area-inset-top))}}
+@media (min-width:900px){.blk{grid-template-columns:200px minmax(0,1fr);gap:32px}.blk>h2{padding-top:3px}.hero{padding-top:max(22px,env(safe-area-inset-top))}}
 </style>
 </head><body>
-<section class="sky" id="sky" aria-label="Live panorama of the sky">
-  <canvas id="cv" tabindex="0" aria-label="Sky panorama"></canvas>
-  <div class="hud gut">
-    <div class="top" id="top">
-      <div style="min-width:0">
-        <div class="brand">EPHEM<span class="live" id="live" role="status"><i></i><span id="liveT">Acquiring</span></span></div>
-        <h1 id="place"></h1>
-      </div>
-      <div class="now">
-        <span class="lbl">Local time</span>
-        <div class="clock" id="clock">--:--</div>
-        <div class="ctl"><span id="hint">Drag to look around</span><button type="button" id="recenter" hidden>Recenter</button></div>
-      </div>
+<header class="hero gut">
+  <div class="top" id="top">
+    <div style="min-width:0">
+      <div class="brand">EPHEM<span class="live" id="live" role="status"><i></i><span id="liveT">Acquiring</span></span></div>
+      <h1 id="place"></h1>
     </div>
-    <div class="bottom" id="bottom">
-      <p class="lede" id="lede">Finding the Sun and the Moon…</p>
-      <p class="next"><span class="lbl">Next</span><span id="next">&nbsp;</span></p>
+    <div class="now">
+      <span class="lbl">Local time</span>
+      <div class="clock" id="clock">--:--</div>
     </div>
   </div>
+</header>
+<section class="sky gut" id="sky" aria-label="The Sun and the Moon on a chart of the whole sky, above and below the horizon">
+  <div class="scr" id="scr">
+    <canvas id="cv" tabindex="0" aria-label="Sky chart"></canvas>
+    <div class="ctl" id="ctl"><button type="button" id="point" aria-pressed="false" hidden><span>Point phone</span></button><button type="button" id="recenter" hidden><span>Recenter</span></button></div>
+  </div>
 </section>
+<div class="bottom gut" id="bottom">
+  <p class="guide" id="guide" aria-live="polite" hidden></p>
+  <p class="lede" id="lede">Finding the Sun and the Moon…</p>
+  <p class="next"><span class="lbl">Next</span><span id="next">&nbsp;</span></p>
+</div>
 <main class="gut">
   <section class="blk">
     <h2>Ephemeris</h2>
@@ -384,10 +446,16 @@ ${CORE_JS}
 ${CLIENT_TRACE_JS}
 ${RUM_JS}
 var D2R = Math.PI / 180, AU = 149597870.7;
-var reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
 var loc = { lat: LOC.lat, lon: LOC.lon, place: LOC.place, city: LOC.city, tz: LOC.tz, source: LOC.source, acc: null };
 var $ = function (id) { return document.getElementById(id); };
-var S = { decl: null, wx: null, wxAt: 0, rawOpen: false, from: null, to: null, tween0: 0, day: null, tomorrow: null, tomorrowFor: null, track: [], trackDay: null, center: null, userPanned: false, last: null, err: null };
+// Debug only: ?at=<ISO time> freezes the page's clock there (and asks /v1/position for that time), so any sky state renders
+// deterministically for screenshots; ?pose=<az>,<alt> with it fakes the phone's pointing. Real visitors never send it; / is
+// no-store either way, and a timed position is the same immutable answer the API gives anyone.
+var QS = new URLSearchParams(location.search), AT = (function () { var t = Date.parse(QS.get("at") || ""); return isFinite(t) && t > 63e9 && t < 5.6e12 ? t : null; })();
+var AT_ISO = AT == null ? null : new Date(AT).toISOString();
+function tNow() { return AT == null ? Date.now() : AT; }
+var S = { decl: null, wx: null, wxAt: 0, rawOpen: false, to: null, pose: null, day: null, tomorrow: null, tomorrowFor: null, track: [], trackDay: null, center: null, userPanned: false, last: null, err: null };
+if (AT != null && /^-?[0-9.]+,-?[0-9.]+$/.test(QS.get("pose") || "")) S.pose = { az: Number(QS.get("pose").split(",")[0]), alt: Number(QS.get("pose").split(",")[1]) };
 
 // ---------- API ----------
 function api(path, q, quiet) {
@@ -436,35 +504,25 @@ function parallactic(alt, az, dec, lat) {
   return Math.atan2(Math.sin(H), Math.tan(p) * Math.cos(d) - Math.sin(d) * Math.cos(H)) / D2R;
 }
 
-// ---------- canvas ----------
-// Layout, top to bottom: the title band (HUD, nothing drawn under it), the sky from 94° down to the horizon, a strip of
-// ground with compass ticks, and the bottom band (the sentence). Paths and labels stay inside the sky; bodies set behind the horizon.
-var cv = $("cv"), ctx = cv.getContext("2d"), W = 0, H = 0, dpr = 1, GROUND = 40;
-var G = null;
-function geom() {
-  var sky = $("sky").getBoundingClientRect(), top = $("top").getBoundingClientRect().bottom - sky.top + 14, bot = $("bottom").getBoundingClientRect().top - sky.top - 6;
-  var hy = Math.round(bot - GROUND), k = Math.max(W / 360, (hy - top) / 94);
-  return { k: k, top: top, hy: hy, bot: bot };
-}
-function X(az, g) { return W / 2 + wrap180(az - S.center) * g.k; }
-function Y(alt, g) { return g.hy - alt * g.k; }
+// ---------- canvas: the sky chart ----------
+// All 360° of azimuth (the default frame always shows all of it, so nothing is ever off-screen) by the whole altitude range:
+// the sky (true scale), the horizon, the civil, nautical and astronomical twilight bands (true scale), then the deep ground at a
+// quarter scale (altU, CORE_JS). Each body's 24 h track (now ± 12 h, from the one /v1/track answer) runs through sky and ground,
+// past solid and future dashed; the bodies are always drawn where they are, dimmed below the horizon, with their depth.
+// It draws only when something changes (requestDraw): data, resize, drag, pointing, fonts, or once a minute for the clock.
+var cv = $("cv"), ctx = cv.getContext("2d"), W = 0, H = 0, dpr = 1, PAD_T = 10, AXIS = 20;
+function geom() { var ky = (H - PAD_T - AXIS) / (U_TOP - U_BOT); return { kx: W / 360, ky: ky, top: PAD_T, hy: Math.round(PAD_T + U_TOP * ky) + 0.5, bot: H - AXIS }; }
+function X(az, g) { return W / 2 + wrap180(az - S.center) * g.kx; }
+function Y(alt, g) { return g.top + (U_TOP - altU(alt)) * g.ky; }
+var drawQueued = false, drawnAt = 0;
+function requestDraw() { if (!drawQueued) { drawQueued = true; requestAnimationFrame(function () { drawQueued = false; draw(); }); } }
 function resize() {
   dpr = Math.min(2, window.devicePixelRatio || 1);
-  var r = cv.getBoundingClientRect(); W = r.width; H = r.height;
-  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); dirty = true;
+  var r = cv.getBoundingClientRect(); if (r.width === W && r.height === H) return;
+  W = r.width; H = r.height;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); requestDraw();
 }
-function interp() {
-  if (!S.to) return null;
-  if (!S.from || reduce) return S.to;
-  var t = Math.min(1, (performance.now() - S.tween0) / 900); t = t * (2 - t);
-  function lerpB(a, b) { return Object.assign({}, b, { apparentAltitude: altOf(a) + (altOf(b) - altOf(a)) * t, azimuth: (a.azimuth + wrap180(b.azimuth - a.azimuth) * t + 360) % 360 }); }
-  return { sun: lerpB(S.from.sun, S.to.sun), moon: lerpB(S.from.moon, S.to.moon), tweening: t < 1 };
-}
-function defaultCenter(p) {
-  if (altOf(p.sun) > -2) return p.sun.azimuth;
-  if (altOf(p.moon) > -2) return p.moon.azimuth;
-  return loc.lat >= 0 ? 180 : 0;
-}
+function defaultCenter(p) { return S.pose ? S.pose.az : chartCenter(loc.lat, [p.sun.azimuth, p.moon.azimuth]); }
 function drawMoon(x, y, r, m) {
   var k = m.phase.illuminatedFraction;
   var chi = (m.phase.brightLimbAngle - parallactic(altOf(m), m.azimuth, m.declination, loc.lat)) * D2R; // bright limb from the zenith, toward east
@@ -473,7 +531,7 @@ function drawMoon(x, y, r, m) {
   var g = ctx.createRadialGradient(0, 0, r, 0, 0, r * 3); g.addColorStop(0, "rgba(217,227,255," + (0.05 + 0.12 * k) + ")"); g.addColorStop(1, "rgba(217,227,255,0)");
   ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, r * 3, 0, 2 * Math.PI); ctx.fill();
   ctx.rotate(rot);
-  ctx.beginPath(); ctx.arc(0, 0, r, 0, 2 * Math.PI); ctx.fillStyle = "rgba(60,70,100,.55)"; ctx.fill();
+  ctx.beginPath(); ctx.arc(0, 0, r, 0, 2 * Math.PI); ctx.fillStyle = "rgba(60,70,100,.75)"; ctx.fill();
   ctx.beginPath(); ctx.arc(0, 0, r, -Math.PI / 2, Math.PI / 2, false);
   ctx.ellipse(0, 0, Math.max(0.01, r * Math.abs(1 - 2 * k)), r, 0, Math.PI / 2, -Math.PI / 2, k < 0.5);
   ctx.fillStyle = "#e9eeff"; ctx.fill();
@@ -485,139 +543,230 @@ function drawSun(x, y, r, alt) {
   ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 4, 0, 2 * Math.PI); ctx.fill();
   ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.fillStyle = alt > 6 ? "#fff3d6" : "#ffc46b"; ctx.fill();
 }
-var FONT = "600 11px 'Helvetica Neue', Helvetica, -apple-system, system-ui, sans-serif", SMALL = "400 10px ui-monospace, 'SF Mono', Menlo, monospace";
-function track(font) { if ("letterSpacing" in ctx) ctx.letterSpacing = font === FONT ? "1.6px" : "0.5px"; }
-function textBox(text, font) { ctx.font = font; track(font); return { w: Math.ceil(ctx.measureText(text).width) + 2, h: font === SMALL ? 13 : 16 }; }
-function drawText(text, r, font, color) { // r: top-left rect
-  ctx.font = font; track(font); ctx.textAlign = "left"; ctx.textBaseline = "middle";
-  ctx.save(); ctx.shadowColor = "rgba(4,6,13,.55)"; ctx.shadowBlur = 6;
-  ctx.fillStyle = color; ctx.fillText(text, r.x + 1, r.y + r.h / 2); ctx.restore();
+var FONT = "600 11px 'Helvetica Neue', Helvetica, -apple-system, system-ui, sans-serif", SMALL = "400 10px ui-monospace, 'SF Mono', Menlo, monospace", TINY = "600 8.5px 'Helvetica Neue', Helvetica, -apple-system, system-ui, sans-serif";
+var LH = { }; LH[FONT] = 15; LH[SMALL] = 13; LH[TINY] = 11;
+function track(font) { if ("letterSpacing" in ctx) ctx.letterSpacing = font === SMALL ? "0.3px" : font === TINY ? "1.4px" : "1.4px"; }
+function textW(text, font) { ctx.font = font; track(font); return Math.ceil(ctx.measureText(text).width) + 2; }
+// A label: one or two lines (t, then t2 in SMALL), boxed to {w, h}.
+function labelBox(t, font, t2) { var w = textW(t, font), h = LH[font]; if (t2) { w = Math.max(w, textW(t2, SMALL)); h += LH[SMALL]; } return { w: w, h: h }; }
+function drawLabel(it, r) {
+  ctx.save(); ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.shadowColor = "rgba(4,6,13,.9)"; ctx.shadowBlur = 4;
+  var font = it.font || FONT, h1 = LH[font];
+  ctx.font = font; track(font); ctx.fillStyle = it.color; ctx.fillText(it.t, r.x + 1, r.y + h1 / 2);
+  if (it.t2) { ctx.font = SMALL; track(SMALL); ctx.fillStyle = it.color2 || it.color; ctx.fillText(it.t2, r.x + 1, r.y + h1 + LH[SMALL] / 2); }
+  ctx.restore();
 }
-// An instrument reticle: a hairline ring RET px outside the disc, with four short ticks.
-var RET = 6;
-function reticle(x, y, r, color) {
+// An instrument reticle: a hairline ring RET px outside the disc, with four short ticks; dashed when the body is below the horizon.
+var RET = 5;
+function reticle(x, y, r, color, below) {
   var R = r + RET;
-  ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.globalAlpha = 0.55;
-  ctx.beginPath(); ctx.arc(x, y, R, 0, 2 * Math.PI); ctx.stroke();
+  ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.globalAlpha = 0.6; if (below) ctx.setLineDash([2, 3]);
+  ctx.beginPath(); ctx.arc(x, y, R, 0, 2 * Math.PI); ctx.stroke(); ctx.setLineDash([]);
   [[0, -1], [1, 0], [0, 1], [-1, 0]].forEach(function (d) { ctx.beginPath(); ctx.moveTo(x + d[0] * R, y + d[1] * R); ctx.lineTo(x + d[0] * (R + 4), y + d[1] * (R + 4)); ctx.stroke(); });
   ctx.restore();
 }
-function path(pts, key, color, g, nowMs, out) {
-  ctx.save(); ctx.beginPath(); ctx.rect(0, g.top, W, g.hy - g.top); ctx.clip();
-  for (var pass = 0; pass < 2; pass++) { // pass 0: the past 12 h, faint; pass 1: the next 12 h
-    ctx.beginPath(); var prev = null;
-    pts.forEach(function (p) {
-      var t = p.t != null ? p.t : nowMs;
-      if (pass === 0 ? t > nowMs : t < nowMs) { return; }
-      var b = p[key], x = X(b.azimuth, g), y = Y(Math.max(-2, altOf(b)), g);
-      if (prev && Math.abs(x - prev[0]) < W / 2) { ctx.lineTo(x, y); out.push([prev[0], prev[1], x, y]); } else ctx.moveTo(x, y);
-      prev = [x, y];
+// The tracks and their events, recomputed only when the track, today's events or the minute change (not per drag frame).
+var TI = { key: "" };
+function trackInfo(nowMs) {
+  var key = S.track.length + ":" + (S.track[0] && S.track[0].t) + ":" + (S.day && S.day.date) + ":" + (S.day && S.day.events.length) + ":" + Math.floor(nowMs / 60e3);
+  if (TI.key === key) return TI;
+  var win = S.track.filter(function (x) { return Math.abs(x.t - nowMs) <= 12 * 3600e3 + 1; }), out = { key: key, win: win };
+  var dayEv = [].concat(S.day ? S.day.events : [], S.tomorrow ? S.tomorrow.events : []);
+  ["sun", "moon"].forEach(function (body) {
+    var s = win.map(function (x) { return { t: x.t, alt: x[body].altitude, az: x[body].azimuth }; });
+    out[body] = trackEvents(s, -0.833).map(function (e) {   // the exact /v1/day time when it has this event
+      var k = e.kind === "antitransit" ? null : e.kind, m = k && dayEv.find(function (d) { return d.body === body && d.kind === k && Math.abs(Date.parse(d.time) - e.t) < 40 * 60e3; });
+      return m ? Object.assign({}, e, { t: Date.parse(m.time) }) : e;
     });
-    ctx.strokeStyle = color; ctx.globalAlpha = pass ? 0.6 : 0.22; ctx.lineWidth = 1.25; ctx.setLineDash(pass ? [] : [3, 4]); ctx.stroke(); ctx.setLineDash([]);
-  }
-  ctx.restore(); ctx.globalAlpha = 1;
-}
-var dirty = true;
-function draw() {
-  var p = interp(); if (!W) return;
-  var g = geom(), hy = g.hy, sunAlt = p ? altOf(p.sun) : -30, c = skyAt(sunAlt), nowMs = Date.now(), drawn = [];
-  // sky
-  var grad = ctx.createLinearGradient(0, 0, 0, hy); grad.addColorStop(0, c[0]); grad.addColorStop(1, c[1]);
-  ctx.fillStyle = grad; ctx.fillRect(0, 0, W, hy + 1);
-  if (p && sunAlt > -18) { // glow on the horizon toward the Sun
-    var gx = X(p.sun.azimuth, g), a = Math.max(0, 1 - Math.abs(sunAlt - 2) / 20) * 0.55;
-    var rg = ctx.createRadialGradient(gx, hy, 0, gx, hy, Math.max(W, H) * 0.55); rg.addColorStop(0, "rgba(255,170,90," + a + ")"); rg.addColorStop(1, "rgba(255,170,90,0)");
-    ctx.fillStyle = rg; ctx.fillRect(0, 0, W, hy);
-  }
-  // the grid: altitude rings at 30 and 60 degrees and verticals at the eight compass points, all hairlines.
-  // Ring labels are placed further down, once the path lines are known, so that no line crosses them.
-  var fixed = [], rings = [];
-  ctx.lineWidth = 1; ctx.strokeStyle = "rgba(255,255,255,.08)";
-  [30, 60].forEach(function (alt) {
-    var y = Math.round(Y(alt, g)) + 0.5; if (y < g.top + 8) return;
-    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); rings.push({ alt: alt, y: y });
   });
-  ctx.strokeStyle = "rgba(255,255,255,.045)";
-  for (var vz = 0; vz < 360; vz += 45) { var vx = Math.round(X(vz, g)) + 0.5; if (vx < 0 || vx > W) continue; ctx.beginPath(); ctx.moveTo(vx, g.top); ctx.lineTo(vx, hy); ctx.stroke(); }
-  // ground and compass: ticks every 15°, names at the eight points
-  var gg = ctx.createLinearGradient(0, hy, 0, H); gg.addColorStop(0, "#090c13"); gg.addColorStop(1, "#05070b");
-  ctx.fillStyle = gg; ctx.fillRect(0, hy, W, H - hy);
-  ctx.strokeStyle = "rgba(255,255,255,.42)"; ctx.beginPath(); ctx.moveTo(0, hy + 0.5); ctx.lineTo(W, hy + 0.5); ctx.stroke();
+  TI = out; return out;
+}
+// One body's track: unwrapped azimuths so it crosses the seam as one line, drawn at every 360° offset that lands on the chart.
+// Past solid, future dashed; the ground part at half strength. Segments go to out (for the ring labels and label avoidance).
+function trackPath(win, p, key, color, g, nowMs, out) {
+  var pts = win.slice(), at = pts.findIndex(function (x) { return x.t > nowMs; }); pts.splice(at < 0 ? pts.length : at, 0, Object.assign({ t: nowMs }, p));
+  var az = unwrapAz(pts.map(function (x) { return x[key].azimuth; })), xs = [], ys = [], lo = Infinity, hi = -Infinity;
+  for (var i = 0; i < pts.length; i++) { var xr = W / 2 + (az[i] - S.center) * g.kx; xs.push(xr); ys.push(Y(altOf(pts[i][key]), g)); lo = Math.min(lo, xr); hi = Math.max(hi, xr); }
+  var span = 360 * g.kx, offs = [];
+  for (var o = Math.floor((-hi) / span) - 1; o <= Math.ceil((W - lo) / span) + 1; o++) if (hi + o * span >= 0 && lo + o * span <= W) offs.push(o * span);
+  [[0, g.hy, 1], [g.hy, g.bot - g.hy, 0.5]].forEach(function (clip) {
+    ctx.save(); ctx.beginPath(); ctx.rect(0, clip[0], W, clip[1]); ctx.clip();
+    for (var pass = 0; pass < 2; pass++) {   // 0: the past 12 h, solid; 1: the next 12 h, dashed
+      ctx.beginPath();
+      offs.forEach(function (dx) {
+        var started = false;
+        for (var j = 0; j < pts.length; j++) {
+          if (pass === 0 ? pts[j].t > nowMs : pts[j].t < nowMs) continue;
+          if (!started) { ctx.moveTo(xs[j] + dx, ys[j]); started = true; } else { ctx.lineTo(xs[j] + dx, ys[j]); if (clip[2] === 1) out.push([xs[j - 1] + dx, ys[j - 1], xs[j] + dx, ys[j]]); }
+        }
+      });
+      ctx.strokeStyle = color; ctx.globalAlpha = (pass ? 0.85 : 0.5) * clip[2]; ctx.lineWidth = pass ? 1.4 : 1.1; ctx.setLineDash(pass ? [4, 3] : []); ctx.stroke(); ctx.setLineDash([]);
+    }
+    ctx.restore();
+  });
+  if (out.length === 0 && false) return;
+}
+// Every x at which azimuth az appears on the chart (one, or two at the seam).
+function xsOf(az, g) { var x = X(az, g), r = [x]; if (x - 360 * g.kx >= -40) r.push(x - 360 * g.kx); if (x + 360 * g.kx <= W + 40) r.push(x + 360 * g.kx); return r; }
+var COL = { sun: "#ffc361", moon: "#d9e3ff" }, LBL = { sun: "rgba(255,226,170,.97)", moon: "rgba(232,238,255,.96)" };
+function draw() {
+  if (!W) return;
+  var p = S.to, g = geom(), hy = g.hy, sunAlt = p ? altOf(p.sun) : -30, c = skyAt(sunAlt), nowMs = tNow();
+  drawnAt = nowMs;
+  // sky above the horizon, coloured for the Sun's altitude; the glow on the horizon toward the Sun
+  var grad = ctx.createLinearGradient(0, 0, 0, hy); grad.addColorStop(0, c[0]); grad.addColorStop(1, c[1]);
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, W, hy);
+  if (p && sunAlt > -18) {
+    var a = Math.max(0, 1 - Math.abs(sunAlt - 2) / 20) * 0.55;
+    xsOf(p.sun.azimuth, g).forEach(function (gx) { var rg = ctx.createRadialGradient(gx, hy, 0, gx, hy, Math.max(W, H) * 0.45); rg.addColorStop(0, "rgba(255,170,90," + a + ")"); rg.addColorStop(1, "rgba(255,170,90,0)"); ctx.fillStyle = rg; ctx.fillRect(0, 0, W, hy); });
+  }
+  // the ground: three twilight bands (the one the Sun is in, brighter), then the deep ground, then the compass axis
+  ctx.fillStyle = "#07090e"; ctx.fillRect(0, hy, W, H - hy);
+  var bands = [[0, -6, "CIVIL", 0.20], [-6, -12, "NAUTICAL", 0.12], [-12, -18, "ASTRONOMICAL", 0.065]], fixed = [], sunBand = -1;
+  if (p) bands.forEach(function (b, i) { if (sunAlt <= b[0] && sunAlt > b[1]) sunBand = i; });
+  bands.forEach(function (b, i) {
+    var y0 = Y(b[0], g), y1 = Y(b[1], g), on = i === sunBand;
+    ctx.fillStyle = "rgba(110,140,215," + (b[3] + (on ? 0.14 : 0)) + ")"; ctx.fillRect(0, y0, W, y1 - y0);
+    if (y1 - y0 >= 9) fixed.push({ id: "band" + i, t: b[2], x: W - 6 - textW(b[2], TINY), y: (y0 + y1) / 2 - LH[TINY] / 2, w: textW(b[2], TINY), h: LH[TINY], font: TINY, color: on ? "rgba(225,233,255,.95)" : "rgba(190,205,240,.5)", text: true });
+  });
+  var y18 = Y(-18, g);
+  ctx.fillStyle = "#04050a"; ctx.fillRect(0, y18, W, g.bot - y18);
+  ctx.fillStyle = "#05070b"; ctx.fillRect(0, g.bot, W, H - g.bot);
+  // grid: altitude rings at 30° and 60°, -45° in the deep ground, verticals at the eight compass points; the scale break at -18°
+  var rings = [];
+  ctx.lineWidth = 1; ctx.strokeStyle = "rgba(255,255,255,.09)";
+  [30, 60].forEach(function (alt) { var y = Math.round(Y(alt, g)) + 0.5; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); rings.push({ alt: alt, y: y }); });
+  ctx.strokeStyle = "rgba(255,255,255,.05)";
+  var y45 = Math.round(Y(-45, g)) + 0.5; ctx.beginPath(); ctx.moveTo(0, y45); ctx.lineTo(W, y45); ctx.stroke();
+  for (var vz = 0; vz < 360; vz += 45) xsOf(vz, g).forEach(function (vx) { vx = Math.round(vx) + 0.5; if (vx < 0 || vx > W) return; ctx.beginPath(); ctx.moveTo(vx, 0); ctx.lineTo(vx, g.bot); ctx.stroke(); });
+  ctx.strokeStyle = "rgba(255,255,255,.22)"; ctx.setLineDash([2, 3]); ctx.beginPath(); ctx.moveTo(0, Math.round(y18) + 0.5); ctx.lineTo(W, Math.round(y18) + 0.5); ctx.stroke(); ctx.setLineDash([]);
+  var deepH = g.bot - y18, sc = "\\u221218\\u00b0 \\u00b7 \\u00bc scale below", nad = "\\u221290\\u00b0";
+  var scaleNote = deepH >= 18 ? { t: sc, w: textW(sc, SMALL) } : null;   // placed with the ring labels, below the -18° line
+  if (deepH >= 30) {
+    fixed.push({ id: "nadir", t: nad, x: W - 6 - textW(nad, SMALL), y: g.bot - LH[SMALL] - 1, w: textW(nad, SMALL), h: LH[SMALL], font: SMALL, color: "rgba(255,255,255,.32)", text: true });
+  }
+  // horizon: the strong line, with compass ticks under it; names on the axis at the bottom
+  ctx.strokeStyle = "rgba(255,255,255,.7)"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(0, hy); ctx.lineTo(W, hy); ctx.stroke(); ctx.lineWidth = 1;
   var ticks = [];
-  for (var az = 0; az < 360; az += 15) {
-    var x = X(az, g); if (x < -20 || x > W + 20) continue;
-    var major = az % 45 === 0, len = major ? 8 : 4;
-    ctx.strokeStyle = "rgba(255,255,255," + (major ? 0.55 : 0.22) + ")"; ctx.beginPath(); ctx.moveTo(x, hy); ctx.lineTo(x, hy + len); ctx.stroke();
-    ticks.push({ id: "tick" + az, x: x - 1, y: hy, w: 2, h: len });
-    if (major && x - 14 > 0 && x + 14 < W) { var t2 = compass(az), b2 = textBox(t2, SMALL); fixed.push({ id: "cmp" + t2, t: t2, x: x - b2.w / 2, y: hy + 14, w: b2.w, h: b2.h, font: SMALL, color: "rgba(255,255,255,.66)", text: true }); }
-  }
-  var segs = [];
-  if (S.track.length) {
-    var win = S.track.filter(function (x) { return Math.abs(x.t - nowMs) <= 12 * 3600e3; });
-    if (p) { var at = win.findIndex(function (x) { return x.t > nowMs; }); win.splice(at < 0 ? win.length : at, 0, p); }
-    path(win, "sun", "#ffc361", g, nowMs, segs); path(win, "moon", "#d9e3ff", g, nowMs, segs);
-  }
-  var discs = [], items = [], colors = { Sun: "rgba(255,226,170,.96)", Moon: "rgba(232,238,255,.94)" };
-  if (p) {
-    var r = Math.max(10, Math.min(16, W / 80));
-    [["Sun", p.sun], ["Moon", p.moon]].forEach(function (o) {
-      var b = o[1], name = o[0].toUpperCase(), bx = X(b.azimuth, g), by = skyY(b, g.hy, g.k), box = textBox(name, FONT), rr = r + RET + 4;
-      if (isSet(b, g.k, r)) return; // fully set: the sentence says so
-      if (bx < -r || bx > W + r) { // off to one side: a name and an arrow at that edge, at the body's height
-        var left = bx < 0, t = left ? "\\u2190 " + name : name + " \\u2192", eb = textBox(t, FONT);
-        items.push({ id: o[0] + "-edge", t: t, x: left ? 12 : W - 12, y: Math.max(g.top + eb.h, Math.min(hy - eb.h, by)), w: eb.w, h: eb.h, edge: left ? "left" : "right", color: colors[o[0]] });
-        return;
-      }
-      ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, hy); ctx.clip(); // set behind the horizon
-      if (o[0] === "Sun") drawSun(bx, by, r, altOf(b)); else drawMoon(bx, by, r, b);
-      reticle(bx, by, r, colors[o[0]]);
+  for (var az = 0; az < 360; az += 15) xsOf(az, g).forEach(function (x) {
+    if (x < -2 || x > W + 2) return;
+    var major = az % 45 === 0, len = major ? 6 : 3;
+    ctx.strokeStyle = "rgba(255,255,255," + (major ? 0.6 : 0.3) + ")"; ctx.beginPath(); ctx.moveTo(x, hy); ctx.lineTo(x, hy + len); ctx.stroke();
+    if (major) { var t2 = compass(az); ctx.font = SMALL; track(SMALL); ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = az % 90 ? "rgba(255,255,255,.45)" : "rgba(255,255,255,.8)"; if (x > 6 && x < W - 6) ctx.fillText(t2, x, g.bot + AXIS / 2); }
+  });
+  ticks.push({ id: "horizon", x: -1e4, y: hy - 2, w: 2e4, h: 8 });
+  // the tracks, their events, the bodies
+  var segs = [], items = [], discs = [], marks = [], info = S.track.length ? trackInfo(nowMs) : null, r = Math.max(6, Math.min(10, W / 70));
+  if (info) [["sun", COL.sun], ["moon", COL.moon]].forEach(function (o) { if (p) trackPath(info.win, p, o[0], o[1], g, nowMs, segs); });
+  if (p) [["sun", "Sun", p.sun], ["moon", "Moon", p.moon]].forEach(function (o) {
+    var key = o[0], b = o[2], alt = altOf(b), below = alt < 0, evs = info ? info[key] : [];
+    // events: crossings on the horizon (time, azimuth), culminations on the track (time, altitude); future ones labelled first
+    evs.forEach(function (e) {
+      var future = e.t > nowMs, ex = X(e.az, g), ey = e.kind === "rise" || e.kind === "set" ? hy : Y(e.alt, g);
+      ctx.save(); ctx.globalAlpha = future ? 0.95 : 0.5; ctx.strokeStyle = COL[key]; ctx.fillStyle = COL[key];
+      if (e.kind === "rise" || e.kind === "set") { ctx.beginPath(); ctx.moveTo(ex, hy - 5); ctx.lineTo(ex, hy + 5); ctx.lineWidth = 1.5; ctx.stroke(); }
+      else { ctx.beginPath(); ctx.arc(ex, ey, 2.5, 0, 2 * Math.PI); ctx.fillStyle = "#05070b"; ctx.fill(); ctx.stroke(); }
       ctx.restore();
-      var top = by - rr, bottom = Math.min(hy, by + rr);
-      if (bottom > top) discs.push({ id: o[0] + "-disc", x: bx - rr, y: top, w: 2 * rr, h: bottom - top });
-      items.push({ id: o[0], t: name, x: bx, y: by, r: rr - 4, w: box.w, h: box.h, color: colors[o[0]] });
+      marks.push({ id: key + e.kind + "-mark", x: ex - 3, y: ey - 5, w: 6, h: 10 });
+      var tt = (e.kind === "rise" ? "\\u2191" : e.kind === "set" ? "\\u2193" : "") + hm(e.t) + " " + (e.kind === "rise" || e.kind === "set" ? Math.round(wrap360(e.az)) % 360 : (e.alt < 0 ? "\\u2212" : "") + Math.abs(e.alt).toFixed(0)) + "\\u00b0";
+      items.push({ id: key + "-" + e.kind + "-" + Math.round(e.t / 60e3), t: tt, font: SMALL, x: ex, y: ey, r: 3, w: textW(tt, SMALL), h: LH[SMALL], color: future ? LBL[key] : "rgba(222,228,240,.72)", optional: true, prio: future ? (e.kind === "rise" || e.kind === "set" ? 2 : 3) : 4 });
     });
-    if (p.tweening) dirty = true;
+    // the body itself, always: dimmed under the horizon, with its depth and its next crossing
+    var bx = X(b.azimuth, g), by = Y(alt, g), nx = evs.filter(function (e) { return e.t > nowMs && (e.kind === "rise" || e.kind === "set"); })[0];
+    ctx.save(); if (below) ctx.globalAlpha = 0.55;
+    if (key === "sun") drawSun(bx, by, r, alt); else drawMoon(bx, by, r, b);
+    ctx.restore();
+    reticle(bx, by, r, LBL[key], below);
+    var rr = r + RET + 4; discs.push({ id: o[1] + "-disc", x: bx - rr, y: by - rr, w: 2 * rr, h: 2 * rr });
+    var t1 = o[1].toUpperCase() + " " + (alt < 0 ? "\\u2212" : "") + Math.abs(alt).toFixed(1) + "\\u00b0";
+    var t2 = nx ? (nx.kind === "rise" ? "rises " : "sets ") + hm(nx.t) + " " + compass(nx.az) : info ? (below ? "stays down" : "stays up") + " next 12 h" : "";
+    var bb = labelBox(t1, FONT, t2);
+    items.push({ id: o[1], t: t1, t2: t2, x: bx, y: by, r: rr - 4, w: bb.w, h: bb.h, color: below ? "rgba(215,222,240,.88)" : LBL[key], color2: "rgba(225,232,245,.72)", prio: 0 });
+  });
+  // pointing mode: where the phone looks
+  if (S.pose) {
+    var px = X(S.pose.az, g), py = Y(S.pose.alt, g);
+    ctx.save(); ctx.strokeStyle = "#7cc4ff"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(px, py, 14, 0, 2 * Math.PI); ctx.stroke();
+    [[0, -1], [1, 0], [0, 1], [-1, 0]].forEach(function (d) { ctx.beginPath(); ctx.moveTo(px + d[0] * 8, py + d[1] * 8); ctx.lineTo(px + d[0] * 20, py + d[1] * 20); ctx.stroke(); });
+    ctx.restore();
+    discs.push({ id: "pose", x: px - 20, y: py - 20, w: 40, h: 40 });
   }
-  // ring labels: the first spot along each ring that no path line, disc or other ring label touches (dropped if none)
-  var ringRects = [], ringBounds = { x0: 8, y0: g.top, x1: W - 8, y1: hy - 3 };
+  // the buttons over the chart's top-right corner are in the way too
+  var ce = $("ctl"); if (!$("point").hidden || !$("recenter").hidden) discs.push({ id: "ctl", x: W - ce.offsetWidth, y: 0, w: ce.offsetWidth, h: ce.offsetHeight });
+  // ring labels: the first spot along each ring that no path line, disc or band label touches (dropped if none)
+  var bounds = { x0: 4, y0: 2, x1: W - 4, y1: g.bot - 2 }, ringRects = [];
   rings.forEach(function (rg) {
-    var t = rg.alt + "\\u00b0", b = textBox(t, SMALL), spot = ringLabelSpot(rg.y, b.w, b.h, ringBounds, segs, discs.concat(ringRects), 3);
+    var t = rg.alt + "\\u00b0", w = textW(t, SMALL), spot = ringLabelSpot(rg.y, w, LH[SMALL], { x0: 4, y0: 2, x1: W - 4, y1: hy - 3 }, segs, discs.concat(ringRects, fixed), 3);
     if (!spot) return;
-    var f = { id: "alt" + rg.alt, t: t, x: spot.x, y: spot.y, w: b.w, h: b.h, font: SMALL, color: "rgba(255,255,255,.5)", text: true };
+    var f = { id: "alt" + rg.alt, t: t, x: spot.x, y: spot.y, w: w, h: LH[SMALL], font: SMALL, color: "rgba(255,255,255,.5)", text: true };
     ringRects.push(f); fixed.push(f);
   });
-  var band = { id: "ground", x: -1e4, y: hy - 2, w: 2e4, h: 1e4 };
-  // Path lines near a label's anchor become small obstacles too, so a name sits beside its line rather than on it.
+  if (scaleNote) {   // the scale break is always labelled: the first clear spot along the -18° line, just below it
+    var sn = ringLabelSpot(Math.round(y18) - 1, scaleNote.w, LH[SMALL], { x0: 4, y0: y18 + 1, x1: W - 4, y1: g.bot - 1 }, segs, discs.concat(fixed), 2);
+    if (sn) fixed.push({ id: "scale", t: sc, x: sn.x, y: sn.y, w: scaleNote.w, h: LH[SMALL], font: SMALL, color: "rgba(255,255,255,.5)", text: true, keep: true });
+  }
+  // Path lines near a label's anchor become small soft obstacles, so a name sits beside its line rather than on it.
+  items.sort(function (a, b) { return a.prio - b.prio; });
   var pathDots = [];
   segs.forEach(function (sg) {
     var n = Math.max(1, Math.ceil(Math.hypot(sg[2] - sg[0], sg[3] - sg[1]) / 5));
-    for (var i = 0; i <= n; i++) { var px = sg[0] + (sg[2] - sg[0]) * i / n, py = sg[1] + (sg[3] - sg[1]) * i / n;
-      if (items.some(function (it) { return Math.abs(px - it.x) < 140 && Math.abs(py - it.y) < 90; })) pathDots.push({ id: "path", x: px - 1.5, y: py - 1.5, w: 3, h: 3 }); }
+    for (var i = 0; i <= n; i++) { var qx = sg[0] + (sg[2] - sg[0]) * i / n, qy = sg[1] + (sg[3] - sg[1]) * i / n;
+      if (items.some(function (it) { return Math.abs(qx - it.x) < 120 && Math.abs(qy - it.y) < 70; })) pathDots.push({ id: "path", x: qx - 1.5, y: qy - 1.5, w: 3, h: 3 }); }
   });
-  var placed = placeLabels(items, discs.concat(fixed, ticks, [band]), { x0: 8, y0: g.top, x1: W - 8, y1: hy - 3 }, pathDots);
-  // A fixed label (compass point, altitude ring) yields to a body or its label rather than being drawn under it.
-  var shown = fixed.filter(function (f) { return !discs.concat(placed).some(function (o) { return overlapArea(f, o) > 0; }); });
-  shown.forEach(function (f) { drawText(f.t, f, f.font, f.color); });
-  placed.forEach(function (pl, i) { drawText(items[i].t, pl, FONT, items[i].color); });
-  drawn = discs.concat(ticks, shown, placed.map(function (pl) { return Object.assign({ text: true }, pl); }));
-  var ringShown = shown.filter(function (f) { return f.id.indexOf("alt") === 0; });
-  window.__sky = { rects: drawn, overlaps: overlaps(drawn), band: { top: g.top, hy: hy, bottom: g.bot }, segs: segs, rings: ringShown, ringLines: rings,
-    ringHits: ringShown.filter(function (f) { return segs.some(function (sg) { return segHitsRect(sg, f); }); }).map(function (f) { return f.id; }) };
+  // Two passes: the bodies' own labels first (only discs, markers and the horizon in the way); the scale labels then yield to
+  // them; then the event labels, optional, wherever there is still clear room.
+  var mine = items.filter(function (it) { return it.prio === 0; }), rest = items.filter(function (it) { return it.prio > 0; });
+  var p1 = placeLabels(mine, discs.concat(ticks, marks, fixed.filter(function (f) { return f.keep; })), bounds);   // nearest clear spot, even across a track line
+  var hard1 = discs.concat(p1);
+  fixed = fixed.filter(function (f) { return f.keep || !hard1.some(function (o) { return overlapArea(f, o) > 0; }); });
+  var p2 = placeLabels(rest, discs.concat(ticks, marks, fixed, p1), bounds, pathDots), placed = p1.concat(p2);
+  items = mine.concat(rest);
+  fixed.forEach(function (f) { drawLabel(f, f); });
+  var shownLabels = [];
+  placed.forEach(function (pl, i) { if (pl.dropped) return; drawLabel(items[i], pl); shownLabels.push(Object.assign({ text: true }, pl)); });
+  var drawn = discs.concat(fixed, shownLabels);
+  window.__sky = { rects: drawn, overlaps: overlaps(drawn), band: { top: g.top, hy: hy, bottom: g.bot }, segs: segs, rings: fixed.filter(function (f) { return f.id.indexOf("alt") === 0; }), ringLines: rings,
+    labels: placed.map(function (pl) { return { id: pl.id, clear: pl.clear, dropped: !!pl.dropped }; }), draws: (window.__sky ? window.__sky.draws : 0) + 1 };
   if (p && !draw.marked && window.performance && performance.mark) { draw.marked = true; performance.mark("ephem:data"); __rum.mark("first-sky-draw"); }   // first frame with an answer (journey.ts, RUM)
 }
-function frame() { if (dirty) { dirty = false; draw(); } requestAnimationFrame(frame); }
 
-// pan; the hint goes after the first interaction or a few seconds, Recenter appears once you've looked away
-var hintT = setTimeout(hideHint, 6000);
-function hideHint() { clearTimeout(hintT); $("hint").classList.add("gone"); }
-function panned() { S.userPanned = true; hideHint(); $("hint").hidden = true; $("recenter").hidden = false; dirty = true; }
+// pan; Recenter appears once you've looked away and restores the default frame
+function panned() { S.userPanned = true; $("recenter").hidden = false; requestDraw(); }
 var drag = null;
-cv.parentElement.addEventListener("pointerdown", function (e) { if (e.target.closest("button")) return; drag = { x: e.clientX, c: S.center, t0: performance.now(), moved: false }; hideHint(); });
-addEventListener("pointermove", function (e) { if (!drag || S.center == null) return; var g = geom(); if (Math.abs(e.clientX - drag.x) < 3) return; S.center = (drag.c - (e.clientX - drag.x) / g.k + 720) % 360; drag.moved = true; panned(); });
+cv.parentElement.addEventListener("pointerdown", function (e) { if (e.target.closest("button")) return; drag = { x: e.clientX, c: S.center, t0: performance.now(), moved: false }; });
+addEventListener("pointermove", function (e) { if (!drag || S.center == null || S.pose) return; if (Math.abs(e.clientX - drag.x) < 3) return; S.center = (drag.c - (e.clientX - drag.x) / (W / 360) + 720) % 360; drag.moved = true; panned(); });
 addEventListener("pointerup", function () { if (drag && drag.moved) __rum.interaction("drag", drag.t0, performance.now()); drag = null; });
 addEventListener("pointercancel", function () { drag = null; });
 cv.addEventListener("keydown", function (e) { if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && S.center != null) { S.center = (S.center + (e.key === "ArrowLeft" ? -10 : 10) + 360) % 360; panned(); e.preventDefault(); } });
-$("recenter").addEventListener("click", function () { S.userPanned = false; if (S.to) S.center = defaultCenter(S.to); $("recenter").hidden = true; dirty = true; });
+$("recenter").addEventListener("click", function () { S.userPanned = false; if (S.to) S.center = defaultCenter(S.to); $("recenter").hidden = true; requestDraw(); });
+
+// ---------- pointing ("Point phone"): only on a tap; iOS asks permission from that tap; silently absent without a compass ----------
+var poseFrame = false, poseText = "";
+function onOrient(e) {
+  var ps = poseFrom(e, S.decl); if (!ps) return;
+  S.pose = ps;
+  if (!poseFrame) { poseFrame = true; requestAnimationFrame(function () { poseFrame = false; if (S.pose) { S.center = S.pose.az; draw(); aimUpdate(); } }); }
+}
+function aimUpdate() {
+  if (!S.pose || !S.to) return;
+  var t = [["Sun", S.to.sun], ["Moon", S.to.moon]].map(function (o) { return aimText(o[0], { az: o[1].azimuth, alt: altOf(o[1]) }, S.pose); }).join("\\n");
+  if (t !== poseText) { poseText = t; $("guide").textContent = t; }
+}
+var orientEv = "ondeviceorientationabsolute" in window ? "deviceorientationabsolute" : "deviceorientation";
+function pointStop() { removeEventListener(orientEv, onOrient); S.pose = null; $("guide").hidden = true; $("point").textContent = "Point phone"; $("point").setAttribute("aria-pressed", "false"); if (S.to && !S.userPanned) S.center = defaultCenter(S.to); requestDraw(); }
+function pointStart() {
+  addEventListener(orientEv, onOrient); $("point").textContent = "Stop"; $("point").setAttribute("aria-pressed", "true"); $("guide").hidden = false; $("guide").textContent = "Hold the phone upright and point it at the sky\\u2026";
+  setTimeout(function () { if (!S.pose && $("point").getAttribute("aria-pressed") === "true") { pointStop(); $("point").hidden = true; } }, 3000);   // no compass: quietly gone
+}
+if (window.DeviceOrientationEvent && matchMedia("(pointer: coarse)").matches) $("point").hidden = false;
+if (S.pose) $("guide").hidden = false;   // ?at&pose (debug): show the guidance as a phone would
+$("point").addEventListener("click", function () {
+  if ($("point").getAttribute("aria-pressed") === "true") { pointStop(); return; }
+  var D = window.DeviceOrientationEvent;
+  if (D && typeof D.requestPermission === "function") D.requestPermission().then(function (s) { if (s === "granted") pointStart(); else $("point").hidden = true; }, function () { $("point").hidden = true; });
+  else pointStart();
+});
 
 // ---------- readouts ----------
 function cardsHtml(p) {
@@ -638,13 +787,19 @@ function cardsHtml(p) {
 }
 function setPos(p) {
   if (!S.to) __rum.mark("data-ready");
-  S.from = S.to ? interp() : null; S.to = p; S.tween0 = performance.now();
-  if (S.center == null || !S.userPanned) S.center = S.center == null ? defaultCenter(p) : (S.center + wrap180(defaultCenter(p) - S.center) + 360) % 360;
-  $("bodies").innerHTML = cardsHtml(p); $("lede").textContent = lede(p.sun, p.moon);
+  // The chart redraws for a new answer only when it shows: the first one, a body crossing the horizon, a new frame, or a minute
+  // since the last draw (a 5 s step moves a body well under a pixel). The cards and the sentence are DOM, updated when they change.
+  var prev = S.to, c0 = S.center; S.to = p;
+  if (S.center == null || (!S.userPanned && !S.pose)) S.center = defaultCenter(p);
+  if (!prev || S.center !== c0 || (altOf(prev.sun) < 0) !== (altOf(p.sun) < 0) || (altOf(prev.moon) < 0) !== (altOf(p.moon) < 0) || tNow() - drawnAt >= 60e3) requestDraw();
+  setHtml("bodies", cardsHtml(p)); setText("lede", lede(p.sun, p.moon)); aimUpdate();
   function ariaAlt(b) { return b.apparentAltitude == null ? "below the horizon (true altitude " + b.altitude.toFixed(2) + " degrees)" : b.apparentAltitude.toFixed(2) + " degrees apparent altitude"; }
   cv.setAttribute("aria-label", "Sun " + ariaAlt(p.sun) + ", azimuth " + p.sun.azimuth.toFixed(2) + " degrees true; Moon " + ariaAlt(p.moon) + ", azimuth " + p.moon.azimuth.toFixed(2) + " degrees true");
-  dirty = true; diag();
+  diag();
 }
+var domMemo = {};
+function setHtml(id, h) { if (domMemo[id] !== h) { domMemo[id] = h; $(id).innerHTML = h; } }
+function setText(id, t) { if (domMemo[id] !== t) { domMemo[id] = t; $(id).textContent = t; } }
 
 var NAMES = { sun: { rise: "Sunrise", set: "Sunset", transit: "Solar noon", civilDawn: "Civil dawn", civilDusk: "Civil dusk", nauticalDawn: "Nautical dawn", nauticalDusk: "Nautical dusk",
   astronomicalDawn: "Astronomical dawn", astronomicalDusk: "Astronomical dusk", goldenHourStart: "Golden hour", goldenHourEnd: "Golden hour ends", blueHourStart: "Blue hour", blueHourEnd: "Blue hour ends" },
@@ -657,10 +812,12 @@ function upcoming(now) {
 }
 var lastNext = "";
 function tick() {
-  var now = Date.now();
-  $("clock").textContent = hm(now);
-  var age = S.posAt ? (now - S.posAt) / 1000 : null, st = S.posErr ? "alert" : age == null ? "" : age < 15 ? "ok" : "caution";
-  $("live").className = "live " + st; $("liveT").textContent = st === "alert" ? "No signal" : st === "ok" ? "Live" : st === "caution" ? "Delayed" : "Acquiring";
+  var now = tNow();
+  setText("clock", hm(now));
+  var age = S.posAt ? (Date.now() - S.posAt) / 1000 : null, st = S.posErr ? "alert" : age == null ? "" : age < 15 ? "ok" : "caution";
+  if (domMemo.live !== st) { domMemo.live = st; $("live").className = "live " + st; }
+  setText("liveT", st === "alert" ? "No signal" : AT != null && st ? "Fixed time" : st === "ok" ? "Live" : st === "caution" ? "Delayed" : "Acquiring");
+  if (S.to && now - drawnAt >= 60e3) requestDraw();   // the chart's paths and markers: once a minute
   var up = upcoming(now), html = lastNext;
   if (up.length) {
     var e = up[0], t = Date.parse(e.time);
@@ -696,10 +853,14 @@ function drawStrip() {
   stripSvg = { svg: svg, now: el("line", { y1: y0 - 3, y2: y0 + bh + 3, stroke: "#fff", "stroke-width": 2, class: "nowl" }), s: s, span: span, w: w };
   svg.appendChild(stripSvg.now); box.appendChild(svg); drawStripNow();
 }
-function drawStripNow() { if (!stripSvg) return; var f = (Date.now() - stripSvg.s) / stripSvg.span; stripSvg.now.setAttribute("x1", f * stripSvg.w); stripSvg.now.setAttribute("x2", f * stripSvg.w); stripSvg.now.style.display = f >= 0 && f <= 1 ? "" : "none"; }
+function drawStripNow() {   // only when the line moves a visible half pixel (24 h over a few hundred px: every few minutes)
+  if (!stripSvg) return; var f = (tNow() - stripSvg.s) / stripSvg.span, x = Math.round(f * stripSvg.w * 2) / 2;
+  if (stripSvg.x === x) return; stripSvg.x = x;
+  stripSvg.now.setAttribute("x1", x); stripSvg.now.setAttribute("x2", x); stripSvg.now.style.display = f >= 0 && f <= 1 ? "" : "none";
+}
 var evMoreOpen = false;
 function drawEvents() {
-  var now = Date.now();
+  var now = tNow();
   function row(e) { var t = Date.parse(e.time); return '<div class="' + (t < now ? "past" : "") + '"><span class="' + (e.body === "sun" ? "s" : "m") + '">' + evName(e) + '</span><span class="tn">' + hm(t) + "</span></div>"; }
   var main = S.day.events.filter(function (e) { return e.kind === "rise" || e.kind === "set" || e.kind === "transit"; }), more = S.day.events.filter(function (e) { return main.indexOf(e) < 0; });
   $("evs").innerHTML = (main.map(row).join("") || '<div>No rise or set today.</div>') +
@@ -709,16 +870,16 @@ function drawEvents() {
 }
 
 // ---------- loading ----------
-function err(e) { S.err = e.message || String(e); var s = document.createElement("span"); s.className = "err"; s.textContent = "The API answered with an error: " + S.err; $("foot").replaceChildren(s); }
+function err(e) { S.err = e.message || String(e); var s = document.createElement("span"); s.className = "err"; s.textContent = "The API answered with an error: " + S.err; $("foot").replaceChildren(s); domMemo.foot = null; }
 // The live answer: no time parameter, so the front door computes it (never forwarded, never cached; a timed URL would add an
 // Api hop and a single-use immutable cache entry every 5 s).
 function loadPos() {
-  return api("/v1/position", q()).then(function (p) { S.posAt = Date.now(); S.posErr = null; setPos(p); })
+  return api("/v1/position", AT == null ? q() : Object.assign(q(), { time: AT_ISO })).then(function (p) { S.posAt = Date.now(); S.posErr = null; setPos(p); })
     .catch(function (e) { S.posErr = e; err(e); });
 }
 function loadDay() {
-  var today = localDate(Date.now());
-  S.day = { date: today, events: [], start: new Date().toISOString(), end: new Date().toISOString(), loading: true }; S.tomorrow = null; S.tomorrowFor = null;
+  var today = localDate(tNow());
+  S.day = { date: today, events: [], start: new Date(tNow()).toISOString(), end: new Date(tNow()).toISOString(), loading: true }; S.tomorrow = null; S.tomorrowFor = null;
   return api("/v1/day", Object.assign(q(), { date: today, tz: loc.tz }))
     .then(function (r) { S.day = r; drawEvents(); drawStrip(); tick(); }).catch(err);
 }
@@ -728,9 +889,9 @@ function loadTomorrow() {
   return api("/v1/day", Object.assign(q(), { date: nextDate(d.date), tz: loc.tz }), true).then(function (b) { if (S.day === d) { S.tomorrow = b; tick(); } }).catch(function () {});
 }
 // Declination comes with the weather answer (observer.magneticDeclination, the same WMM2025 value); /v1/magnetic only if weather fails.
-function setDecl(x) { S.decl = x; if (S.to) $("bodies").innerHTML = cardsHtml(S.to); diag(); }
+function setDecl(x) { S.decl = x; if (S.to) setHtml("bodies", cardsHtml(S.to)); diag(); }
 function loadMag() {
-  return api("/v1/magnetic", q(), true).then(function (b) { S.decl = b.magnetic.declination; if (S.to) $("bodies").innerHTML = cardsHtml(S.to); if (S.wx) drawWx(); diag(); })
+  return api("/v1/magnetic", q(), true).then(function (b) { S.decl = b.magnetic.declination; if (S.to) setHtml("bodies", cardsHtml(S.to)); if (S.wx) drawWx(); diag(); })
     .catch(function () { S.decl = null; });
 }
 function loadWx() {
@@ -749,7 +910,7 @@ function wxDt() { return (Date.now() - S.wxAt) / 1000; }
 function wxAges() {
   var e = $("wxage"); if (!e || !S.wx || !S.wx.stations.length) return;
   var oa = S.wx.stations[0].observationAgeSeconds + wxDt(); // METARs are hourly; amber once one is a quarter-hour overdue
-  e.className = "age" + (oa > 4500 ? " warn" : ""); e.textContent = "updated " + ago(oa);
+  var cn = "age" + (oa > 4500 ? " warn" : ""), tx = "updated " + ago(oa); if (e.className !== cn) e.className = cn; if (e.textContent !== tx) e.textContent = tx;
   if ($("hood").open) diag();
 }
 function drawWx() {
@@ -774,14 +935,14 @@ function drawWx() {
 // New York at 23:30 EDT is already D), and the URL is the same for everyone here all UTC day, so it is one immutable, shared
 // cache entry. Fetched at once, in parallel with the rest; again when the UTC date changes.
 function loadTrack() {
-  var D = Math.floor(Date.now() / 864e5), t0 = (D - 1) * 864e5, iso = function (ms) { return new Date(ms).toISOString().slice(0, 19) + "Z"; };
+  var D = Math.floor(tNow() / 864e5), t0 = (D - 1) * 864e5, iso = function (ms) { return new Date(ms).toISOString().slice(0, 19) + "Z"; };
   S.trackDay = D;
   return api("/v1/track", Object.assign(q(), { start: iso(t0), end: iso(t0 + 72 * 3600e3) }), true).then(function (r) {
     if (S.trackDay !== D) return;
     var out = [], step = r.stepSeconds * 1000, s0 = Date.parse(r.start);
     function b(x, i) { return { azimuth: x.azimuth[i], altitude: x.altitude[i], apparentAltitude: x.apparentAltitude[i] }; }
     for (var i = 0; i < r.count; i++) out.push({ t: s0 + i * step, sun: b(r.sun, i), moon: b(r.moon, i) });
-    S.track = out; drawStrip(); dirty = true;
+    S.track = out; drawStrip(); requestDraw();
     if (window.performance && performance.mark) performance.mark("ephem:track");
   }).catch(err);
 }
@@ -802,14 +963,14 @@ function diag() {
   out.push("", '<span class="c"># location</span>', pad("coordinates") + loc.lat.toFixed(5) + ", " + loc.lon.toFixed(5) + (loc.source === "device" ? " (\\u00b1" + Math.round(loc.acc) + " m)" : ""),
     pad("time zone") + esc(loc.tz), pad("source") + (loc.source === "cloudflare" ? "Cloudflare geolocation" + (LOC.colo ? ", " + esc(LOC.colo) : "") : loc.source === "device" ? "your device" : loc.source === "query" ? "the link" : "default"),
     pad("declination") + (S.decl == null ? "\\u2014" : d2(Math.abs(S.decl)) + (S.decl < 0 ? " W" : " E") + " (WMM2025)"));
-  $("diag").innerHTML = out.join("\\n");
+  setHtml("diag", out.join("\\n"));
   var prov = S.last && S.last.prov;
   // the telemetry bar: provenance stays on screen, the detail lives in Under the hood
   function tel(k, v) { return "<span><i>" + k + "</i>" + v + "</span>"; }
   var dg = prov && prov.diagnostics, c1 = dg && dg.cache;
-  if (!S.err) $("foot").innerHTML = tel("ephem", esc((prov && prov.version) || "")) + tel("Ephemeris", esc((prov && prov.ephemeris) || "JPL DE440")) +
+  if (!S.err) setHtml("foot", tel("ephem", esc((prov && prov.version) || "")) + tel("Ephemeris", esc((prov && prov.ephemeris) || "JPL DE440")) +
     (S.last ? tel("Round trip", S.last.ms.toFixed(1) + " ms") : "") + (c1 ? tel("Block cache", esc(["L1 " + c1.l1].concat(Object.keys(c1).filter(function (k) { return k.indexOf("blocks_") === 0; }).map(function (k) { return k.slice(7) + " " + c1[k]; })).join(" \\u00b7 "))) : "") + tel("Edge", esc(LOC.colo || "\\u2014")) +
-    tel("Location", loc.source === "cloudflare" ? "approximate, from Cloudflare" : loc.source === "device" ? "from your device" : loc.source === "query" ? "from the link" : "default");
+    tel("Location", loc.source === "cloudflare" ? "approximate, from Cloudflare" : loc.source === "device" ? "from your device" : loc.source === "query" ? "from the link" : "default"));
 }
 function header() {
   $("place").textContent = loc.city;
@@ -817,8 +978,8 @@ function header() {
   document.title = "ephem \\u00b7 the sky over " + loc.city;
   var b = location.origin;
   $("curl").textContent = "curl '" + b + "/v1/position?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "'\\n\\n" +
-    "curl '" + b + "/v1/track?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "&start=" + new Date((Math.floor(Date.now() / 864e5) - 1) * 864e5).toISOString().slice(0, 19) + "Z&end=" + new Date((Math.floor(Date.now() / 864e5) + 2) * 864e5).toISOString().slice(0, 19) + "Z'\\n\\n" +
-    "curl '" + b + "/v1/day?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "&date=" + localDate(Date.now()) + "&tz=" + loc.tz + "'\\n\\n" +
+    "curl '" + b + "/v1/track?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "&start=" + new Date((Math.floor(tNow() / 864e5) - 1) * 864e5).toISOString().slice(0, 19) + "Z&end=" + new Date((Math.floor(tNow() / 864e5) + 2) * 864e5).toISOString().slice(0, 19) + "Z'\\n\\n" +
+    "curl '" + b + "/v1/day?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "&date=" + localDate(tNow()) + "&tz=" + loc.tz + "'\\n\\n" +
     "curl '" + b + "/v1/weather?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "&n=3'";
 }
 function reloadAll() { S.track = []; S.from = null; S.decl = null; header(); diag(); return Promise.all([loadTrack(), loadPos(), loadDay(), loadWx()]); }
@@ -840,10 +1001,10 @@ $("hood").addEventListener("toggle", diag);
 
 var rsT = 0; addEventListener("resize", function () { resize(); clearTimeout(rsT); rsT = setTimeout(drawStrip, 150); });
 document.addEventListener("visibilitychange", function () { if (!document.hidden) loadPos(); });
-if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { dirty = true; });
-resize(); header(); requestAnimationFrame(frame);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(requestDraw);
+resize(); header();
 reloadAll();
-setInterval(function () { if (!document.hidden) loadPos(); }, 5000);
+if (AT == null) setInterval(function () { if (!document.hidden) loadPos(); }, 5000);
 setInterval(tick, 1000); tick();
 setInterval(function () { if (!document.hidden) loadWx(); }, 60e3);
 })();

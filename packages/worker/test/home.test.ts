@@ -243,3 +243,53 @@ describe("home: altitude-ring labels stay off the path lines", () => {
     expect(html).not.toMatch(/<link[^>]+stylesheet/); expect(html).not.toContain("fonts.googleapis")
   })
 })
+
+// The sky chart (2026-10-30): all 360° by the whole altitude range, bodies always where they are, tracks through sky and ground.
+describe("home: sky chart geometry", () => {
+  const chart = new Function(CORE_JS + "; return { altU, U_TOP, U_BOT, unwrapAz, chartCenter, trackEvents, poseFrom, aimText }")() as {
+    altU(a: number): number; U_TOP: number; U_BOT: number; unwrapAz(a: number[]): number[]; chartCenter(lat: number, azs: number[]): number
+    trackEvents(s: { t: number; alt: number; az: number }[], h0: number): { kind: string; t: number; az: number; alt: number }[]
+    poseFrom(e: object, decl: number | null): { az: number; alt: number } | null; aimText(name: string, b: { az: number; alt: number }, pose: { az: number; alt: number }): string
+  }
+  it("altitude scale: true down to -18°, a quarter below; monotonic over the whole range", () => {
+    expect(chart.altU(90)).toBe(90); expect(chart.altU(0)).toBe(0); expect(chart.altU(-18)).toBe(-18); expect(chart.altU(-90)).toBe(-36)
+    expect(chart.U_TOP - chart.U_BOT).toBe(126)
+    for (let a = -90; a < 90; a += 0.5) expect(chart.altU(a + 0.5)).toBeGreaterThan(chart.altU(a))
+  })
+  it("unwrapped azimuths never jump", () => {
+    const u = chart.unwrapAz([350, 355, 2, 9, 359, 340])
+    expect(u).toEqual([350, 355, 362, 369, 359, 340])
+  })
+  it("centre: the meridian by hemisphere, moved only to keep a body 30° off the seam", () => {
+    expect(chart.chartCenter(40, [120, 250])).toBe(180)
+    expect(chart.chartCenter(-33, [120, 250])).toBe(0)
+    const c = chart.chartCenter(40, [5, 250]), seam = (c + 180) % 360
+    for (const a of [5, 250]) expect(Math.abs((((a - seam) % 360) + 540) % 360 - 180)).toBeGreaterThanOrEqual(30)
+  })
+  it("events from a synthetic day: rise, transit, set, anti-transit at the right times and azimuths", () => {
+    // a body on a sine: alt = 40 sin(2π t/24h) - 10, azimuth sweeping 360° a day
+    const s = [], T = 864e5
+    for (let i = 0; i <= 72; i++) { const t = i * 20 * 60e3; s.push({ t, alt: 40 * Math.sin(2 * Math.PI * t / T) - 10, az: (90 + 360 * t / T) % 360 }) }
+    const ev = chart.trackEvents(s, 0), kinds = ev.map(e => e.kind)
+    expect(kinds).toEqual(["rise", "transit", "set", "antitransit"])
+    const rise = Math.asin(10 / 40) / (2 * Math.PI) * T
+    expect(Math.abs(ev[0]!.t - rise)).toBeLessThan(60e3)
+    expect(Math.abs(ev[1]!.t - T / 4)).toBeLessThan(60e3); expect(Math.abs(ev[1]!.alt - 30)).toBeLessThan(0.05)
+    expect(Math.abs(ev[3]!.alt + 50)).toBeLessThan(0.05)
+    expect(Math.abs(ev[1]!.az - 180)).toBeLessThan(0.5)
+  })
+  it("a track that never crosses the horizon has culminations and no rise or set (polar day and night)", () => {
+    const s = []
+    for (let i = 0; i <= 72; i++) s.push({ t: i * 12e5, alt: 20 * Math.cos(2 * Math.PI * i / 72) - 30, az: i * 5 })
+    expect(chart.trackEvents(s, -0.833).map(e => e.kind)).toEqual(["antitransit"])
+  })
+  it("pointing: iOS compass heading + declination; Android absolute alpha from the rotation; tilt from beta", () => {
+    const ios = chart.poseFrom({ alpha: 0, beta: 90, gamma: 0, webkitCompassHeading: 10 }, -13)!
+    expect(ios.az).toBeCloseTo(357, 9); expect(ios.alt).toBeCloseTo(0, 9)
+    const up = chart.poseFrom({ alpha: 90, beta: 135, gamma: 0, absolute: true }, 0)!
+    expect(up.az).toBeCloseTo(270, 6); expect(up.alt).toBeCloseTo(45, 6)
+    expect(chart.poseFrom({ alpha: 30, beta: 90, gamma: 0 }, 0)).toBeNull()   // relative alpha, no compass: nothing to show
+    expect(chart.aimText("Moon", { az: 20, alt: -23.4 }, { az: 60, alt: 18 })).toBe("Moon, 23.4° below the horizon: turn 40° left, tilt 41° down")
+    expect(chart.aimText("Sun", { az: 181, alt: 30 }, { az: 180, alt: 29 })).toBe("Sun: dead ahead")
+  })
+})
