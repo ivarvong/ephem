@@ -92,7 +92,7 @@ check("legacy.notifications/initialized", "202, empty", notif, notif.status === 
 const ltl = await legacy("legacy.tools/list", "tools/list")
 const names: string[] = ltl.json?.result?.tools?.map((t: any) => t.name) ?? []
 ltlReady(ltl)
-check("legacy.tools/list", "8 tools with schemas", ltl, names.length === 8 && ltl.json.result.tools.every((t: any) => t.inputSchema?.type === "object" && t.outputSchema?.type === "object"), names.join(","))
+check("legacy.tools/list", `${Object.keys(REST_PATH).length} tools (one per endpoint) with schemas`, ltl, names.toSorted().join() === Object.keys(REST_PATH).toSorted().join() && ltl.json.result.tools.every((t: any) => t.inputSchema?.type === "object" && t.outputSchema?.type === "object"), names.join(","))
 await Promise.all(names.map(t => toolCall("legacy", t)))
 const ping = await legacy("legacy.ping", "ping")
 check("legacy.ping", "result {}", ping, ping.status === 200 && JSON.stringify(ping.json?.result) === "{}", JSON.stringify(ping.json?.result))
