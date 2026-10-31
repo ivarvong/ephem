@@ -1,7 +1,9 @@
 # ephem API
 
-Sun and Moon from JPL DE440, as JSON over HTTPS. CORS is open and there's no key. Every answer is checked against
-Skyfield, and every response states the conventions it used.
+Sun and Moon from JPL DE440, as JSON over HTTPS. CORS is open and there's no key. Every answer is checked against an
+independent implementation: Skyfield for the sky, PROJ and GeographicLib for geometry, and NOAA's test values and pygeomag
+for the magnetic field (see [How we know it's right](#how-we-know-its-right)). Every response states the conventions it
+used.
 
 ```sh
 # Where are the Sun and Moon right now?
@@ -88,3 +90,62 @@ and cache tiers) and `conventions` (every threshold, model, height reference and
 
 **Nothing is removed.** Every capability stays: aim, include, horizon profiles, refraction inputs, alignment search,
 sightline, magnetic and weather. The only route that leaves the public surface is the internal search window.
+
+## How we know it's right
+
+Every cell below names the independent check that covers that endpoint and input, and every one runs in the gate
+(`npm test`), offline, on every commit. **Skyfield** is `reference/oracle/server.py` (Skyfield 1.55 + JPL DE440s, pyproj
+for heights), whose answers are frozen in `packages/core/test/fixtures/oracle.json` and compared at the bars in
+`reference/oracle/crosscheck.py`: 0.36″ on angles, 0.5 s on events, 1 m on standing points. **PROJ/GeographicLib** is
+pyproj called from the test. **NOAA** is the WMM2025 official test values, and **pygeomag** is independent WMM code on
+NOAA's coefficients (`reference/oracle/wmm_poles.py`). A **property** is an invariant or a brute-force recomputation that
+shares no code with the path under test. The sweep of 2026-10-31 went from **49 of 75 applicable cells to 75 of 75** (26 new, 5 extended); new checks are
+marked ★.
+
+| Input or case | /position | /track | /day | /crossing | /alignment | /alignment/search |
+| --- | --- | --- | --- | --- | --- | --- |
+| The answer itself | Skyfield (129 instants, 1972–2149) | property: each sample = /position | Skyfield (118 days) | Skyfield (19 windows) | Skyfield (4 tracks) + property (the body sits on the target) | brute-force 1 s scans (3 geometries, 30–60 days) |
+| `height`, `heightRef` (ellipsoid, msl, default) | Skyfield | ★ property (= /position, msl) | Skyfield | Skyfield | property; ★ Skyfield (msl eye and target) | brute force (msl) |
+| `temperature`, `pressure` | Skyfield | ★ property | Skyfield | Skyfield | ★ Skyfield | ★ /alignment's solver (Skyfield with T/P) |
+| `horizon` (sea, geometric, degrees) | Skyfield | ★ property | Skyfield | n/a | n/a | n/a |
+| `horizonProfile` | n/a | n/a | Skyfield | Skyfield | n/a | n/a |
+| `horizonProfile` wrapping through north | n/a | n/a | ★ Skyfield (NYC, Tromsø midnight Sun) + property | ★ Skyfield + property (= /day) | n/a | n/a |
+| `aim` upper, lower | n/a | n/a | Skyfield | Skyfield; ★ property past the zenith (bug 2) | property (offset = radius along the vertical) | n/a |
+| `aim` litCentroid | n/a | n/a | n/a | property (moves moonset by offset·cos/rate) + Skyfield sphere integration of the centroid | property (geometry re-check) | property (entry 30–50 s earlier, as measured) |
+| `include` sun, phase | n/a | n/a | n/a | property (= /position) | property (= /position) | ★ property (= /position) |
+| `body` sun, moon | Skyfield (both always) | property | Skyfield | Skyfield | Skyfield | brute force (both) |
+| `dut1` | Skyfield | ★ property | ★ Skyfield | ★ Skyfield | ★ Skyfield | n/a |
+| DST days, non-hour offsets (Kathmandu +5:45, Chatham +12:45, Lord Howe ½ h DST) | n/a | n/a | ★ Skyfield; local midnight vs Python zoneinfo (3 718 cases) | ★ Skyfield (Kathmandu) | n/a | n/a |
+| Dates not on the calendar, days a zone skipped | n/a | n/a | ★ property (bug 1) | ★ property (bug 1) | n/a | n/a |
+| Polar day and night | ★ Skyfield (±89.9°, ±90°) | n/a | Skyfield (Tromsø); ★ Longyearbyen, McMurdo, 89.9°N equinoxes | Skyfield (Tromsø); ★ Longyearbyen | n/a | n/a |
+| The date line (lon ±180, UTC+14, UTC−11) | ★ Skyfield + property (180 = −180) | n/a | ★ Skyfield (Kiritimati, Pago Pago, Fiji) + property | n/a | n/a | n/a |
+| Near the zenith | ★ Skyfield (88.4°–89.5°) | n/a | Skyfield (Quito equinoxes) | ★ Skyfield (centre at 85°–89°) + property (limbs) | n/a | n/a |
+| Region: bbox, Polygon, holes, MultiPolygon | n/a | n/a | n/a | n/a | n/a | brute force (holed MultiPolygon, 424-node park) + round-trip encoding |
+
+| Input or case | /sightline | /magnetic | /weather |
+| --- | --- | --- | --- |
+| The answer itself | property (curvature s₁s₂/2R, refraction k·s₁s₂/2R); ★ PROJ + GeographicLib in the gate (was an offline script) | NOAA (100 values) | real METAR file: parser = Python csv (5 254 rows); nearest = brute-force haversine |
+| `height`, `heightRef` | property (heightEllipsoid = heightMsl + N) | ★ property (msl = height + N) + pygeomag at 5 km | n/a |
+| Long lines (to the 200 km limit) and the antimeridian | ★ PROJ + GeographicLib (6 lines, 201 samples) | n/a | property (antimeridian, poles) |
+| Near the poles | ★ PROJ (over the North Pole: bug 3) | ★ pygeomag (1 128 points at |lat| 80°–90°, dip poles) | property |
+| `obstacles`, `samples` | property (clearance = line − obstacle; = interpolated profile) | n/a | n/a |
+| Compass zones (blackout, caution; new output) | n/a | ★ pygeomag zones (bug 4) | n/a |
+| Declination for bearings | n/a | NOAA; FAA NASR airport variation (offline, `scripts/check-magvar.py`) | property (magnetic = true − declination) |
+| `count` | n/a | n/a | property |
+
+**Bugs the sweep found** (each has a regression test that fails on the old code):
+1. `date=2026-02-30` answered for 2026-03-02 under the label 2026-02-30, and Pacific/Apia's skipped 2011-12-30 was a 200
+   with an empty day. Both are now a 400 naming `date`.
+2. An upper limb within its radius of the zenith was put at alt + r > 90°, so `/crossing` missed half the crossings
+   (2 instead of 4). The limb now comes down the other side, as `aim`'s definition and `/alignment` already had it.
+3. A sight line over the North Pole put its middle sample 6 355 km below the ellipsoid (h = p/cos φ − N is 0/0 there).
+4. `/magnetic` gave a declination inside WMM2025's blackout zone with no warning. It now says `compass: blackout | caution | ok`.
+
+Every example in `/docs`, `/llms.txt` and this file runs in the gate and has its claim checked
+(`packages/worker/test/docs-examples.test.ts`).
+
+**Not covered, and why.** We don't compare azimuth with Skyfield within about 0.3° of the zenith. There it is
+ill-conditioned: 8′ from the zenith, a 2.4e-4° azimuth difference is 6e-7° on the sky. The limb geometry there is covered by
+a property instead. Skyfield has no lit-area centroid and no `/alignment` aim, so those cells rest on properties and on the
+centroid's sphere integration. /weather's values are the station's own report, not computed by ephem, so there is no oracle
+beyond the parser and the distance math.

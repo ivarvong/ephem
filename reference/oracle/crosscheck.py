@@ -195,6 +195,41 @@ def default_cases(seed=440):
     cross.append(dict(NYC, body="sun", altitude="-6", start="2026-10-01T00:00:00Z", end="2026-10-31T00:00:00Z"))
     cross.append(dict(NYC, body="moon", altitude="10", aim="upper", start="2026-12-01T00:00:00Z", end="2026-12-08T00:00:00Z"))
     cross.append(dict(lat=OBS[1][0], lon=OBS[1][1], body="sun", altitude="-0.833", altitudeType="apparent", aim="upper", start="2026-11-20T00:00:00Z", end="2026-12-10T00:00:00Z"))
+    # 2026-10-31 correctness sweep: DST days, non-hour offsets, the date line, polar day and night, near-zenith, profile wraparound
+    SWEEP_DAYS = [("27.7172", "85.3240", "Asia/Kathmandu", ("2026-10-31", "2026-06-21")),            # UTC+5:45
+                  ("22.5726", "88.3639", "Asia/Kolkata", ("2026-12-21",)),                           # UTC+5:30
+                  ("-43.9535", "-176.5597", "Pacific/Chatham", ("2026-09-27", "2027-04-04", "2026-11-15")),   # +12:45/+13:45, DST days
+                  ("40.7484", "-73.9857", "America/New_York", ("2026-03-08", "2026-11-01")),       # 23 h and 25 h days
+                  ("-31.5553", "159.0821", "Australia/Lord_Howe", ("2026-10-04", "2027-04-04")),   # 30-minute DST
+                  ("-33.4489", "-70.6693", "America/Santiago", ("2026-09-06", "2027-04-04")),      # DST at midnight
+                  ("51.4779", "-0.0015", "Europe/London", ("2026-03-29", "2026-10-25")),
+                  ("1.8721", "-157.4278", "Pacific/Kiritimati", ("2026-10-31",)),                  # UTC+14, east of the date line
+                  ("-14.2756", "-170.7020", "Pacific/Pago_Pago", ("2026-10-31",)),                 # UTC−11, just across it
+                  ("-16.8", "180", "Pacific/Fiji", ("2026-10-31",)), ("-16.8", "-180", "Pacific/Fiji", ("2026-10-31",)),   # on the 180th meridian
+                  ("78.2232", "15.6267", "Arctic/Longyearbyen", ("2026-06-21", "2026-12-21", "2026-04-19", "2026-08-24", "2026-10-26", "2027-02-16")),   # polar day/night edges
+                  ("-77.8463", "166.6683", "Antarctica/McMurdo", ("2026-12-21", "2026-06-21", "2026-10-24")),
+                  ("89.9", "0", "UTC", ("2026-03-20", "2026-09-23")),                              # the pole at the equinoxes: one sunrise / sunset a year
+                  ("-14.3", "0", "UTC", ("2026-10-31",)), ("-0.1807", "-78.4678", "America/Guayaquil", ("2027-03-20",))]   # culminating near the zenith
+    for lat, lon, tz, ds in SWEEP_DAYS:
+        for d in ds: days.append(dict(lat=lat, lon=lon, date=d, tz=tz))
+    WRAP = "120:1.5,240:0.5"   # one segment 240° → 120° through north: NYC's rise and set azimuths both fall in it
+    for extra in (dict(horizonProfile=WRAP), dict(horizonProfile=WRAP, aim="lower"), dict(horizonProfile="350:2.5,10:0.5,180:1")):
+        days.append(dict(NYC, date="2026-10-29", tz="America/New_York", **extra))
+        days.append(dict(lat=OBS[1][0], lon=OBS[1][1], date="2027-05-25", tz=OBS[1][3], **extra))   # Tromsø midnight Sun, due north
+    # within ~0.3° of the zenith azimuth is ill-conditioned (8′ off: Δaz 2.4e-4° is 6e-7° on the sky), so not compared there
+    for t in ("2026-10-31T11:40:00Z", "2026-10-31T11:42:00Z", "2026-10-31T11:46:00Z", "2026-10-31T11:50:00Z"):
+        pos.append(dict(lat="-14.3", lon="0", time=t)); pos.append(dict(lat="-14.3", lon="0", time=t, temperature="30", pressure="1000"))
+    for lat, lon in (("-16.8", "180"), ("-16.8", "-180"), ("-16.8", "179.9999"), ("89.9", "45"), ("-89.9", "-120"), ("90", "0"), ("-90", "0")):
+        pos.append(dict(lat=lat, lon=lon, time="2026-10-31T06:00:00Z"))
+    for extra in (dict(body="sun", altitude="89"), dict(body="sun", altitude="85", aim="lower"), dict(body="sun", altitude="80", altitudeType="apparent", aim="upper")):
+        cross.append(dict(lat="-14.3", lon="0", date="2026-10-31", tz="UTC", **extra))
+    for extra in (dict(body="sun", horizonProfile=WRAP), dict(body="moon", horizonProfile=WRAP, aim="upper"), dict(body="sun", horizonProfile=WRAP, aim="lower", direction="rise")):
+        cross.append(dict(NYC, start="2026-10-25T00:00:00Z", end="2026-11-05T00:00:00Z", **extra))
+    cross.append(dict(lat="27.7172", lon="85.3240", body="moon", altitude="-0.833", altitudeType="apparent", aim="upper", date="2026-10-31", tz="Asia/Kathmandu"))
+    cross.append(dict(lat="78.2232", lon="15.6267", body="sun", altitude="0", aim="upper", start="2026-04-01T00:00:00Z", end="2026-05-01T00:00:00Z"))   # last sunsets before the midnight Sun
+    days.append(dict(NYC, date="2026-11-16", tz="America/New_York", dut1="-0.4"))
+    days.append(dict(lat="27.7172", lon="85.3240", date="2026-11-16", tz="Asia/Kathmandu", dut1="0.7", temperature="-5", pressure="900", height="1400", heightRef="msl"))
+    cross.append(dict(NYC, body="moon", altitude="5", dut1="0.5", temperature="30", pressure="990", date="2026-11-16", tz="America/New_York"))
     rejects = [dict(NYC, _path="/day", date="2026-10-29", tz="America/New_York", temprature="-20"),
                dict(NYC, _path="/position", time="2026-10-29T21:55:00Z", bogus="1"),
                dict(NYC, _path="/crossing", body="sun", date="2026-10-29", tz="America/New_York"),            # neither altitude nor profile
@@ -210,7 +245,9 @@ def default_cases(seed=440):
              dict(body="moon", targetLat="40.68925", targetLon="-74.0445", targetHeight="70", targetHeightRef="msl", height="5", heightRef="msl",
                   start="2026-11-17T03:44:30Z", end="2026-11-17T03:46:00Z", stepSeconds="30", maxDistanceKm="8", lat="40.7003", lon="-73.9968"),
              dict(body="moon", targetLat="40.68925", targetLon="-74.0445", targetHeight="70", targetHeightRef="msl",
-                  start="2026-11-17T03:44:30Z", end="2026-11-17T03:46:00Z", stepSeconds="45", maxDistanceKm="8")]
+                  start="2026-11-17T03:44:30Z", end="2026-11-17T03:46:00Z", stepSeconds="45", maxDistanceKm="8"),
+             dict(body="sun", targetLat="40.748441", targetLon="-73.985664", targetHeight="380", targetHeightRef="msl", height="2", heightRef="msl",
+                  start="2026-10-28T20:00:00Z", end="2026-10-28T21:40:00Z", stepSeconds="600", maxDistanceKm="30", temperature="-10", pressure="1030", dut1="0.3")]
     return dict(position=pos, day=days, crossing=cross, alignment=align, reject=rejects)
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest"
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { crossingRequest, crossingWindow, dayRequest, positionRequest } from "../src/sky.ts"
-import { alignment } from "../src/alignment.ts"
+import { alignmentRequest } from "../src/alignment-request.ts"
 import { diskBlocks } from "./helpers/blocks.ts"
 
 const fx = JSON.parse(readFileSync(resolve(__dirname, "fixtures/oracle.json"), "utf8")) as any
@@ -91,15 +91,15 @@ describe("crossing", () => {
 describe("alignment", () => {
   it.each(fx.alignment.map((c: any) => [`${c.query.body} ${c.query.start}`, c]) as [string, any][])("%s", (_t, c: any) => {
     const q = c.query, e = c.expect, ctx = `${q.body} ${q.start}`
-    const r = alignment(diskBlocks, { body: q.body, target: { lat: +q.targetLat, lon: +q.targetLon, height: +q.targetHeight }, observerHeight: num(q, "observerHeight") ?? 0,
-      startMs: Date.parse(q.start), endMs: Date.parse(q.end), stepSeconds: num(q, "stepSeconds") ?? 60, maxDistanceKm: num(q, "maxDistanceKm") ?? 20,
-      temperature: num(q, "temperature"), pressure: num(q, "pressure"), dut1: num(q, "dut1"),
-      ...(q.observerLat ? { observer: { lat: +q.observerLat, lon: +q.observerLon } } : {}) })
+    const r = alignmentRequest(diskBlocks, { body: q.body, targetLat: +q.targetLat, targetLon: +q.targetLon, targetHeight: +q.targetHeight, targetHeightRef: q.targetHeightRef,
+      height: num(q, "height"), heightRef: q.heightRef, startMs: Date.parse(q.start), endMs: Date.parse(q.end), stepSeconds: num(q, "stepSeconds") ?? 60, maxDistanceKm: num(q, "maxDistanceKm") ?? 20,
+      temperature: num(q, "temperature"), pressure: num(q, "pressure"), dut1: num(q, "dut1"), ...(q.lat ? { observer: { lat: +q.lat, lon: +q.lon } } : {}) })
     expect(r.track.map(p => p.time)).toEqual(e.track.map((p: any) => p.time))
     r.track.forEach((p, i) => { const o = e.track[i]
       check("align.position_m", Math.hypot((p.lat - o.lat) * 111_132, (p.lon - o.lon) * 111_320 * Math.cos(p.lat * Math.PI / 180)), TOL.alignM, ctx + " " + p.time)
       check("align.distanceKm", Math.abs(p.distanceKm - o.distanceKm), TOL.alignKm, ctx); check("align.azimuth", ang(p.azimuth, o.azimuth), TOL.angle, ctx)
-      check("align.apparentAltitude", Math.abs(p.apparentAltitude - o.apparentAltitude), TOL.angle, ctx) })
+      check("align.apparentAltitude", Math.abs(p.apparentAltitude - o.apparentAltitude), TOL.angle, ctx)
+      if ("heightEllipsoid" in o) check("align.heightEllipsoid", Math.abs(p.heightEllipsoid - o.heightEllipsoid), TOL.alignM, ctx) })
     if (e.fromObserver) { expect(r.fromObserver).toBeDefined(); const f = r.fromObserver!, g = e.fromObserver
       check("from.azimuthToTarget", ang(f.azimuthToTarget, g.azimuthToTarget), TOL.angle, ctx); check("from.targetElevation", Math.abs(f.targetElevation - g.targetElevation), TOL.angle, ctx)
       expect(f.passes.length).toBe(g.passes.length)
