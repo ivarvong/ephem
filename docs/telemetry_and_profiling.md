@@ -903,7 +903,7 @@ scratchpad `journey/`):
 
 ## Homepage (`/`, src/home.ts, 2026-10-31)
 
-- **One round trip.** GET / flushes the head (CSS, inline dot fonts, markup, boot script) at once, then streams
+- **One round trip.** GET / flushes the head (CSS, markup, boot script; system fonts only) at once, then streams
   `<script type="application/json" id="ephem-position|ephem-track|ephem-day">` with the API's own response bodies, run
   through the router in-process (src/embed.ts, shared with /instrument), then `</body>`. The page boots on DOMContentLoaded
   from the embed and fetches only what is missing (and weather). Span `home.embed` (attribute `home.embedded`: how many of

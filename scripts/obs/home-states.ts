@@ -1,7 +1,7 @@
 // Screenshots of / in every sky state, deterministically: the page's debug ?at=<ISO> (frozen clock, timed /v1/position; the
 // server's embed is ignored then) at fixed places, in light and dark, at 390×844, 375×667 and 1440×900. Prints, per shot, the
 // chart's label layout from window.__sky: overlaps (must be none), dropped labels, labels that cross a track, and draw count.
-//   node --experimental-strip-types scripts/obs/home-states.ts <base> <outDir> [filter]
+//   [SIZES=390,375] node --experimental-strip-types scripts/obs/home-states.ts <base> <outDir> [filter]
 // The states (UI acceptance, AGENTS.md): day with the Moon up / down, civil, nautical, astronomical twilight, night with the Moon
 // down (Ivar's iPhone, NYC 20:13 2026-10-30) / up, the Sun on the horizon, Tromsø polar night / day, Sydney, Singapore's
 // near-zenith Sun, and pointing mode (?pose=az,alt).
@@ -26,7 +26,7 @@ if (!base || !out) { console.error("usage: home-states.ts <base> <outDir> [filte
 mkdirSync(out, { recursive: true })
 const b = await launch()
 try {
-  for (const [w, h] of [[390, 844], [375, 667], [1440, 900]] as const) for (const scheme of ["light", "dark"]) for (const [id, place, lat, lon, tz, at] of STATES) {
+  for (const [w, h] of ([[390, 844], [375, 667], [1440, 900]] as const).filter(([w]) => !process.env.SIZES || process.env.SIZES.split(",").includes(String(w)))) for (const scheme of ["light", "dark"]) for (const [id, place, lat, lon, tz, at] of STATES) {
     if (filter && !id.includes(filter)) continue
     const [time, extra] = at.split("&")
     const url = `${base}/?lat=${lat}&lon=${lon}&tz=${encodeURIComponent(tz)}&place=${encodeURIComponent(place)}&at=${encodeURIComponent(time!)}${extra ? "&" + extra : ""}`

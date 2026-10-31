@@ -343,62 +343,68 @@ describe("home: first-load answers embedded in the streamed page", () => {
   })
 })
 
-// Every label of the sky chart through one layout (2026-10-31, Ivar's iPhone: "MOON -9.8°" on the horizon ticks, CIVIL on the
-// Moon's track, "↑21:43 55°" on a track). Run the page's own model and layout over every sky state, from the API's own answers
-// (fixture DE440 blocks), at both phone sizes: no label on another label, a disc, a marker, a tick or the horizon; only a body's
-// label crosses a track, ever (bodies included); the bodies are always named.
-describe("home: chart labels never collide, in every sky state", () => {
+// The sky chart (2026-10-31, Ivar: "These fucking gaps", "busy as fuck"): one label per body (its name), laid out clear of every
+// track, disc and button; each body's track one connected polyline spanning one revolution, both ends on the frame's edges.
+// Run on the page's own model over every sky state, from the API's own answers (fixture DE440 blocks), at both phone sizes.
+describe("home: the chart in every sky state", () => {
   const FIX = resolve(__dirname, "../../core/test/fixtures/blocks")
   const handler = makeHandler(makeBlocks(direct(async (first, count) => {
     const out = new Uint8Array(count * REC)
     for (let i = 0; i < count; i++) out.set(readFileSync(`${FIX}/${first + i}.bin`), i * REC)
     return out.buffer
   })))
-  type St = Record<string, unknown>
-  const ch = new Function(CORE_JS + "; return { chartModel, layoutLabels, chartCenter, trackEvents, overlapArea, segHitsRect, altOf }")() as {
-    chartModel(st: St): { items: Array<{ id: string; body?: boolean; must?: boolean; x?: number; y?: number }>; hard: Rect[]; segs: number[][]; bounds: { x0: number; y0: number; x1: number; y1: number } }
+  const ch = new Function(CORE_JS + "; return { skyModel, layoutLabels, chartCenter, overlapArea, segHitsRect, altOf }")() as {
+    skyModel(st: object): { lines: Record<string, { xs: number[]; ys: number[]; split: number }>; items: object[]; hard: Rect[]; segs: number[][]; bounds: { x0: number; y0: number; x1: number; y1: number }; g: { W: number } }
     layoutLabels(items: object[], hard: Rect[], segs: number[][], b: object, pad: number): Array<Rect & { dropped?: boolean; crossed?: boolean }>
-    chartCenter(lat: number, azs: number[]): number; trackEvents(s: object[], h0: number): Array<{ kind: string; t: number; az: number; alt: number }>
-    overlapArea(a: Rect, b: Rect): number; segHitsRect(s: number[], r: Rect): boolean; altOf(b: object): number
+    chartCenter(lat: number, azs: number[]): number; overlapArea(a: Rect, b: Rect): number; segHitsRect(s: number[], r: Rect): boolean; altOf(b: object): number
   }
   const STATES: Array<[string, number, number, string]> = [
     ["nyc day, Moon up", 40.7128, -74.006, "2026-10-30T14:00:00Z"], ["nyc day, Moon down", 40.7128, -74.006, "2026-10-30T19:00:00Z"],
     ["nyc civil twilight", 40.7128, -74.006, "2026-10-30T22:15:00Z"], ["nyc nautical twilight", 40.7128, -74.006, "2026-10-30T22:45:00Z"],
     ["nyc astronomical twilight", 40.7128, -74.006, "2026-10-30T23:15:00Z"], ["nyc night, Moon down (Ivar's screenshot)", 40.7128, -74.006, "2026-10-31T00:13:00Z"],
     ["nyc night, Moon up", 40.7128, -74.006, "2026-10-31T04:00:00Z"], ["nyc sunrise", 40.7128, -74.006, "2026-10-30T11:35:00Z"],
+    ["nyc 21:26, Ivar's gaps", 40.7128, -74.006, "2026-10-31T01:26:00Z"],
     ["Tromsø polar night", 69.6492, 18.9553, "2026-12-15T10:45:00Z"], ["Tromsø polar day", 69.6492, 18.9553, "2026-06-21T22:30:00Z"],
     ["Sydney", -33.8688, 151.2093, "2026-10-30T02:00:00Z"], ["Singapore, Sun near the zenith", 1.3521, 103.8198, "2026-09-23T04:55:00Z"],
   ]
-  const LH = { name: 14, ev: 13, band: 11, scale: 12 }
-  const meas = (t: string, f: string) => Math.ceil(t.length * (f === "name" ? 7.4 : f === "band" ? 6.4 : 6)) + 2   // generous condensed-face widths
+  const PERIOD = { sun: 864e5, moon: 89428e3 }
   const get = async (path: string) => (await handler(new Request(`https://ephem.example${path}`))).json()
   for (const [name, lat, lon, at] of STATES) it(name, async () => {
     const now = Date.parse(at), D = Math.floor(now / 864e5), iso = (ms: number) => new Date(ms).toISOString().slice(0, 19) + "Z"
     const pos = await get(`/v1/position?lat=${lat}&lon=${lon}&time=${at}`)
     const tr = await get(`/v1/track?lat=${lat}&lon=${lon}&start=${iso((D - 1) * 864e5)}&end=${iso((D + 2) * 864e5)}`)
-    const s0 = Date.parse(tr.start), HALF = { sun: 12 * 3600e3 + 20 * 60e3, moon: 12 * 3600e3 + 45 * 60e3 }
-    const winOf = (k: "sun" | "moon") => { const w: Array<{ t: number; i: number }> = []; for (let i = 0; i < tr.count; i++) { const t = s0 + i * tr.stepSeconds * 1000; if (Math.abs(t - now) <= HALF[k]) w.push({ t, i }) } return w }
+    const s0 = Date.parse(tr.start)
     const alt = (x: { altitude: number[]; apparentAltitude: Array<number | null> }, i: number) => x.apparentAltitude[i] ?? x.altitude[i]!
     const bodies = (["sun", "moon"] as const).map(k => {
-      const b = pos[k], a = ch.altOf(b), win = winOf(k)
-      const pts = win.map(w => ({ t: w.t, az: tr[k].azimuth[w.i], alt: alt(tr[k], w.i) })); pts.splice(pts.findIndex(p => p.t > now), 0, { t: now, az: b.azimuth, alt: a })
-      const events = ch.trackEvents(win.map(w => ({ t: w.t, az: tr[k].azimuth[w.i], alt: tr[k].altitude[w.i] })), -0.833)
-      return { key: k, name: k === "sun" ? "Sun" : "Moon", az: b.azimuth, alt: a, labelAlt: a, r: 6, pts, events }
+      const b = pos[k], a = ch.altOf(b), pts: Array<{ t: number; az: number; alt: number }> = []
+      for (let i = 0; i < tr.count; i++) pts.push({ t: s0 + i * tr.stepSeconds * 1000, az: tr[k].azimuth[i], alt: alt(tr[k], i) })
+      const nowIdx = pts.findIndex(p => p.t > now); pts.splice(nowIdx, 0, { t: now, az: b.azimuth, alt: a })
+      return { key: k, name: k === "sun" ? "Sun" : "Moon", az: b.azimuth, alt: a, r: k === "sun" ? 5 : 6, pts, nowIdx, period: PERIOD[k] }
     })
-    for (const [W, H] of [[390, 337.6], [375, 266.8]] as const) {
-      const st = { W, H, insetL: 0, insetR: 0, center: ch.chartCenter(lat, [pos.sun.azimuth, pos.moon.azimuth]), now, sunAlt: ch.altOf(pos.sun),
-        ctl: { id: "ctl", x: W - 112, y: 0, w: 112, h: 44 }, pose: null, next: null, hm: (t: number) => new Date(t).toISOString().slice(11, 16), meas, LH, bodies }
-      const m = ch.chartModel(st), placed = ch.layoutLabels(m.items, m.hard, m.segs, m.bounds, 2)
-      const shown = placed.filter(p => !p.dropped)
-      const where = `${name} ${W}x${H}`
-      for (const id of ["Sun", "Moon"]) expect(shown.map(p => p.id), `${where}: ${id} named`).toContain(id)
-      for (let i = 0; i < shown.length; i++) {
-        const a = shown[i]!
-        expect(a.x >= m.bounds.x0 && a.y >= m.bounds.y0 && a.x + a.w <= m.bounds.x1 && a.y + a.h <= m.bounds.y1, `${where}: ${a.id} in bounds`).toBe(true)
-        for (let j = i + 1; j < shown.length; j++) expect(ch.overlapArea(a, shown[j]!), `${where}: ${a.id} x ${shown[j]!.id}`).toBe(0)
-        for (const h of m.hard) expect(ch.overlapArea(a, h), `${where}: ${a.id} on ${h.id}`).toBe(0)
-        expect(m.segs.some(s => ch.segHitsRect(s, a)), `${where}: ${a.id} on a track`).toBe(false)   // zero crossings, bodies included
+    for (const [W, H] of [[390, 354.5], [375, 280.1]] as const) {
+      const st = { W, H, insetL: 0, insetR: 0, center: ch.chartCenter(lat, [pos.sun.azimuth, pos.moon.azimuth]), now, ctl: { id: "ctl", x: W - 44, y: 0, w: 44, h: 44 }, pose: null,
+        meas: (t: string) => Math.ceil(t.length * 7.2) + 2, lh: 15, bodies }
+      const m = ch.skyModel(st), where = `${name} ${W}x${H}`
+      // tracks: one polyline per body, inside the frame, no jumps, both ends on the frame's edges
+      for (const k of ["sun", "moon"]) {
+        const l = m.lines[k]!
+        expect(l.xs.length, `${where}: ${k} track`).toBeGreaterThan(30)
+        for (let i = 0; i < l.xs.length; i++) { expect(l.xs[i]!).toBeGreaterThanOrEqual(-0.001); expect(l.xs[i]!).toBeLessThanOrEqual(W + 0.001) }
+        for (let i = 1; i < l.xs.length; i++) expect(Math.abs(l.xs[i]! - l.xs[i - 1]!), `${where}: ${k} jump at ${i}`).toBeLessThan(W / 4)
+        const ends = [l.xs[0]!, l.xs[l.xs.length - 1]!], low = [l.ys[0]!, l.ys[l.ys.length - 1]!]
+        const round = Math.min(...ends) < 0.01 && Math.max(...ends) > W - 0.01   // a full revolution: one end on each edge
+        // or (azimuth not all the way round, |dec| > |lat|) a loop cut at its lowest point: ends together, deep below the horizon
+        const loop = Math.hypot(ends[0]! - ends[1]!, low[0]! - low[1]!) < 12 && Math.min(...low) > H * 0.8
+        expect(round || loop, `${where}: ${k} ends (${ends.map(x => x.toFixed(1))}, ${low.map(y => y.toFixed(1))})`).toBe(true)
+      }
+      // labels: both names, clear of each other, every disc and button, and every track (3 px to spare)
+      const placed = ch.layoutLabels(m.items, m.hard, m.segs, m.bounds, 3), shown = placed.filter(p => !p.dropped)
+      expect(shown.map(p => p.id), `${where}: both named`).toEqual(expect.arrayContaining(["Sun", "Moon"]))
+      for (const a of shown) {
         expect(a.crossed, `${where}: ${a.id} fell back`).toBeUndefined()
+        for (const h of m.hard) expect(ch.overlapArea(a, h), `${where}: ${a.id} on ${h.id}`).toBe(0)
+        expect(m.segs.some(s => ch.segHitsRect(s, a)), `${where}: ${a.id} on a track`).toBe(false)
+        for (const b of shown) if (b !== a) expect(ch.overlapArea(a, b)).toBe(0)
       }
     }
   })

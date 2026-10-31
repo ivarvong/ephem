@@ -92,9 +92,6 @@ function countdown(ms) {
   var m = Math.round(s / 60), h = Math.floor(m / 60); m = m % 60;
   return "in " + (h ? h + " h" + (m ? " " + m + " min" : "") : m + " min");
 }
-// Mission-clock countdown: "T−01:05:23".
-function tminus(ms) { var s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60; s = s % 60;
-  return "T\\u2212" + (h < 10 ? "0" : "") + h + ":" + (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s; }
 function ago(s) {
   s = Math.max(0, Math.round(s));
   if (s < 90) return s + " s ago";
@@ -260,20 +257,6 @@ function chartGeom(W, H, insetL, insetR) {
 function chX(az, g, c) { return g.W / 2 + wrap180(az - c) * g.kx; }
 function chY(alt, g) { return g.top + (U_TOP - altU(alt)) * g.ky; }
 function chXs(az, g, c) { var x = chX(az, g, c), r = [x], s = 360 * g.kx; if (x - s >= -40) r.push(x - s); if (x + s <= g.W + 40) r.push(x + s); return r; }
-// One track as screen points: unwrapped so it crosses the seam as one line, at every 360° offset that lands on the chart.
-// pts [{t, az, alt}] in time order. split: index of the first point after now (past = before it, future = from split - 1).
-function trackLines(pts, g, c, now) {
-  var az = unwrapAz(pts.map(function (p) { return p.az; })), xs = [], ys = [], lo = Infinity, hi = -Infinity, split = pts.length;
-  for (var i = 0; i < pts.length; i++) {
-    var x = g.W / 2 + (az[i] - c) * g.kx; xs.push(x); ys.push(chY(pts[i].alt, g)); lo = Math.min(lo, x); hi = Math.max(hi, x);
-    if (split === pts.length && pts[i].t > now) split = i;
-  }
-  var span = 360 * g.kx, offs = [];
-  for (var o = Math.floor(-hi / span) - 1; o <= Math.ceil((g.W - lo) / span) + 1; o++) if (hi + o * span >= 0 && lo + o * span <= g.W) offs.push(o * span);
-  var segs = [];
-  offs.forEach(function (dx) { for (var j = 1; j < xs.length; j++) segs.push([xs[j - 1] + dx, ys[j - 1], xs[j] + dx, ys[j]]); });
-  return { xs: xs, ys: ys, offs: offs, split: split, segs: segs };
-}
 // Candidate spots for a label around an anchor, nearest first: above, beside, below, then the diagonals, at growing distances.
 function spotsAround(it) {
   var out = [], w = it.w, h = it.h;
@@ -342,56 +325,63 @@ function layoutLabels(items, hard, segs, bounds, pad) {
   });
   return out;
 }
-// The whole chart as geometry and labels, from plain data. st: {W, H, insetL, insetR, center, now, sunAlt, ctl (rect|null),
-// pose ({az, alt}|null), next ({body, kind, t}|null: the NEXT line's event), hm (ms → "HH:MM"), meas (text, fontKey → px),
-// LH ({fontKey: line height}), bodies: [{key, name, az, alt, labelAlt, r, pts: [{t, az, alt}], events: [{kind, t, az, alt}]}]}.
-function chartModel(st) {
-  var g = chartGeom(st.W, st.H, st.insetL, st.insetR), c = st.center, LH = st.LH, m = { g: g, lines: {}, hard: [], items: [], marks: [], discs: [], bands: [], sunBand: -1, segs: [] };
-  var minus = function (a, d) { return (a < 0 ? "\\u2212" : "") + Math.abs(a).toFixed(d) + "\\u00b0"; };
-  m.hard.push({ id: "horizon", x: -1e4, y: g.hy - 2, w: 2e4, h: 4 });
-  for (var az = 0; az < 360; az += 15) chXs(az, g, c).forEach(function (x) { m.hard.push({ id: "tick" + az, x: x - 1, y: g.hy, w: 2, h: az % 45 ? 3 : 6 }); });
+// One revolution of a body's track around now, ending on the frame's seam (centre ± 180°), so both ends sit at the frame's
+// edges and never mid-sky. pts: [{t, az, alt}] in time order with now at nowIdx; period: the body's day (ms). The azimuth is
+// unwrapped outward from now, relative to the centre; walking back and forward, the first sample past ±180° is cut there
+// (interpolated onto the edge). A body whose azimuth does not go all the way round (|dec| > |lat|, same side) gets one period
+// centred on now instead. Returns [{t, rel, alt, edge?}], rel in [-180, 180]; one polyline, now included.
+function trackSpan(pts, nowIdx, center, period) {
+  var n = pts.length, rel = new Array(n), t0 = pts[nowIdx].t;
+  rel[nowIdx] = wrap180(pts[nowIdx].az - center);
+  for (var i = nowIdx + 1; i < n; i++) rel[i] = rel[i - 1] + wrap180(pts[i].az - pts[i - 1].az);
+  for (i = nowIdx - 1; i >= 0; i--) rel[i] = rel[i + 1] + wrap180(pts[i].az - pts[i + 1].az);
+  var j;
+  function walk(dir, limit) {
+    var res = [];
+    for (var j = nowIdx + dir; j >= 0 && j < n; j += dir) {
+      var pj = j - dir, r = rel[j];
+      if (Math.abs(r) >= 180) {
+        var e = r > 0 ? 180 : -180, f = (e - rel[pj]) / (r - rel[pj]);
+        res.push({ t: pts[pj].t + f * (pts[j].t - pts[pj].t), rel: e, alt: pts[pj].alt + f * (pts[j].alt - pts[pj].alt), edge: true });
+        return res;
+      }
+      if (Math.abs(pts[j].t - t0) > limit) return res;
+      res.push({ t: pts[j].t, rel: r, alt: pts[j].alt });
+    }
+    return res;
+  }
+  var back = walk(-1, period * 1.05), fwd = walk(1, period * 1.05);
+  var round = back.length && back[back.length - 1].edge && fwd.length && fwd[fwd.length - 1].edge;
+  if (round) return back.reverse().concat([{ t: t0, rel: rel[nowIdx], alt: pts[nowIdx].alt }], fwd);
+  // Not all the way round: the loop closes on itself. Cut it at its lowest point (lower culmination, deep in the compressed
+  // ground), from the last one before now to the next, so the day's declination drift shows only there.
+  var lo = -1, hi = -1;
+  for (j = 0; j < n; j++) { var dt = pts[j].t - t0;
+    if (dt <= 0 && dt > -period && (lo < 0 || pts[j].alt < pts[lo].alt)) lo = j;
+    if (dt >= 0 && dt < period && (hi < 0 || pts[j].alt < pts[hi].alt)) hi = j; }
+  var out = [];
+  for (j = Math.max(0, lo); j <= (hi < 0 ? n - 1 : hi); j++) out.push({ t: pts[j].t, rel: rel[j], alt: pts[j].alt });
+  return out;
+}
+// The chart as geometry: st {W, H, insetL, insetR, center, now, ctl (rect|null), pose ({az, alt}|null), meas (text → px),
+// lh (label line height), bodies: [{key, name, az, alt, r, pts, nowIdx, period}]}. Tracks (screen polylines split at now),
+// discs, and one label per body (its name), laid out clear of every track, disc and button (layoutLabels).
+function skyModel(st) {
+  var g = chartGeom(st.W, st.H, st.insetL, st.insetR), c = st.center, m = { g: g, lines: {}, discs: [], hard: [], segs: [], items: [] };
   if (st.ctl) m.hard.push(st.ctl);
-  if (st.pose) { var px = chX(st.pose.az, g, c), py = chY(st.pose.alt, g); m.pose = { x: px, y: py }; m.hard.push({ id: "pose", x: px - 21, y: py - 21, w: 42, h: 42 }); }
-  // twilight bands, each named inside itself; the Sun's band first in line for its label
-  [[0, -6, "CIVIL"], [-6, -12, "NAUTICAL"], [-12, -18, "ASTRONOMICAL"]].forEach(function (b, i) {
-    if (st.sunAlt <= b[0] && st.sunAlt > b[1]) m.sunBand = i;
-  });
-  [[0, -6, "CIVIL"], [-6, -12, "NAUTICAL"], [-12, -18, "ASTRONOMICAL"]].forEach(function (b, i) {
-    var y0 = chY(b[0], g), y1 = chY(b[1], g), on = i === m.sunBand; m.bands.push({ y0: y0, y1: y1, on: on });
-    // bottom-aligned in its band, between the horizon's compass ticks (pad 0: the band is barely taller than the text)
-    var h = LH.band, w = st.meas(b[2], "band"), yy = Math.floor(y1 - h);
-    if (on && y1 - y0 >= h + 1) m.items.push({ id: "band" + i, t: b[2], font: "band", role: "bandOn", w: w, h: h, prio: 3, pad: 0, spots: spotsAlong(yy + h + 3, w, h, g).filter(function (s, k, a) { return k < a.length / 2; }) });
-  });
-  // the scale: altitude rings above, depth rings below (the ground under -18° is at a quarter scale: a break mark, chartGeom)
-  [30, 60, -30, -60].forEach(function (alt) { var t = (alt < 0 ? "\u2212" : "") + Math.abs(alt) + "\u00b0", w = st.meas(t, "scale"), y = Math.round(chY(alt, g)) + 0.5;
-    m.items.push({ id: "alt" + alt, t: t, font: "scale", role: "scale", w: w, h: LH.scale, prio: 4, spots: [[g.x0 + 2, y - LH.scale - 2], [g.x0 + 2, y + 2]] }); });   // always the left edge
-  // tracks, their events, the bodies
+  if (st.pose) { var px = chX(st.pose.az, g, c), py = chY(st.pose.alt, g); m.pose = { x: px, y: py }; m.hard.push({ id: "pose", x: px - 16, y: py - 16, w: 32, h: 32 }); }
+  m.hard.push({ id: "horizon", x: -1e4, y: g.hy - 1, w: 2e4, h: 2 });
   st.bodies.forEach(function (b) {
-    if (b.pts && b.pts.length > 1) { var tl = trackLines(b.pts, g, c, st.now); m.lines[b.key] = tl; m.segs = m.segs.concat(tl.segs); }
-    (b.events || []).forEach(function (e) {
-      var future = e.t > st.now, cross = e.kind === "rise" || e.kind === "set", ey = cross ? g.hy : chY(e.alt, g);
-      if (Math.abs(wrap180(e.az - b.az)) < 5 && Math.abs((cross ? 0 : e.alt) - b.alt) < 5) return;   // the body is on its own mark: one mark, the body
-      chXs(e.az, g, c).forEach(function (ex, n) {
-        m.marks.push({ key: b.key, kind: e.kind, x: ex, y: ey, future: future });
-        m.hard.push(cross ? { id: b.key + e.kind + "m", x: ex - 2, y: g.hy - 6, w: 4, h: 12 } : { id: b.key + e.kind + "m", x: ex - 3.5, y: ey - 3.5, w: 7, h: 7 });
-        if (n || !future || e.kind === "antitransit") return;   // labels: the coming rise, set and transit only (markers for all)
-        var isNext = st.next && st.next.body === b.key && st.next.kind === e.kind && Math.abs(st.next.t - e.t) < 40 * 60e3;
-        var t = (e.kind === "rise" ? "\\u2191" : e.kind === "set" ? "\\u2193" : "") + st.hm(e.t) + " " + (cross ? Math.round(wrap360(e.az)) % 360 + "\\u00b0" : minus(e.alt, 0));
-        var prio = isNext ? 1 : cross ? 2 : 3;
-        m.items.push({ id: b.key + "-" + e.kind + "-" + Math.round(e.t / 60e3), t: t, font: "ev", role: future ? b.key : "dim", w: st.meas(t, "ev"), h: LH.ev, x: ex, y: ey, r: 4, prio: prio });
-      });
-    });
-    var bx = chX(b.az, g, c), by = chY(b.alt, g), rr = b.r + 9, nx = (b.events || []).filter(function (e) { return e.t > st.now && (e.kind === "rise" || e.kind === "set"); })[0];
-    // a body at the seam shows at both edges (its twin, 360° over), and either may carry its name
-    var span = 360 * g.kx, twin = bx < rr + 20 ? bx + span : bx > g.W - rr - 20 ? bx - span : null;
-    [bx].concat(twin == null ? [] : [twin]).forEach(function (x, n) {
-      m.discs.push({ key: b.key, x: x, y: by, r: b.r, below: b.alt < 0 });
-      m.hard.push({ id: b.key + "-disc" + (n ? "-twin" : ""), x: x - rr, y: by - rr, w: 2 * rr, h: 2 * rr });
-    });
-    var t1 = b.name.toUpperCase() + " " + minus(b.labelAlt, 1);
-    var it = { id: b.name, t: t1, font: "name", role: b.labelAlt < 0 ? b.key + "Below" : b.key, w: st.meas(t1, "name"), h: LH.name, x: bx, y: by, r: rr - 4, prio: 0, body: true };
-    if (twin != null) it.spots = bodySpots(it).concat(bodySpots(Object.assign({}, it, { x: twin })));
-    m.items.push(it);
+    if (b.pts && b.pts.length > 1) {
+      var sp = trackSpan(b.pts, b.nowIdx, c, b.period), xs = [], ys = [], split = 0;
+      sp.forEach(function (q, i) { xs.push(g.W / 2 + q.rel * g.kx); ys.push(chY(q.alt, g)); if (q.t <= st.now) split = i; });
+      m.lines[b.key] = { xs: xs, ys: ys, split: split };
+      for (var i = 1; i < xs.length; i++) m.segs.push([xs[i - 1], ys[i - 1], xs[i], ys[i]]);
+    }
+    var bx = chX(b.az, g, c), by = chY(b.alt, g), rr = b.r + 4;
+    m.discs.push({ key: b.key, x: bx, y: by, r: b.r, below: b.alt < 0 });
+    m.hard.push({ id: b.key + "-disc", x: bx - rr, y: by - rr, w: 2 * rr, h: 2 * rr });
+    m.items.push({ id: b.name, t: b.name, w: st.meas(b.name), h: st.lh, x: bx, y: by, r: rr - 2, prio: 0, body: true });
   });
   m.bounds = { x0: g.x0, y0: 2, x1: g.x1, y1: g.bot - 1 };
   return m;
@@ -414,8 +404,8 @@ function poseFrom(e, decl) {
 function aimShort(name, b, pose) {
   var d = wrap180(b.az - pose.az), e = b.alt - pose.alt, parts = [];
   if (Math.abs(d) >= 3) parts.push((d < 0 ? "\u2190 " : "\u2192 ") + Math.round(Math.abs(d)) + "\u00b0");
-  if (Math.abs(e) >= 3) parts.push((e < 0 ? "\u2193 " : "\u2191 ") + Math.round(Math.abs(e)) + "\u00b0");
-  return name.toUpperCase() + "  " + (parts.length ? parts.join(" \u00b7 ") : "on target");
+  if (Math.abs(e) >= 3) parts.push((e < 0 ? "\u2193" : "\u2191") + Math.round(Math.abs(e)) + "\u00b0");
+  return name + " " + (parts.length ? parts.join(" ") : "on target");
 }
 function aimText(name, b, pose) {
   var d = wrap180(b.az - pose.az), e = b.alt - pose.alt, parts = [];
@@ -439,136 +429,127 @@ ${traceparentMeta(trace)}
 <meta name="theme-color" content="#07090c"><meta name="color-scheme" content="dark">
 ${ICON_LINK}
 <style>
-/* One dark design, always (ivar 2026-10-31: "clean, modern NASA-style"): near-black page, system sans for words, system mono
-   with tabular numerals for every number, small tracked uppercase labels, hairlines at low alpha, no boxes. Colour means
-   something: the sky gradient is the real sky's state; the Sun is amber, the Moon silver; cyan is the one accent (controls,
-   LIVE); amber and red only for staleness. */
-:root{--bg:#07090c;--ink:#e8ebf0;--muted:#8b93a1;--faint:#5b6371;--line:rgba(232,235,240,.09);--line2:rgba(232,235,240,.18);
---accent:#5cd6f0;--sun:#ffc56b;--moon:#d7deeb;--ok:#5cd6f0;--caution:#ffb547;--alert:#ff6b5e;--maxw:1120px;
---sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",system-ui,"Segoe UI",Roboto,Arial,sans-serif;
---mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;color-scheme:dark}
+/* Calm, sparse, precise (ivar 2026-10-31: "If NASA and Linear redesigned…"). One dark theme. The chart shows where things
+   are; the numbers live below. System font at 400/500, mono tabular numerals for numbers only, sizes 13/15/28. Cool greys,
+   one soft cyan accent used sparingly, amber Sun, silver Moon. No borders but one hairline between sections. */
+:root{--bg:#08090b;--ink:#e6e8ec;--muted:#8a8f98;--faint:#5c616b;--line:rgba(230,232,236,.08);--accent:#7dd3e8;--sun:#f5b860;--moon:#c9d1de;
+--caution:#e8a64a;--alert:#ef6a5e;--maxw:1080px;
+--sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Inter","Helvetica Neue",system-ui,"Segoe UI",Roboto,sans-serif;
+--mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;color-scheme:dark}
 *{box-sizing:border-box}
-html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--sans);-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:400 15px/1.5 var(--sans);-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
-.num,.tn{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:0}
-.lbl{font:600 11px/1.2 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.num,.tn{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .gut{padding-left:max(16px,env(safe-area-inset-left),calc((100% - var(--maxw)) / 2));padding-right:max(16px,env(safe-area-inset-right),calc((100% - var(--maxw)) / 2))}
-/* slim header */
-.hero{padding-top:max(10px,env(safe-area-inset-top));padding-bottom:10px}
-.top{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
-.brand{display:flex;align-items:center;gap:10px;min-width:0;font:700 12px/1 var(--sans);letter-spacing:.16em;color:var(--ink)}
-.live{display:inline-flex;align-items:center;gap:6px;font:600 10.5px/1 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
-.live i{width:6px;height:6px;border-radius:50%;background:var(--faint)}
-.live.ok i{background:var(--ok);box-shadow:0 0 6px var(--ok)}.live.caution i{background:var(--caution)}.live.caution{color:var(--caution)}.live.alert i{background:var(--alert)}.live.alert{color:var(--alert)}
-h1{font:600 15px/1.2 var(--sans);letter-spacing:0;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink);min-width:0}
-h1.coords{font:500 14px/1.2 var(--mono)}
-.clock{font:500 15px/1.2 var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--ink)}
-.place{display:flex;align-items:baseline;gap:10px;margin-top:6px;justify-content:space-between}
-/* the sky: full bleed */
-.sky{position:relative;height:clamp(300px,52svh,620px);touch-action:pan-y;cursor:grab;user-select:none;-webkit-user-select:none;background:#05070a;
+/* header: one row */
+.hd{display:flex;align-items:center;gap:10px;padding-top:max(12px,env(safe-area-inset-top));padding-bottom:12px;font-size:15px}
+.brand{font-weight:500;color:var(--ink);letter-spacing:-.01em}
+h1{margin:0;font:400 15px/1.3 var(--sans);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1}
+h1.coords{font-family:var(--mono);font-size:13px}
+.clock{font:400 15px/1.3 var(--mono);font-variant-numeric:tabular-nums;color:var(--ink);white-space:nowrap}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--faint);flex:none}
+.dot.ok{background:var(--accent)}.dot.caution{background:var(--caution)}.dot.alert{background:var(--alert)}
+/* the sky */
+.sky{position:relative;height:clamp(260px,42svh,560px);touch-action:pan-y;cursor:grab;user-select:none;-webkit-user-select:none;background:#090b10;
 padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
 .sky:active{cursor:grabbing}
 .sky canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 .ctl{position:absolute;top:0;right:env(safe-area-inset-right);z-index:2;display:flex}
-.ctl button{min-height:44px;font:600 11px/1 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--accent);background:transparent;border:0;padding:0 12px;cursor:pointer}
-.ctl button span{display:inline-block;padding:6px 10px;border:1px solid rgba(92,214,240,.45);border-radius:999px;background:rgba(7,9,12,.55)}
-.ctl button[aria-pressed=true] span{background:var(--accent);color:#04161c}
-/* the sentence and NEXT */
-.status{padding-top:14px;padding-bottom:6px}
-.guide{margin:0 0 10px;font:500 13px/1.5 var(--mono);color:var(--accent);white-space:pre-line}
-.lede{font:500 clamp(18px,2.2vw,22px)/1.3 var(--sans);letter-spacing:-.01em;margin:0;text-wrap:pretty}
-.next{margin:8px 0 0;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
-.next .lbl{color:var(--accent)}
-#next{display:inline-flex;align-items:baseline;gap:10px;flex-wrap:wrap;font:500 15px/1.4 var(--sans)}
-.next .t{font:500 15px/1.4 var(--mono);font-variant-numeric:tabular-nums}
-.next .cd{font:500 15px/1.4 var(--mono);font-variant-numeric:tabular-nums;color:var(--muted)}
-/* data lists, one per body */
-.panels{display:grid;grid-template-columns:minmax(0,1fr);gap:20px 40px;padding-top:14px;padding-bottom:24px}
-.dl h3{margin:0 0 4px;display:flex;align-items:baseline;justify-content:space-between;font:600 12px/1.6 var(--sans);letter-spacing:.08em;text-transform:uppercase}
-.dl h3 .s{color:var(--sun)}.dl h3 .m{color:var(--moon)}
-.dl h3 .st{color:var(--muted);font-weight:500}
-.dl dl{margin:0}
-.dl dl>div{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:7px 0;border-top:1px solid var(--line)}
-.dl dt{font:600 11px/1.3 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
-.dl dd{margin:0;font:400 14.5px/1.3 var(--mono);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
-.dl dd .u{color:var(--muted)}
-main{counter-reset:sec;padding-bottom:40px}
-.blk{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;padding:24px 0 28px;border-top:1px solid var(--line)}
-.blk>h2,.hood>summary{margin:0;font:600 11px/1.3 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
-.big{font:600 20px/1.2 var(--sans);margin:0}
-.sub{color:var(--muted);margin:6px 0 16px;font-size:13px}
+.ctl button{width:44px;height:44px;display:grid;place-items:center;color:rgba(230,232,236,.55);background:transparent;border:0;padding:0;cursor:pointer;font:500 13px/1 var(--sans)}
+.ctl button:hover,.ctl button[aria-pressed=true]{color:var(--accent)}
+.ctl #recenter{width:auto;padding:0 12px}
+.ctl button[hidden]{display:none}
+/* now */
+.now{padding-top:16px;padding-bottom:4px}
+.line{margin:0;font-size:15px;color:var(--ink)}
+.line .ph{color:var(--muted)}
+.line .cd{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--muted)}
+.guide{margin:6px 0 0;font:400 13px/1.5 var(--mono);color:var(--accent)}
+/* bodies */
+.bodies{display:grid;grid-template-columns:minmax(0,1fr);gap:18px 48px;padding-top:18px;padding-bottom:18px}
+.bd .nm{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+.bd .nm i{width:7px;height:7px;border-radius:50%}
+.bd .nm i.s{background:var(--sun);box-shadow:0 0 6px rgba(245,184,96,.6)}.bd .nm i.m{background:var(--moon)}
+.bd .big{display:flex;gap:28px;margin-top:4px}
+.bd .big span{display:flex;flex-direction:column}
+.bd .big small{font-size:13px;color:var(--faint);line-height:1.3}
+.bd .big b{font:400 28px/1.15 var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.bd .sec{margin-top:6px;font:400 13px/1.4 var(--sans);font-variant-numeric:tabular-nums;color:var(--muted)}
+details.more{border-top:1px solid var(--line);padding:4px 0}
+details.more>summary{cursor:pointer;list-style:none;min-height:44px;display:flex;align-items:center;font-size:13px;color:var(--muted)}
+details.more>summary::-webkit-details-marker{display:none}
+details.more>summary::after{content:"+";margin-left:8px;color:var(--faint)}
+details.more[open]>summary::after{content:"\\2212"}
+.kv{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 16px;font-size:13px;padding-bottom:12px}
+.kv dt{color:var(--muted)}.kv dd{margin:0;font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right}
+main{padding-bottom:40px}
+.blk{padding:24px 0 28px;border-top:1px solid var(--line)}
+.blk>h2,.hood>summary{margin:0 0 12px;font:500 13px/1.3 var(--sans);color:var(--muted)}
+.big2{font:500 15px/1.3 var(--sans);margin:0}
+.sub{color:var(--faint);margin:4px 0 14px;font-size:13px}
 .strip svg{display:block;width:100%;height:auto}
-.strip text{font-family:var(--mono);fill:var(--muted)}
+.strip text{font-family:var(--mono);fill:var(--faint)}
 .strip .nowl{stroke:var(--ink)}
 .strip line.es{stroke:var(--sun)}.strip circle.es{fill:var(--sun)}.strip line.em{stroke:var(--moon)}.strip circle.em{fill:var(--moon)}
-.evs{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:0 40px;margin-top:16px;font-size:14px}
-.evs>div{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}
-.evs .past{color:var(--faint)}
-.evs details.more{grid-column:1/-1;margin-top:4px}.evs details.more .evs{margin-top:0}
+.evs{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:0 40px;margin-top:12px;font-size:13px}
+.evs>div{display:flex;justify-content:space-between;gap:12px;padding:7px 0}
+.evs>div .tn{color:var(--ink)}
+.evs .past,.evs .past .tn{color:var(--faint)}
+.evs details.more{grid-column:1/-1;border:0}.evs details.more .evs{margin-top:0}
 .evs .s::before,.evs .m::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:10px;vertical-align:1px}
 .evs .s::before{background:var(--sun)}.evs .m::before{background:var(--moon)}
-.row{display:flex;flex-wrap:wrap;gap:10px;margin-top:20px;align-items:center}
-.btn{min-height:44px;display:inline-flex;align-items:center;font:600 11px/1 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--accent);background:transparent;border:1px solid rgba(92,214,240,.4);border-radius:999px;padding:0 16px;cursor:pointer}
-.btn:hover{text-decoration:none;border-color:var(--accent)}
+.row{display:flex;flex-wrap:wrap;gap:16px;margin-top:16px;align-items:center}
+.btn{min-height:44px;display:inline-flex;align-items:center;font:500 13px/1 var(--sans);color:var(--accent);background:transparent;border:0;padding:0;cursor:pointer}
+.btn:hover{text-decoration:underline}
 .note{font-size:13px;color:var(--muted)}
-.wxc{display:grid;gap:14px}
-.wxtop{display:flex;align-items:center;gap:8px 20px;flex-wrap:wrap}
-.temp{font:300 40px/1 var(--mono);font-variant-numeric:tabular-nums}
-.wxtop .cond{font:600 16px/1.3 var(--sans)}
+.wxc{display:grid;gap:10px}
+.wxtop{display:flex;align-items:baseline;gap:8px 16px;flex-wrap:wrap}
+.temp{font:400 28px/1 var(--mono);font-variant-numeric:tabular-nums}
+.wxtop .cond{font-size:15px}
 .wxtop .wind{color:var(--muted);font:13px/1.4 var(--mono)}
 .wxc dl.cells{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin:0;gap:0 24px}
-.wxc dl.cells>div{padding:8px 0;min-width:0;border-top:1px solid var(--line)}
-.wxc dl.cells dt{font:600 11px/1.3 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
-.wxc dl.cells dd{margin:4px 0 0;font:14px/1.4 var(--mono)}
-.station{margin:0;color:var(--muted);font:12.5px/1.6 var(--mono)}
+.wxc dl.cells>div{padding:4px 0;min-width:0}
+.wxc dl.cells dt{font-size:13px;color:var(--muted)}
+.wxc dl.cells dd{margin:2px 0 0;font:13px/1.4 var(--mono)}
+.station{margin:0;color:var(--faint);font:12px/1.6 var(--mono)}
 .age{white-space:nowrap}
-.age::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ok);margin-right:7px;vertical-align:1px}
-.age.warn{color:var(--caution)}.age.warn::before{background:var(--caution)}
-details>summary{cursor:pointer;list-style:none;min-height:44px;display:flex;align-items:center;gap:10px;color:var(--accent);font:600 11px/1.3 var(--sans);letter-spacing:.08em;text-transform:uppercase}
-details>summary::-webkit-details-marker{display:none}
-details:not(.hood)>summary::before{content:"+";font:400 14px/1 var(--mono);width:10px}
-details:not(.hood)[open]>summary::before{content:"\\2212"}
-details.raw pre{margin:4px 0 0;padding:12px 14px;border-left:1px solid var(--line2);font:12px/1.65 var(--mono);color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere}
+.age.warn{color:var(--caution)}
+details:not(.more)>summary{cursor:pointer;list-style:none;min-height:44px;display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px}
+details:not(.more)>summary::-webkit-details-marker{display:none}
+details.raw pre{margin:4px 0 0;font:12px/1.65 var(--mono);color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere}
 pre .c{color:var(--faint)}
-.hood{border-top:1px solid var(--line);padding:16px 0 28px}
-.hood>summary{justify-content:flex-start;gap:0}
-.hood>summary::after{content:"+";margin-left:auto;font:400 16px/1 var(--mono);color:var(--muted)}
-.hood[open]>summary::after{content:"\\2212"}
-.hood .in{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:32px;margin-top:16px}
-.hood h3{font:600 11px/1.3 var(--sans);letter-spacing:.08em;text-transform:uppercase;margin:0 0 8px}
-.hood p{color:var(--muted);font-size:14px;margin:0 0 14px}
-.hood pre{margin:0;padding:12px 0;overflow-x:auto;font:12px/1.7 var(--mono);color:var(--ink);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
-footer.tel{border-top:1px solid var(--line);padding-top:14px;padding-bottom:max(14px,env(safe-area-inset-bottom));display:flex;flex-wrap:wrap;gap:6px 24px;font:11.5px/1.5 var(--mono);color:var(--muted)}
-footer.tel i{font:600 10px/1 var(--sans);font-style:normal;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin-right:8px}
+.hood{border-top:1px solid var(--line);padding:12px 0 24px}
+.hood .in{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:32px;margin-top:12px}
+.hood h3{font:500 13px/1.3 var(--sans);margin:0 0 8px}
+.hood p{color:var(--muted);font-size:13px;margin:0 0 12px}
+.hood pre{margin:0;overflow-x:auto;font:12px/1.7 var(--mono);color:var(--muted)}
+footer.tel{border-top:1px solid var(--line);padding-top:14px;padding-bottom:max(14px,env(safe-area-inset-bottom));display:flex;flex-wrap:wrap;gap:6px 24px;font:12px/1.5 var(--mono);color:var(--faint)}
+footer.tel i{font:500 12px/1 var(--sans);font-style:normal;color:var(--faint);margin-right:8px}
 :focus-visible{outline:1px solid var(--accent);outline-offset:3px}
 .err{color:var(--alert)}
 @media (max-width:760px){.hood .in{grid-template-columns:minmax(0,1fr)}.wxc dl.cells{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
-@media (min-width:760px){.panels{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
-@media (min-width:900px){.blk{grid-template-columns:200px minmax(0,1fr);gap:32px}.blk>h2{padding-top:3px}}
+@media (min-width:760px){.bodies{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
 </style>
 </head><body>
-<header class="hero gut">
-  <div class="top" id="top">
-    <div class="brand">EPHEM<span class="live" id="live" role="status"><i></i><span id="liveT">Acquiring</span></span></div>
-    <div class="clock" id="clock" aria-label="Local time">--:--:--</div>
-  </div>
-  <div class="place"><h1 id="place"></h1><span class="lbl">Local time</span></div>
+<header class="hd gut" id="top">
+  <span class="brand">ephem</span><h1 id="place"></h1><span class="clock" id="clock" aria-label="Local time">--:--:--</span><i class="dot" id="live" role="status"></i><span class="vh" id="liveT">Acquiring</span>
 </header>
-<section class="sky" id="sky" aria-label="The Sun and the Moon on a chart of the whole sky, above and below the horizon">
+<section class="sky" id="sky" aria-label="Where the Sun and the Moon are: the whole sky, above and below the horizon">
   <canvas id="cv" tabindex="0" aria-label="Sky chart"></canvas>
-  <div class="ctl" id="ctl"><button type="button" id="point" aria-pressed="false" hidden><span>Point phone</span></button><button type="button" id="recenter" hidden><span>Recenter</span></button></div>
+  <div class="ctl" id="ctl"><button type="button" id="recenter" hidden>Recenter</button><button type="button" id="point" aria-pressed="false" aria-label="Point your phone at the sky" title="Point your phone" hidden><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="9" cy="9" r="5.5"/><path d="M9 1v3.5M9 13.5V17M1 9h3.5M13.5 9H17"/></svg></button></div>
 </section>
-<div class="status gut" id="bottom">
+<div class="now gut" id="bottom">
+  <p class="line" id="line"><span class="ph" id="phase"></span><span id="next">&nbsp;</span></p>
   <p class="guide" id="guide" aria-live="polite" hidden></p>
-  <p class="lede" id="lede">Finding the Sun and the Moon…</p>
-  <p class="next"><span class="lbl">Next</span><span id="next">&nbsp;</span></p>
 </div>
-<div class="panels gut" id="bodies" aria-label="Sun and Moon readouts"></div>
+<div class="bodies gut" id="bodies" aria-label="Sun and Moon"></div>
+<div class="gut"><details class="more" id="details"><summary>Details</summary><div id="detailsBody"></div></details></div>
 <main class="gut">
   <section class="blk day">
     <h2>Day</h2>
     <div>
-      <p class="big" id="dayTitle">Today</p>
+      <p class="big2" id="dayTitle">Today</p>
       <p class="sub">The sky's colour at the horizon, hour by hour.</p>
       <div class="strip" id="strip"></div>
       <div class="evs" id="evs"></div>
@@ -687,18 +668,8 @@ function resize() {
   cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); requestDraw();
 }
 function defaultCenter(p) { return S.pose ? S.pose.az : chartCenter(loc.lat, [p.sun.azimuth, p.moon.azimuth]); }
-var SANS = "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', system-ui, sans-serif", MONO = "ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace";
-var FONTS = { name: "600 11.5px " + SANS, ev: "500 10.5px " + MONO, band: "600 9.5px " + SANS, scale: "500 10px " + MONO, axis: "600 10px " + SANS };
-var TRACK = { name: "0.9px", ev: "0px", band: "0.8px", scale: "0px", axis: "0.8px" };
-var LHS = { name: 14, ev: 13, band: 11, scale: 12 };
 var mw = {};
-function meas(t, f) { var k = f + "|" + t; if (mw[k] == null) { ctx.font = FONTS[f]; if ("letterSpacing" in ctx) ctx.letterSpacing = TRACK[f]; mw[k] = Math.ceil(ctx.measureText(t).width) + 2; } return mw[k]; }
-// One palette (the page is dark, always). The sky above the horizon is the real sky's colour (skyAt); below it, darker.
-var P = { ground: "#0a0d13", deep: "#06080c", axis: "#05070a", band: [0.18, 0.11, 0.06], bandRGB: "96,120,200", bandOn: 0.12,
-  grid: "rgba(255,255,255,.08)", gridV: "rgba(255,255,255,.045)", brk: "rgba(255,255,255,.28)", horizon: "rgba(255,255,255,.7)", tick: "rgba(255,255,255,.55)", tickMinor: "rgba(255,255,255,.28)",
-  cmp: "rgba(232,235,240,.8)", cmpMinor: "rgba(232,235,240,.45)", halo: "rgba(5,7,10,.82)",
-  role: { sun: "#ffd28a", moon: "#e3e9f4", sunBelow: "rgba(255,210,138,.8)", moonBelow: "rgba(227,233,244,.8)", dim: "rgba(220,226,236,.6)", band: "rgba(190,205,240,.6)", bandOn: "rgba(225,232,255,.95)", scale: "rgba(232,235,240,.5)" },
-  line: { sun: "#ffc56b", moon: "#d7deeb" }, ret: { sun: "#ffc56b", moon: "#d7deeb" }, pose: "#5cd6f0" };
+function meas(t) { if (mw[t] == null) { ctx.font = LABEL_FONT; if ("letterSpacing" in ctx) ctx.letterSpacing = "0px"; mw[t] = Math.ceil(ctx.measureText(t).width) + 2; } return mw[t]; }
 // The live position: the last answer moved on by its own rates (deg/min) to now; the readouts keep the answer's numbers.
 function livePos(now) {
   var p = S.to; if (!p) return null;
@@ -725,20 +696,6 @@ function drawSun(x, y, r, alt) {
   ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 4, 0, 2 * Math.PI); ctx.fill();
   ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.fillStyle = alt > 6 ? "#fff3d6" : "#ffc46b"; ctx.fill();
 }
-function reticle(x, y, r, color, below) {
-  var R = r + 5;
-  ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.globalAlpha = 0.75; if (below) ctx.setLineDash([2, 3]);
-  ctx.beginPath(); ctx.arc(x, y, R, 0, 2 * Math.PI); ctx.stroke(); ctx.setLineDash([]);
-  [[0, -1], [1, 0], [0, 1], [-1, 0]].forEach(function (d) { ctx.beginPath(); ctx.moveTo(x + d[0] * R, y + d[1] * R); ctx.lineTo(x + d[0] * (R + 4), y + d[1] * (R + 4)); ctx.stroke(); });
-  ctx.restore();
-}
-// Text with a dark halo (a knockout stroke under the fill), so it reads on any sky.
-function text(t, x, y, font, color, P, align) {
-  ctx.font = FONTS[font]; if ("letterSpacing" in ctx) ctx.letterSpacing = TRACK[font];
-  ctx.textAlign = align || "left"; ctx.textBaseline = "middle";
-  ctx.lineJoin = "round"; ctx.lineWidth = 3; ctx.strokeStyle = P.halo; ctx.strokeText(t, x, y);
-  ctx.fillStyle = color; ctx.fillText(t, x, y);
-}
 // The tracks and their events, recomputed only when the track, today's events or the minute change (not per drag frame).
 var TI = { key: "" };
 function trackInfo(nowMs) {
@@ -759,86 +716,69 @@ function trackInfo(nowMs) {
   TI = out; return out;
 }
 function nextEvent(now) { var up = upcoming(now); return up.length ? { body: up[0].body, kind: up[0].kind, t: Date.parse(up[0].time) } : null; }
+var PERIOD = { sun: 864e5, moon: 89428e3 };   // a solar day; a mean lunar day, 24 h 50 min 28 s
+var COLOR = { sun: "#f5b860", moon: "#c9d1de" }, LABEL_FONT = "500 12px -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif";
 function draw() {
   if (!W) return;
-  var p = S.to, nowMs = tNow(), live = livePos(nowMs), info = S.track.length ? trackInfo(nowMs) : null, r = Math.max(6, Math.min(10, W / 70));
+  var p = S.to, nowMs = tNow(), live = livePos(nowMs), r = 5, c = S.center == null ? (loc.lat >= 0 ? 180 : 0) : S.center;
   var ce = $("ctl"), ctlR = !$("point").hidden || !$("recenter").hidden ? { id: "ctl", x: W - ce.offsetWidth, y: 0, w: ce.offsetWidth, h: ce.offsetHeight } : null;
-  var bodies = live ? [["sun", "Sun", p.sun], ["moon", "Moon", p.moon]].map(function (o) {
-    var L = live[o[0]], pts = info ? info.win[o[0]].map(function (x) { return { t: x.t, az: x[o[0]].azimuth, alt: altOf(x[o[0]]) }; }) : [];
-    if (pts.length) { var at = pts.findIndex(function (x) { return x.t > nowMs; }); pts.splice(at < 0 ? pts.length : at, 0, { t: nowMs, az: L.az, alt: L.alt }); }
-    return { key: o[0], name: o[1], az: L.az, alt: L.alt, labelAlt: altOf(o[2]), r: r, pts: pts, events: info ? info[o[0]] : [] };
+  var bodies = live ? [["sun", "Sun"], ["moon", "Moon"]].map(function (o) {
+    var L = live[o[0]], pts = S.track.map(function (x) { return { t: x.t, az: x[o[0]].azimuth, alt: altOf(x[o[0]]) }; });
+    var at = pts.findIndex(function (x) { return x.t > nowMs; }); if (at < 0) at = pts.length;
+    pts.splice(at, 0, { t: nowMs, az: L.az, alt: L.alt });
+    return { key: o[0], name: o[1], az: L.az, alt: L.alt, r: o[0] === "moon" ? 6 : r, pts: S.track.length ? pts : [], nowIdx: at, period: PERIOD[o[0]] };
   }) : [];
   var sunAlt = live ? live.sun.alt : -30;
-  var m = chartModel({ W: W, H: H, insetL: insetL, insetR: insetR, center: S.center == null ? (loc.lat >= 0 ? 180 : 0) : S.center, now: nowMs, sunAlt: sunAlt, ctl: ctlR, pose: S.pose,
-    next: nextEvent(nowMs), hm: hm, meas: meas, LH: LHS, bodies: bodies });
-  var g = m.g, hy = g.hy, c = S.center == null ? (loc.lat >= 0 ? 180 : 0) : S.center;
+  var m = skyModel({ W: W, H: H, insetL: insetL, insetR: insetR, center: c, now: nowMs, ctl: ctlR, pose: S.pose, lh: 15, bodies: bodies,
+    meas: function (t) { return meas(t); } });
+  var g = m.g, hy = g.hy;
   drawnAt = nowMs; drawnPx = bodies.map(function (b) { return [chX(b.az, g, c), chY(b.alt, g)]; });
-  // sky
-  {
-    var sc = skyAt(sunAlt), grad = ctx.createLinearGradient(0, 0, 0, hy); grad.addColorStop(0, sc[0]); grad.addColorStop(1, sc[1]);
-    ctx.fillStyle = grad; ctx.fillRect(0, 0, W, hy);
-    if (live && sunAlt > -18) { var a = Math.max(0, 1 - Math.abs(sunAlt - 2) / 20) * 0.55;
-      chXs(live.sun.az, g, c).forEach(function (gx) { var rg = ctx.createRadialGradient(gx, hy, 0, gx, hy, Math.max(W, H) * 0.45); rg.addColorStop(0, "rgba(255,170,90," + a + ")"); rg.addColorStop(1, "rgba(255,170,90,0)"); ctx.fillStyle = rg; ctx.fillRect(0, 0, W, hy); }); }
-  }
-  // ground, bands, the deep ground, the axis
-  ctx.fillStyle = P.ground; ctx.fillRect(0, hy, W, H - hy);
-  m.bands.forEach(function (b, i) { ctx.fillStyle = "rgba(" + P.bandRGB + "," + (P.band[i] + (b.on ? P.bandOn : 0)) + ")"; ctx.fillRect(0, b.y0, W, b.y1 - b.y0); });
-  var y18 = chY(-18, g); ctx.fillStyle = P.deep; ctx.fillRect(0, y18, W, g.bot - y18);
-  ctx.fillStyle = P.axis; ctx.fillRect(0, g.bot, W, H - g.bot);
-  // grid
-  ctx.lineWidth = 1; ctx.strokeStyle = P.grid;
-  [30, 60, -30, -60].forEach(function (alt) { var y = Math.round(chY(alt, g)) + 0.5; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); });
-  ctx.strokeStyle = P.gridV;
-  for (var vz = 0; vz < 360; vz += 45) chXs(vz, g, c).forEach(function (vx) { vx = Math.round(vx) + 0.5; if (vx < 0 || vx > W) return; ctx.beginPath(); ctx.moveTo(vx, 0); ctx.lineTo(vx, g.bot); ctx.stroke(); });
-  // the scale break at -18° (true scale above, a quarter below): a faint line; the depth rings say the rest
-  ctx.strokeStyle = P.gridV; ctx.beginPath(); ctx.moveTo(0, Math.round(y18) + 0.5); ctx.lineTo(W, Math.round(y18) + 0.5); ctx.stroke();
-  ctx.strokeStyle = P.horizon; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(0, hy); ctx.lineTo(W, hy); ctx.stroke(); ctx.lineWidth = 1;
-  for (var az = 0; az < 360; az += 15) chXs(az, g, c).forEach(function (x) {
-    if (x < -2 || x > W + 2) return;
-    var major = az % 45 === 0; ctx.strokeStyle = major ? P.tick : P.tickMinor; ctx.beginPath(); ctx.moveTo(x, hy); ctx.lineTo(x, hy + (major ? 6 : 3)); ctx.stroke();
-    if (major && x > g.x0 + 6 && x < g.x1 - 6) text(compass(az), x, g.bot + CH_AXIS / 2 + 1, "axis", az % 90 ? P.cmpMinor : P.cmp, P, "center");
-  });
-  // tracks: past solid, future dashed; the ground half at half strength
+  // the sky: its real colour, a subtle vertical gradient; below the horizon a darker, flat ground
+  var sc = skyAt(sunAlt), grad = ctx.createLinearGradient(0, 0, 0, hy); grad.addColorStop(0, sc[0]); grad.addColorStop(1, sc[1]);
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, W, hy);
+  ctx.fillStyle = "#0b0d12"; ctx.fillRect(0, hy, W, H - hy);
+  ctx.strokeStyle = "rgba(230,232,236,.22)"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, Math.round(hy) + 0.5); ctx.lineTo(W, Math.round(hy) + 0.5); ctx.stroke();
+  // N E S W, tiny, along the bottom
+  ctx.font = "500 10px -apple-system, system-ui, sans-serif"; if ("letterSpacing" in ctx) ctx.letterSpacing = "0.5px"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = "rgba(230,232,236,.38)";
+  ["N", "E", "S", "W"].forEach(function (t, i) { chXs(i * 90, g, c).forEach(function (x) { if (x > g.x0 + 8 && x < g.x1 - 8) ctx.fillText(t, x, g.bot + CH_AXIS / 2); }); });
+  // tracks: one polyline per body, past ~70 %, future ~35 %, sharing the vertex at now
   Object.keys(m.lines).forEach(function (key) {
     var tl = m.lines[key];
-    [[0, hy, 1], [hy, g.bot - hy, 0.5]].forEach(function (clip) {
-      ctx.save(); ctx.beginPath(); ctx.rect(0, clip[0], W, clip[1]); ctx.clip();
-      for (var pass = 0; pass < 2; pass++) {
-        ctx.beginPath();
-        tl.offs.forEach(function (dx) {
-          var a0 = pass ? Math.max(0, tl.split - 1) : 0, a1 = pass ? tl.xs.length : tl.split;
-          for (var j = a0; j < a1; j++) { if (j === a0) ctx.moveTo(tl.xs[j] + dx, tl.ys[j]); else ctx.lineTo(tl.xs[j] + dx, tl.ys[j]); }
-        });
-        ctx.strokeStyle = P.line[key]; ctx.globalAlpha = (pass ? 0.75 : 1) * clip[2]; ctx.lineWidth = 1.5; ctx.setLineDash(pass ? [4, 4] : []); ctx.stroke(); ctx.setLineDash([]);
-      }
-      ctx.restore();
+    [[0, tl.split, 0.7], [tl.split, tl.xs.length - 1, 0.35]].forEach(function (seg) {
+      if (seg[1] <= seg[0]) return;
+      ctx.beginPath(); ctx.moveTo(tl.xs[seg[0]], tl.ys[seg[0]]);
+      for (var j = seg[0] + 1; j <= seg[1]; j++) ctx.lineTo(tl.xs[j], tl.ys[j]);
+      ctx.strokeStyle = COLOR[key]; ctx.globalAlpha = seg[2]; ctx.lineWidth = 1.25; ctx.lineJoin = "round"; ctx.stroke(); ctx.globalAlpha = 1;
     });
   });
-  // event markers
-  m.marks.forEach(function (k) {
-    ctx.save(); ctx.globalAlpha = k.future ? 1 : 0.55; ctx.strokeStyle = P.line[k.key]; ctx.lineWidth = 1.5;
-    if (k.kind === "rise" || k.kind === "set") { ctx.beginPath(); ctx.moveTo(k.x, hy - 6); ctx.lineTo(k.x, hy + 6); ctx.stroke(); }
-    else { ctx.beginPath(); ctx.arc(k.x, k.y, 2.75, 0, 2 * Math.PI); ctx.fillStyle = "#05070a"; ctx.fill(); ctx.stroke(); }
-    ctx.restore();
-  });
-  // the bodies: always where they are; dimmed under the horizon
+  // markers: small discs, the Moon with its phase; dimmer below the horizon
   m.discs.forEach(function (d) {
     var b = d.key === "sun" ? p.sun : p.moon;
-    ctx.save(); if (d.below) ctx.globalAlpha = 0.6;
+    ctx.save(); if (d.below) ctx.globalAlpha = 0.5;
     if (d.key === "sun") drawSun(d.x, d.y, d.r, altOf(b)); else drawMoon(d.x, d.y, d.r, b);
-    ctx.restore(); reticle(d.x, d.y, d.r, P.ret[d.key], d.below);
+    ctx.restore();
   });
-  if (m.pose) { ctx.save(); ctx.strokeStyle = P.pose; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(m.pose.x, m.pose.y, 14, 0, 2 * Math.PI); ctx.stroke();
-    [[0, -1], [1, 0], [0, 1], [-1, 0]].forEach(function (d) { ctx.beginPath(); ctx.moveTo(m.pose.x + d[0] * 8, m.pose.y + d[1] * 8); ctx.lineTo(m.pose.x + d[0] * 20, m.pose.y + d[1] * 20); ctx.stroke(); }); ctx.restore(); }
-  // labels: one layout for all of them (layoutLabels, CORE_JS)
-  var placed = layoutLabels(m.items, m.hard, m.segs, m.bounds, 2), byId = {};
-  m.items.forEach(function (it) { byId[it.id] = it; });
+  // pointing: the reticle, and a subtle arrow at the edge toward each body
+  if (m.pose) {
+    ctx.save(); ctx.strokeStyle = "#7dd3e8"; ctx.lineWidth = 1.25; ctx.beginPath(); ctx.arc(m.pose.x, m.pose.y, 11, 0, 2 * Math.PI); ctx.stroke();
+    [[0, -1], [1, 0], [0, 1], [-1, 0]].forEach(function (d) { ctx.beginPath(); ctx.moveTo(m.pose.x + d[0] * 6, m.pose.y + d[1] * 6); ctx.lineTo(m.pose.x + d[0] * 15, m.pose.y + d[1] * 15); ctx.stroke(); });
+    bodies.forEach(function (b) {
+      var d = wrap180(b.az - S.pose.az); if (Math.abs(d) < 3) return;
+      var ax = d < 0 ? g.x0 + 6 : g.x1 - 6, ay = Math.max(g.top + 8, Math.min(g.bot - 8, chY(b.alt, g))), s = d < 0 ? 1 : -1;
+      ctx.fillStyle = COLOR[b.key]; ctx.globalAlpha = 0.8; ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(ax + s * 7, ay - 5); ctx.lineTo(ax + s * 7, ay + 5); ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1;
+    });
+    ctx.restore();
+  }
+  // one label per body, its name, clear of every track, disc and button
+  var placed = layoutLabels(m.items, m.hard, m.segs, m.bounds, 3);
   placed.forEach(function (pl) {
-    if (pl.dropped) return; var it = byId[pl.id], col = P.role[it.role] || P.role.dim;
-    text(it.t, pl.x + 1, pl.y + LHS[it.font] / 2, it.font, col, P);
+    if (pl.dropped) return;
+    ctx.font = LABEL_FONT; if ("letterSpacing" in ctx) ctx.letterSpacing = "0px"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    ctx.lineJoin = "round"; ctx.lineWidth = 3; ctx.strokeStyle = "rgba(8,9,11,.6)"; ctx.strokeText(pl.id, pl.x + 1, pl.y + 7.5);
+    ctx.fillStyle = "rgba(230,232,236,.72)"; ctx.fillText(pl.id, pl.x + 1, pl.y + 7.5);
   });
-  window.__sky = { labels: placed, hard: m.hard, segs: m.segs.length, draws: (window.__sky ? window.__sky.draws : 0) + 1, W: W, H: H,
-    overlaps: overlaps(placed.filter(function (x) { return !x.dropped; }).map(function (x) { return Object.assign({ text: true }, x); }).concat(m.hard.filter(function (h) { return /disc|m$|pose|ctl/.test(h.id); }))) };
+  window.__sky = { labels: placed, hard: m.hard, lines: m.lines, W: W, H: H, draws: (window.__sky ? window.__sky.draws : 0) + 1,
+    overlaps: overlaps(placed.filter(function (x) { return !x.dropped; }).map(function (x) { return Object.assign({ text: true }, x); }).concat(m.hard.filter(function (h) { return /disc|pose|ctl/.test(h.id); }))) };
   if (p && !draw.marked && window.performance && performance.mark) { draw.marked = true; performance.mark("ephem:data"); __rum.mark("first-sky-draw"); }   // first frame with an answer (journey.ts, RUM)
 }
 // once a second (tick): redraw only if a live marker has moved half a pixel, or a minute has passed (the time split on the paths)
@@ -874,9 +814,9 @@ function aimUpdate() {
   if (t !== poseText) { poseText = t; $("guide").textContent = t; $("guide").setAttribute("aria-label", bs.map(function (o) { return aimText(o[0], o[1], S.pose); }).join(". ")); }
 }
 var orientEv = "ondeviceorientationabsolute" in window ? "deviceorientationabsolute" : "deviceorientation";
-function pointStop() { removeEventListener(orientEv, onOrient); S.pose = null; $("guide").hidden = true; $("point").textContent = "Point phone"; $("point").setAttribute("aria-pressed", "false"); if (S.to && !S.userPanned) S.center = defaultCenter(S.to); requestDraw(); }
+function pointStop() { removeEventListener(orientEv, onOrient); S.pose = null; $("guide").hidden = true; $("point").setAttribute("aria-pressed", "false"); if (S.to && !S.userPanned) S.center = defaultCenter(S.to); requestDraw(); }
 function pointStart() {
-  addEventListener(orientEv, onOrient); $("point").textContent = "Stop"; $("point").setAttribute("aria-pressed", "true"); $("guide").hidden = false; $("guide").textContent = "Hold the phone upright and point it at the sky\\u2026";
+  addEventListener(orientEv, onOrient); $("point").setAttribute("aria-pressed", "true"); $("guide").hidden = false; $("guide").textContent = "Hold the phone upright and point it at the sky\\u2026";
   setTimeout(function () { if (!S.pose && $("point").getAttribute("aria-pressed") === "true") { pointStop(); $("point").hidden = true; } }, 3000);   // no compass: quietly gone
 }
 if (window.DeviceOrientationEvent && matchMedia("(pointer: coarse)").matches) $("point").hidden = false;
@@ -894,22 +834,37 @@ function dayTimes(key) {
   var ti = S.track.length ? trackInfo(tNow()) : {}, tr = ev.find(function (x) { return x.kind === "transit"; }), info = ti[key] && tr ? ti[key].find(function (e) { return e.kind === "transit" && Math.abs(e.t - Date.parse(tr.time)) < 40 * 60e3; }) : null;
   return { rise: f("rise"), set: f("set"), transit: f("transit"), transitAlt: info ? d2(info.alt) : "" };
 }
+// Per body: the name, ALT and AZ (true) big, and one muted line (magnetic, rise and set, the Moon's phase). Everything else is
+// in Details, closed by default.
 function cardsHtml(p) {
-  function state(b) { var a = altOf(b), e = wrap360(b.azimuth) < 180; return (a >= 0 ? (e ? "Rising" : "Setting") : (e ? "Below the horizon" : "Set")) + ", " + dirWord(b.azimuth); }
-  function row(k, v) { return "<div><dt>" + k + "</dt><dd>" + v + "</dd></div>"; }
-  function list(key, name, b, extra) {
+  function body(key, name, b, extra) {
     var dt = dayTimes(key), m = azM(b.azimuth);
-    return '<section class="dl" aria-label="' + name + '"><h3><span class="' + key.charAt(0) + '">' + name + '</span><span class="st">' + state(b) + '</span></h3><dl>' +
-      row("Azimuth", azT(b.azimuth) + (m ? ' <span class="u">\u00b7</span> ' + m : "")) +
-      row("Altitude", d2(b.altitude)) +
-      row("Apparent", b.apparentAltitude == null ? "below horizon" : d2(b.apparentAltitude)) +
-      row("Rise \u00b7 Set", dt.rise + ' <span class="u">\u00b7</span> ' + dt.set) +
-      row("Transit", dt.transit + (dt.transitAlt ? ' <span class="u">\u00b7</span> ' + dt.transitAlt : "")) + extra + "</dl></section>";
+    var sec = [m ? m.replace(" M", " mag") : "", "rises " + dt.rise, "sets " + dt.set].concat(extra || []).filter(Boolean).join(" \u00b7 ");
+    return '<section class="bd" aria-label="' + name + '"><div class="nm"><i class="' + key.charAt(0) + '"></i>' + name + '</div>' +
+      '<div class="big"><span><small>Alt</small><b>' + d2(altOf(b)) + '</b></span><span><small>Az</small><b>' + azT(b.azimuth).replace(" T", "") + '</b></span></div>' +
+      '<div class="sec">' + sec + '</div></section>';
   }
-  var s = p.sun, mo = p.moon, ph = mo.phase;
-  return list("sun", "Sun", s, row("Distance", (s.distanceKm / AU).toFixed(5) + ' <span class="u">au</span>')) +
-    list("moon", "Moon", mo, row("Distance", Math.round(mo.distanceKm).toLocaleString("en-US") + ' <span class="u">km</span>') + row("Phase", esc(ph.name) + ' <span class="u">\u00b7</span> ' + (ph.illuminatedFraction * 100).toFixed(1) + "%"));
+  var ph = p.moon.phase;
+  return body("sun", "Sun", p.sun) + body("moon", "Moon", p.moon, [(ph.illuminatedFraction * 100).toFixed(0) + "% lit"]);
 }
+function detailsHtml(p) {
+  function kv(k, v) { return "<dt>" + k + "</dt><dd>" + v + "</dd>"; }
+  function app(b) { return b.apparentAltitude == null ? "below horizon" : d2(b.apparentAltitude); }
+  var s = p.sun, mo = p.moon, ds = dayTimes("sun"), dm = dayTimes("moon");
+  return '<dl class="kv">' +
+    kv("Sun altitude (true \u00b7 apparent)", d2(s.altitude) + " \u00b7 " + app(s)) +
+    kv("Sun azimuth (true \u00b7 magnetic)", azT(s.azimuth) + (azM(s.azimuth) ? " \u00b7 " + azM(s.azimuth) : "")) +
+    kv("Sun transit", ds.transit + (ds.transitAlt ? " \u00b7 " + ds.transitAlt : "")) +
+    kv("Sun distance", (s.distanceKm / AU).toFixed(5) + " au") +
+    kv("Moon altitude (true \u00b7 apparent)", d2(mo.altitude) + " \u00b7 " + app(mo)) +
+    kv("Moon azimuth (true \u00b7 magnetic)", azT(mo.azimuth) + (azM(mo.azimuth) ? " \u00b7 " + azM(mo.azimuth) : "")) +
+    kv("Moon transit", dm.transit + (dm.transitAlt ? " \u00b7 " + dm.transitAlt : "")) +
+    kv("Moon distance", Math.round(mo.distanceKm).toLocaleString("en-US") + " km") +
+    kv("Moon phase", esc(mo.phase.name) + " \u00b7 " + (mo.phase.illuminatedFraction * 100).toFixed(1) + "% lit") + "</dl>";
+}
+function setBodies() { if (!S.to) return; setHtml("bodies", cardsHtml(S.to)); setHtml("detailsBody", detailsHtml(S.to)); }
+// "Night", "Civil twilight", ... from the Sun's altitude
+function skyPhase(a) { return a >= 0 ? "Day" : a >= -6 ? "Civil twilight" : a >= -12 ? "Nautical twilight" : a >= -18 ? "Astronomical twilight" : "Night"; }
 function setPos(p) {
   if (!S.to) __rum.mark("data-ready");
   // The chart redraws for a new answer only when it shows: the first one, a body crossing the horizon, a new frame, or a minute
@@ -917,7 +872,8 @@ function setPos(p) {
   var prev = S.to, c0 = S.center; S.to = p;
   if (S.center == null || (!S.userPanned && !S.pose)) S.center = defaultCenter(p);
   if (!prev || S.center !== c0 || (altOf(prev.sun) < 0) !== (altOf(p.sun) < 0) || (altOf(prev.moon) < 0) !== (altOf(p.moon) < 0) || tNow() - drawnAt >= 60e3) requestDraw();
-  setHtml("bodies", cardsHtml(p)); setText("lede", lede(p.sun, p.moon)); aimUpdate();
+  setBodies(); setText("phase", skyPhase(altOf(p.sun)) + " \u00b7 "); aimUpdate();
+  cv.setAttribute("aria-description", lede(p.sun, p.moon));
   function ariaAlt(b) { return b.apparentAltitude == null ? "below the horizon (true altitude " + b.altitude.toFixed(2) + " degrees)" : b.apparentAltitude.toFixed(2) + " degrees apparent altitude"; }
   cv.setAttribute("aria-label", "Sun " + ariaAlt(p.sun) + ", azimuth " + p.sun.azimuth.toFixed(2) + " degrees true; Moon " + ariaAlt(p.moon) + ", azimuth " + p.moon.azimuth.toFixed(2) + " degrees true");
   diag();
@@ -929,6 +885,10 @@ function setText(id, t) { if (domMemo[id] !== t) { domMemo[id] = t; $(id).textCo
 var NAMES = { sun: { rise: "Sunrise", set: "Sunset", transit: "Solar noon", civilDawn: "Civil dawn", civilDusk: "Civil dusk", nauticalDawn: "Nautical dawn", nauticalDusk: "Nautical dusk",
   astronomicalDawn: "Astronomical dawn", astronomicalDusk: "Astronomical dusk", goldenHourStart: "Golden hour", goldenHourEnd: "Golden hour ends", blueHourStart: "Blue hour", blueHourEnd: "Blue hour ends" },
   moon: { rise: "Moonrise", set: "Moonset", transit: "Moon at its highest" } };
+// "Moon rises", "Sun sets", "Civil dusk", ...: the NEXT line's subject
+function evPhrase(e) { var B = e.body === "sun" ? "Sun" : "Moon"; return e.kind === "rise" ? B + " rises" : e.kind === "set" ? B + " sets" : e.kind === "transit" ? B + " at its highest" : evName(e); }
+// "16:58", "1:16:58": a countdown that ticks every second
+function clockDelta(ms) { var s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60; s = s % 60; return (h ? h + ":" + (m < 10 ? "0" : "") : "") + m + ":" + (s < 10 ? "0" : "") + s; }
 function evName(e) { return (NAMES[e.body] && NAMES[e.body][e.kind]) || e.kind; }
 function upcoming(now) {
   var all = [].concat(S.day ? S.day.events : [], S.tomorrow ? S.tomorrow.events : []);
@@ -945,8 +905,8 @@ function tick() {
   liveCheck(now);   // the chart: a marker that moved half a pixel, or a minute
   var up = upcoming(now), html = lastNext;
   if (up.length) {
-    var e = up[0], t = Date.parse(e.time), ti = S.track.length ? trackInfo(now) : {}, ex = ti[e.body] && ti[e.body].find(function (x) { return x.kind === e.kind && Math.abs(x.t - t) < 40 * 60e3; });
-    html = '<b>' + evName(e) + '</b><span class="t">' + (localDate(t) !== localDate(now) ? "tomorrow " : "") + hm(t) + (ex && (e.kind === "rise" || e.kind === "set") ? " " + compass(ex.az) : "") + '</span><span class="cd" aria-label="' + countdown(t - now) + '">' + tminus(t - now) + '</span>';
+    var e = up[0], t = Date.parse(e.time);
+    html = esc(evPhrase(e)) + ' at <span class="tn">' + hm(t) + "</span>" + (localDate(t) !== localDate(now) ? " tomorrow" : "") + ' <span class="cd">in ' + clockDelta(t - now) + "</span>";
   } else if (S.day && !S.day.loading && S.tomorrowFor === S.day.date) {
     if (S.tomorrow) html = "No rise, set or twilight in the next two days.";
   } else if (S.day && !S.day.loading) loadTomorrow();   // today has nothing left: only now is tomorrow's /v1/day needed
@@ -1008,16 +968,16 @@ function loadDay() {
   return api("/v1/day", dayQuery(today)).then(applyDay).catch(err);
 }
 function dayQuery(today) { return Object.assign(q(), { date: today, tz: loc.tz }); }
-function applyDay(r) { S.day = r; S.tomorrow = null; S.tomorrowFor = null; drawEvents(); drawStrip(); tick(); if (S.to) setHtml("bodies", cardsHtml(S.to)); requestDraw(); }
+function applyDay(r) { S.day = r; S.tomorrow = null; S.tomorrowFor = null; drawEvents(); drawStrip(); tick(); if (S.to) setBodies(); requestDraw(); }
 // Tomorrow's events matter only once today's have all passed (the Next line); fetched then, once per day.
 function loadTomorrow() {
   var d = S.day; S.tomorrowFor = d.date;
   return api("/v1/day", Object.assign(q(), { date: nextDate(d.date), tz: loc.tz }), true).then(function (b) { if (S.day === d) { S.tomorrow = b; tick(); } }).catch(function () {});
 }
 // Declination comes with the weather answer (observer.magneticDeclination, the same WMM2025 value); /v1/magnetic only if weather fails.
-function setDecl(x) { S.decl = x; if (S.to) setHtml("bodies", cardsHtml(S.to)); diag(); }
+function setDecl(x) { S.decl = x; if (S.to) setBodies(); diag(); }
 function loadMag() {
-  return api("/v1/magnetic", q(), true).then(function (b) { S.decl = b.magnetic.declination; if (S.to) setHtml("bodies", cardsHtml(S.to)); if (S.wx) drawWx(); diag(); })
+  return api("/v1/magnetic", q(), true).then(function (b) { S.decl = b.magnetic.declination; if (S.to) setBodies(); if (S.wx) drawWx(); diag(); })
     .catch(function () { S.decl = null; });
 }
 function loadWx() {
@@ -1070,7 +1030,7 @@ function applyTrack(r) {
   var out = [], step = r.stepSeconds * 1000, s0 = Date.parse(r.start);
     function b(x, i) { return { azimuth: x.azimuth[i], altitude: x.altitude[i], apparentAltitude: x.apparentAltitude[i] }; }
     for (var i = 0; i < r.count; i++) out.push({ t: s0 + i * step, sun: b(r.sun, i), moon: b(r.moon, i) });
-    S.track = out; drawStrip(); requestDraw(); if (S.to) setHtml("bodies", cardsHtml(S.to));
+    S.track = out; drawStrip(); requestDraw(); if (S.to) setBodies();
     if (window.performance && performance.mark) performance.mark("ephem:track");
 }
 function pad(k) { return (k.toUpperCase() + "                    ").slice(0, 18); }
