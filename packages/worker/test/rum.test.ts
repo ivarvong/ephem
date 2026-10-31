@@ -17,7 +17,7 @@ const origin = direct(async (first: number, count: number) => {
 const TID = "4bf92f3577b34da6a3ce929d0e0e4736", SID = "00f067aa0ba902b7", TP = `00-${TID}-${SID}-01`
 const ctx = (h: Record<string, string> = {}) => ({ now: Date.parse("2026-10-30T12:00:00Z"), headers: { "user-agent": "Mozilla/5.0 (Macintosh) Chrome/156", ...h }, cf: { colo: "EWR", country: "US", city: "New York" }, version: "v1" })
 const span = (o: Record<string, unknown> = {}) => ({ k: "resource", n: "fetch", sid: "a1b2c3d4e5f60718", t: 12.3, d: 40, tg: "/v1/position", ph: [0, 0, 0, 30, 35, 5], b: 900, st: 200, pr: "h2", sv: 'api;desc="HIT";dur=3.1, total;dur=4', r: "a52e17c7ca334350-EWR", ...o })
-const batch = (s: unknown[], o: Record<string, unknown> = {}) => ({ v: 1, tp: TP, page: "/", seq: 0, to: Date.parse("2026-10-30T11:59:50Z"), vw: 390, dpr: 3, s, ...o })
+const batch = (s: unknown[], o: Record<string, unknown> = {}) => ({ tp: TP, page: "/", seq: 0, to: Date.parse("2026-10-30T11:59:50Z"), vw: 390, dpr: 3, s, ...o })
 const SCHEMA = JSON.parse(readFileSync(resolve(__dirname, "../ops/basin/rum.schema.json"), "utf8")) as Array<{ name: string; type: string; required: boolean }>
 const matches = (row: Record<string, unknown>) => {
   for (const f of SCHEMA) { if (f.required) expect(row, f.name).toHaveProperty(f.name) }
@@ -30,7 +30,7 @@ describe("/rum validation (pure)", () => {
     expect(r.ok).toBe(true); if (!r.ok) return
     expect(r.rows).toHaveLength(2); expect(r.dropped).toBe(0)
     expect(r.rows[0]).toMatchObject({ trace_id: TID, span_id: "a1b2c3d4e5f60718", parent_id: SID, kind: "resource", name: "fetch", page: "/", target: "/v1/position",
-      cache: "HIT", ray: "a52e17c7ca334350-EWR", ttfb_ms: 35, ua_family: "browser", colo: "EWR", country: "US", synthetic: false, schema: 1, time_origin: "2026-10-30T11:59:50.000Z" })
+      cache: "HIT", ray: "a52e17c7ca334350-EWR", ttfb_ms: 35, ua_family: "browser", colo: "EWR", country: "US", synthetic: false, time_origin: "2026-10-30T11:59:50.000Z" })
     expect(r.rows[1]).toMatchObject({ kind: "app", name: "data-ready" })
     for (const row of r.rows) matches(row as unknown as Record<string, unknown>)
   })
@@ -54,7 +54,6 @@ describe("/rum validation (pure)", () => {
   })
   it("bad envelopes are rejected with a status; bad spans are dropped one by one", () => {
     expect(validateRum(null, ctx())).toMatchObject({ ok: false, status: 400 })
-    expect(validateRum(batch([], { v: 2 }), ctx())).toMatchObject({ ok: false, status: 400 })
     expect(validateRum(batch([], { tp: "00-nope" }), ctx())).toMatchObject({ ok: false, status: 400 })
     expect(validateRum(batch([], { tp: `00-${"0".repeat(32)}-${SID}-01` }), ctx())).toMatchObject({ ok: false, status: 400 })
     expect(validateRum(batch([], { page: "/admin" }), ctx())).toMatchObject({ ok: false, status: 400 })

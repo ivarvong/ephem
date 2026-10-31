@@ -5,11 +5,6 @@
   "required": true
  },
  {
-  "name": "schema",
-  "type": "int32",
-  "required": true
- },
- {
   "name": "trace_id",
   "type": "string",
   "required": true

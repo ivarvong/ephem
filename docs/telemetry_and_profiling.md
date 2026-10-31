@@ -804,11 +804,11 @@ visibilitychange hidden, keepalive fetch every 15 s and 2 s after data-ready).
 
 | `/rum` rule | Value |
 | --- | --- |
-| body | ≤ 64 KiB (413), JSON object `v: 1`, `tp` a valid traceparent (400), `page` `/`, ≤ 300 spans (413) |
+| body | ≤ 64 KiB (413), JSON object, `tp` a valid traceparent (400), `page` `/`, ≤ 300 spans (413) |
 | rate | ≤ 30 batches per trace per minute, ≤ 600 per 10 s per isolate (429; in-isolate, best effort) |
 | privacy | DNT / GPC (header or navigator) → nothing sent or stored; sampled flag `00` → nothing; no IP, no UA (family only), no URL or query (targets are ROUTES ids, `/assets/<known file>`, `other`, `external`), names/details from fixed patterns, ids hex only |
 | synthetic | `x-ephem-load`, `x-ephem-smoke`, `navigator.webdriver`, or the document's `<meta name="ephem-synthetic">` → `synthetic = true` |
-| storage | Basin stream `ephem_rum` (3f7057f2…) → `ephem.rum`, one row per span (`trace_id`, `span_id`, `parent_id`, `kind`, `name`, `target`, `start_ms`, `dur_ms`, `value`, phases, `server_timing`, `cache`, `ray`, …: ops/basin/rum.schema.json) |
+| storage | Basin stream `ephem_rum` (0c3797ae…) → `ephem.rum`, one row per span (`trace_id`, `span_id`, `parent_id`, `kind`, `name`, `target`, `start_ms`, `dur_ms`, `value`, phases, `server_timing`, `cache`, `ray`, …: ops/basin/rum.schema.json) |
 
 Request rows carry the trace: `ephem.requests` has `synthetic`, `trace_id`, `span_id`, `client_span_id`, `client_parent_id`,
 `trace_origin` ("Request logs").
@@ -1045,11 +1045,11 @@ R2 bucket `ephem-logs`, warehouse `5ad2236b39de4c8bd8f6270ea63f3ea9_ephem-logs`,
 
 Stream schemas cannot change after creation, and stream names are unique (a second `ephem_requests` is refused, 1003), so
 a column change replaces the stream in place, same name, no `_v2` (prerelease: the table's rows are dropped; ivar,
-2026-10-31): (1) `basin.py teardown <stream> --drop-table` (pipeline, sink, stream, Iceberg table; prints the row count),
+2026-10-31): (1) `git rm` ops/basin/created-<stream>.json (teardown keeps the stream whose id that file names), then `basin.py teardown <stream> --drop-table` (pipeline, sink, stream, Iceberg table; prints the row count),
 (2) `basin.py create-streams <stream>` (writes ops/basin/created-<stream>.json), (3) `basin.py provision <stream>` (sink +
 pipeline; the sink creates the table), (4) put the new id in cloudflare.config.ts, `basin.py types`, commit (ship.sh
 deploys it). Between (1) and the deploy the live version's sends fail (`basin_send_failed`): do it when no deploy or live
-watcher is running (`scripts/ship.sh status`), and quickly. Done that way 2026-10-31 for `ephem_requests` (trace ids). `basin.py types` regenerates
+watcher is running (`scripts/ship.sh status`), and quickly. Done that way 2026-10-31 for `ephem_requests` (trace ids) and `ephem_rum` (the `schema` column and the batch `v` field removed; 6,495 rows dropped; 3f7057f2… → 0c3797ae…). `basin.py types` regenerates
 `src/basin.generated.ts` from the live schemas with `wrangler types`; the tests assert our row types are assignable to it and
 check every key and type against the schema file. **A structured stream accepts a non-matching row and drops it later**
 (`send()` still resolves), so those tests are the only guard; dropped rows show in `events.pipelinesUserErrors` once a

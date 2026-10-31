@@ -20,7 +20,7 @@ import { ROUTES } from "./routes.ts"
 import { parseTraceparent } from "./traceparent.ts"
 
 export interface RumRow {
-  ts: string; schema: 1; trace_id: string; span_id: string; parent_id?: string; kind: string; name: string; page: string; target?: string
+  ts: string; trace_id: string; span_id: string; parent_id?: string; kind: string; name: string; page: string; target?: string
   start_ms: number; dur_ms?: number; value?: number; time_origin?: string
   dns_ms?: number; connect_ms?: number; tls_ms?: number; request_ms?: number; ttfb_ms?: number; download_ms?: number
   transfer_bytes?: number; status?: number; protocol?: string; cache?: string; server_timing?: string; ray?: string; detail?: string
@@ -56,7 +56,6 @@ export const validateRum = (body: unknown, c: RumContext): RumResult => {
   if (c.headers["dnt"] === "1" || c.headers["sec-gpc"] === "1") return { ok: true, rows: [], dropped: 0 }
   if (!body || typeof body !== "object" || Array.isArray(body)) return { ok: false, status: 400, reason: "not an object" }
   const b = body as Record<string, unknown>
-  if (b.v !== 1) return { ok: false, status: 400, reason: "v must be 1" }
   const tp = typeof b.tp === "string" ? parseTraceparent(b.tp) : undefined
   if (!tp) return { ok: false, status: 400, reason: "tp must be a valid traceparent" }
   if (!(b.tp as string).endsWith("-01")) return { ok: true, rows: [], dropped: 0 }   // not sampled
@@ -67,7 +66,7 @@ export const validateRum = (body: unknown, c: RumContext): RumResult => {
   const synthetic = !!(c.headers["x-ephem-load"] || c.headers["x-ephem-smoke"] || b.wd === true)
   const str = (v: unknown) => typeof v === "string" && v ? v : undefined
   const base = {
-    ts: new Date(c.now).toISOString(), schema: 1 as const, trace_id: tp.traceId, page: b.page, seq: Math.round(seq),
+    ts: new Date(c.now).toISOString(), trace_id: tp.traceId, page: b.page, seq: Math.round(seq),
     time_origin: to !== undefined && Math.abs(to - c.now) < 24 * HOUR ? new Date(to).toISOString() : undefined,
     version: c.version, colo: str(c.cf?.colo), country: str(c.cf?.country), ua_family: uaFamily(c.headers["user-agent"], undefined),
     vw: (v => v === undefined ? undefined : Math.round(v))(num(b.vw, 0, 20000)), dpr: num(b.dpr, 0, 10), synthetic,
@@ -195,7 +194,7 @@ export const RUM_JS = String.raw`
   function flush(final) {
     fetches(); vitals(final);
     while (buf.length) {
-      var body = JSON.stringify({ v: 1, tp: tp, page: location.pathname, seq: seq++, to: performance.timeOrigin, vw: innerWidth, dpr: devicePixelRatio, wd: N.webdriver === true || SYN, s: buf.splice(0, 250) });
+      var body = JSON.stringify({ tp: tp, page: location.pathname, seq: seq++, to: performance.timeOrigin, vw: innerWidth, dpr: devicePixelRatio, wd: N.webdriver === true || SYN, s: buf.splice(0, 250) });
       try { if (final && N.sendBeacon && N.sendBeacon("/rum", new Blob([body], { type: "application/json" }))) continue; } catch (e) {}
       try { fetch("/rum", { method: "POST", body: body, keepalive: body.length < 60000, headers: { "content-type": "application/json" } }).catch(noop); } catch (e) {}
     }

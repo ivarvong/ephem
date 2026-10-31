@@ -32,7 +32,7 @@ export default defineConfig({
 			// Basin stream ephem_requests (schema ops/basin/requests.schema.json): one row per request, with its trace ids (src/requestlog.ts).
 			LOGS: bindings.pipeline({ name: "09e37fce23fb4357ac54dff083a02f87" }),
 			// ephem_rum (ops/basin/rum.schema.json): browser RUM spans from POST /rum (src/rum.ts).
-			RUM: bindings.pipeline({ name: "3f7057f2350a4c7695ac6046305ac339" }),
+			RUM: bindings.pipeline({ name: "0c3797aef288416594c804a02258422b" }),
 			VERSION: bindings.versionMetadata(),
 			// glyph (github.com/ivarvong/glyph): JSON scene → PNG, the Og entrypoint's renderer. A service binding: a public fetch
 			// from one *.ivar.workers.dev Worker to another is refused (same zone); glyph fetches our font from this version's
