@@ -1,6 +1,6 @@
 {
-  "cacheVersion": 14,
-  "recorded": "2026-10-31T06:06:09.426Z",
+  "cacheVersion": 15,
+  "recorded": "2026-10-31T06:07:53.519Z",
   "requests": {
     "day.nyc": "/day?date=2026-10-28&tz=America/New_York&lat=40.7127&lon=-74.0059&height=10",
     "day.tromso": "/day?date=2026-11-15&tz=Europe/Oslo&lat=69.6492&lon=18.9553",
@@ -25,7 +25,7 @@
     "crossing.moon.apparent": "df170415d34f3966a5fddfd4eeea89a4",
     "track.nyc": "85e748581a907b4553bc588619ca0d01",
     "track.tromso.step": "ca3f91e6ca1adc475db0977ac2458d40",
-    "sightline.pier6": "db21a927965c0a989315542c047e6e21",
+    "sightline.pier6": "781efadca69519544340badb846d190a",
     "magnetic.nyc": "e2be31408f700b77d8342470605e7f2c",
     "search.window.liberty": "e183a0732d026ad6442aa79c22cd8e08"
   }

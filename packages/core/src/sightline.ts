@@ -14,13 +14,15 @@ import { geoidUndulation } from "./geoid.ts"
 import { type HeightRef, K_TERRESTRIAL, R_MEAN_M } from "./horizon.ts"
 
 const E2 = WGS84.f * (2 - WGS84.f)
-/** ITRS (km) → geodetic (deg, deg, m above the ellipsoid), Bowring-seeded fixed point (sub-mm in 4 iterations near the surface). */
+/** ITRS (km) → geodetic (deg, deg, m above the ellipsoid), Bowring-seeded fixed point (sub-mm in 4 iterations near the surface).
+ *  The height is the distance along the normal, p·cos φ + z·sin φ − a·√(1 − e² sin² φ), valid at the poles; p/cos φ − N
+ *  (used before 2026-10-31) is 0/0 there and put a sight line over the North Pole 6 355 km below the ellipsoid. */
 export const geodeticOf = (x: Vec3): Geodetic => {
   const p = Math.hypot(x[0], x[1]), lon = Math.atan2(x[1], x[0])
   let lat = Math.atan2(x[2], p * (1 - E2)), h = 0
   for (let i = 0; i < 6; i++) {
-    const N = WGS84.a / Math.sqrt(1 - E2 * Math.sin(lat) ** 2)
-    h = p / Math.cos(lat) - N
+    const s = Math.sin(lat), c = Math.cos(lat), N = WGS84.a / Math.sqrt(1 - E2 * s * s)
+    h = p * c + x[2] * s - WGS84.a * Math.sqrt(1 - E2 * s * s)
     lat = Math.atan2(x[2], p * (1 - E2 * N / (N + h)))
   }
   return { lat: lat / DEG, lon: lon / DEG, height: h * 1000 }
