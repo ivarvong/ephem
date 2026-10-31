@@ -76,7 +76,7 @@ chk day 200 "/day?lat=40.7&lon=-74&date=2026-10-29&tz=America/New_York"
 chk magnetic 200 "/magnetic?lat=40.7&lon=-74"
 chk crossing 200 "/crossing?lat=40.7&lon=-74&body=sun&altitude=-0.8333&direction=set&date=2026-10-29&tz=America/New_York"
 chk alignment 200 "/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&start=2026-10-29T02:00:00Z&end=2026-10-29T03:00:00Z"
-chk sightline 200 "/sightline?observerLat=40.6935&observerLon=-74.0017&observerHeight=5&heightRef=msl&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&samples=11"
+chk sightline 200 "/sightline?lat=40.6935&lon=-74.0017&height=5&heightRef=msl&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&samples=11"
 chk track 200 "/track?lat=40.7&lon=-74&start=2026-10-29T00:00:00Z&end=2026-10-30T00:00:00Z"
 chk weather 200 "/weather?lat=40.7&lon=-74"
 chk unknown-param 400 "/day?lat=40.7&lon=-74&date=2026-10-29&tz=America/New_York&bogus=1"
@@ -84,7 +84,7 @@ chk not-found 404 "/v1/position?lat=40.7&lon=-74" '"_tag":"NotFound"'   # old pa
 chk window-internal 404 "/internal/alignment-search-window?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&region=r1.x&start=2026-10-17T00:00:00Z"
 # the customer's Nov 16 2026 pass over a bbox of Brooklyn Bridge Park (fans out to cached window GETs)
 chk search 200 "/alignment/search" '"enter":{"time":"2026-11-17T03:4' \
-  '{"body":"moon","target":{"lat":40.68925,"lon":-74.0445,"height":70,"heightRef":"msl"},"region":[-73.9995,40.7,-73.993,40.706],"observerHeight":5,"heightRef":"msl","start":"2026-11-16T00:00:00Z","end":"2026-11-18T00:00:00Z"}'
+  '{"body":"moon","targetLat":40.68925,"targetLon":-74.0445,"targetHeight":70,"targetHeightRef":"msl","region":[-73.9995,40.7,-73.993,40.706],"height":5,"heightRef":"msl","start":"2026-11-16T00:00:00Z","end":"2026-11-18T00:00:00Z"}'
 # A deterministic key nobody has asked for (random lat at 1e-7°): MISS computed by the Api, then HIT from its cache.
 U="/position?lat=40.$(printf '%07d' $((RANDOM * 32768 + RANDOM)))&lon=-74&time=$T"
 want compute && ORDER+=(compute); want compute-hit && ORDER+=(compute-hit)

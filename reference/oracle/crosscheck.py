@@ -97,7 +97,7 @@ def run_day(R, A, B, q):
         cmp_num(R, "day.horizon.dip", ra["horizon"]["dip"], rb["horizon"]["dip"], TOL["angle_deg"], ctx)
         cmp_num(R, "day.refraction.atHorizon", ra["refraction"]["atHorizon"], rb["refraction"]["atHorizon"], TOL["angle_deg"], ctx)
         cmp_num(R, "day.trueLimbAltitude", ra["trueLimbAltitude"], rb["trueLimbAltitude"], TOL["angle_deg"], ctx)
-        (ra["limb"] == rb["limb"]) or R.structural(f"limb {ra['limb']} ≠ {rb['limb']} [{ctx}]")
+        (ra["aim"]["point"] == rb["aim"]["point"]) or R.structural(f"aim {ra['aim']} ≠ {rb['aim']} [{ctx}]")
     ka = sorted((e["body"], e["kind"]) for e in a["events"]); kb = sorted((e["body"], e["kind"]) for e in b["events"])
     if ka != kb: return R.structural(f"event sets differ [{ctx}]: only A {sorted(set(ka) - set(kb))}, only B {sorted(set(kb) - set(ka))}")
     def key(e): return (e["body"], e["kind"])
@@ -180,33 +180,33 @@ def default_cases(seed=440):
     PROF = "0:0.5,45:1.2,90:2.0,135:0.3,180:-0.2,225:0.9,270:3.5,300:1.0,330:0.2"
     for d in ("2026-10-29", "2026-06-21", "2026-12-21"):
         for extra in (dict(height="0"), dict(height="320", heightRef="msl"), dict(height="320", heightRef="msl", temperature="-20", pressure="1040"),
-                      dict(horizon="geometric"), dict(horizon="-0.5", limb="center"), dict(height="50", heightRef="msl", limb="lower"),
-                      dict(temperature="-20", pressure="1040"), dict(horizonProfile=PROF), dict(horizonProfile=PROF, limb="lower", height="20")):
+                      dict(horizon="geometric"), dict(horizon="-0.5", aim="center"), dict(height="50", heightRef="msl", aim="lower"),
+                      dict(temperature="-20", pressure="1040"), dict(horizonProfile=PROF), dict(horizonProfile=PROF, aim="lower", height="20")):
             days.append(dict(NYC, date=d, tz="America/New_York", **extra))
     for extra in (dict(height="320", heightRef="msl"), dict(horizonProfile="170:1.0,190:0.5")):
         for d in ("2026-12-21", "2026-11-25", "2027-01-15"):
             days.append(dict(lat=OBS[1][0], lon=OBS[1][1], date=d, tz=OBS[1][3], **extra))    # Tromsø: polar night, grazing Sun
     cross = []
-    for extra in (dict(body="sun", altitude="-0.927", direction="set"), dict(body="sun", altitude="-0.833", altitudeType="apparent", limb="upper"),
-                  dict(body="sun", altitude="6", limb="lower"), dict(body="moon", altitude="0", altitudeType="apparent", limb="upper", height="320", heightRef="msl"),
-                  dict(body="sun", altitude="-18", direction="rise", temperature="-20", pressure="1040"), dict(body="sun", horizonProfile=PROF, limb="upper"),
-                  dict(body="moon", horizonProfile=PROF, limb="lower", direction="set"), dict(body="sun", altitude="-1.5", altitudeType="apparent")):
+    for extra in (dict(body="sun", altitude="-0.927", direction="set"), dict(body="sun", altitude="-0.833", altitudeType="apparent", aim="upper"),
+                  dict(body="sun", altitude="6", aim="lower"), dict(body="moon", altitude="0", altitudeType="apparent", aim="upper", height="320", heightRef="msl"),
+                  dict(body="sun", altitude="-18", direction="rise", temperature="-20", pressure="1040"), dict(body="sun", horizonProfile=PROF, aim="upper"),
+                  dict(body="moon", horizonProfile=PROF, aim="lower", direction="set"), dict(body="sun", altitude="-1.5", altitudeType="apparent")):
         cross.append(dict(NYC, date="2026-10-29", tz="America/New_York", **extra))
     cross.append(dict(NYC, body="sun", altitude="-6", start="2026-10-01T00:00:00Z", end="2026-10-31T00:00:00Z"))
-    cross.append(dict(NYC, body="moon", altitude="10", limb="upper", start="2026-12-01T00:00:00Z", end="2026-12-08T00:00:00Z"))
-    cross.append(dict(lat=OBS[1][0], lon=OBS[1][1], body="sun", altitude="-0.833", altitudeType="apparent", limb="upper", start="2026-11-20T00:00:00Z", end="2026-12-10T00:00:00Z"))
+    cross.append(dict(NYC, body="moon", altitude="10", aim="upper", start="2026-12-01T00:00:00Z", end="2026-12-08T00:00:00Z"))
+    cross.append(dict(lat=OBS[1][0], lon=OBS[1][1], body="sun", altitude="-0.833", altitudeType="apparent", aim="upper", start="2026-11-20T00:00:00Z", end="2026-12-10T00:00:00Z"))
     rejects = [dict(NYC, _path="/day", date="2026-10-29", tz="America/New_York", temprature="-20"),
                dict(NYC, _path="/position", time="2026-10-29T21:55:00Z", bogus="1"),
                dict(NYC, _path="/crossing", body="sun", date="2026-10-29", tz="America/New_York"),            # neither altitude nor profile
                dict(NYC, _path="/crossing", body="sun", altitude="-3", altitudeType="apparent", date="2026-10-29", tz="America/New_York"),   # below the floor
                dict(NYC, _path="/day", date="2026-10-29", tz="America/New_York", horizon="sea", horizonProfile="0:1"),
                dict(NYC, _path="/day", date="2026-10-29", tz="America/New_York", height="5000", heightRef="msl")]   # sea horizon below the floor
-    align = [dict(body="moon", targetLat="40.68925", targetLon="-74.0445", targetHeight="63.4", observerHeight="-30.9",
+    align = [dict(body="moon", targetLat="40.68925", targetLon="-74.0445", targetHeight="63.4", height="-30.9",
                   start="2026-10-28T23:45:00Z", end="2026-10-29T02:00:00Z", stepSeconds="900", maxDistanceKm="20"),
-             dict(body="sun", targetLat="40.748441", targetLon="-73.985664", targetHeight="410", observerHeight="-25",
+             dict(body="sun", targetLat="40.748441", targetLon="-73.985664", targetHeight="410", height="-25",
                   start="2026-10-28T20:00:00Z", end="2026-10-28T21:40:00Z", stepSeconds="600", maxDistanceKm="30"),
-             dict(body="moon", targetLat="40.68925", targetLon="-74.0445", targetHeight="70", targetHeightRef="msl", observerHeight="5", heightRef="msl",
-                  start="2026-11-17T03:44:30Z", end="2026-11-17T03:46:00Z", stepSeconds="30", maxDistanceKm="8", observerLat="40.7003", observerLon="-73.9968"),
+             dict(body="moon", targetLat="40.68925", targetLon="-74.0445", targetHeight="70", targetHeightRef="msl", height="5", heightRef="msl",
+                  start="2026-11-17T03:44:30Z", end="2026-11-17T03:46:00Z", stepSeconds="30", maxDistanceKm="8", lat="40.7003", lon="-73.9968"),
              dict(body="moon", targetLat="40.68925", targetLon="-74.0445", targetHeight="70", targetHeightRef="msl",
                   start="2026-11-17T03:44:30Z", end="2026-11-17T03:46:00Z", stepSeconds="45", maxDistanceKm="8")]
     return dict(position=pos, day=days, crossing=cross, alignment=align, reject=rejects)

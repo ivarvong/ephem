@@ -15,14 +15,14 @@ export const ENDPOINTS: ReadonlyArray<Endpoint> = [
     required: ["lat", "lon", "date", "tz"], example: "/day?lat=40.7&lon=-74&date=2026-11-16&tz=America/New_York" },
   { path: "/crossing", summary: "Every instant in a window (≤ 31 days) or local date when a limb, the centre or the lit-area centroid (aim) of the Sun or Moon reaches a true or apparent altitude or a skyline profile.",
     required: ["lat", "lon", "body"], example: "/crossing?body=moon&lat=40.6985&lon=-73.999&height=5&heightRef=msl&altitude=0.87&altitudeType=apparent&direction=set&start=2026-11-16T00:00:00Z&end=2026-11-18T00:00:00Z" },
-  { path: "/alignment", summary: "Where to stand so the Sun or Moon (centre, a limb, or the Moon's lit-area centroid: aim) sits on a landmark, per instant; with observerLat/Lon also when it passes the landmark from a fixed spot. Heights in ellipsoid or msl (heightRef, targetHeightRef), per-point rates, include=sun,phase.",
-    required: ["body", "targetLat", "targetLon", "targetHeight", "start", "end"], example: "/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&observerHeight=5&heightRef=msl&start=2026-11-17T03:44:30Z&end=2026-11-17T03:46:00Z&stepSeconds=5&maxDistanceKm=8" },
+  { path: "/alignment", summary: "Where to stand so the Sun or Moon (centre, a limb, or the Moon's lit-area centroid: aim) sits on a landmark, per instant; with lat/lon (a fixed spot) also when it passes the landmark from a fixed spot. Heights in ellipsoid or msl (heightRef, targetHeightRef), per-point rates, include=sun,phase.",
+    required: ["body", "targetLat", "targetLon", "targetHeight", "start", "end"], example: "/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&height=5&heightRef=msl&start=2026-11-17T03:44:30Z&end=2026-11-17T03:46:00Z&stepSeconds=5&maxDistanceKm=8" },
   { path: "/sightline", summary: "The sight line's height above sea level against ground distance from an eye to a target (Earth curvature; straight and refracted with k = 0.13), and the clearance over obstacle points lat:lon:heightMsl.",
-    required: ["observerLat", "observerLon", "targetLat", "targetLon", "targetHeight"], example: "/sightline?observerLat=40.6935&observerLon=-74.0017&observerHeight=5&heightRef=msl&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&samples=11&obstacles=40.6894:-74.0166:25" },
+    required: ["lat", "lon", "targetLat", "targetLon", "targetHeight"], example: "/sightline?lat=40.6935&lon=-74.0017&height=5&heightRef=msl&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&samples=11&obstacles=40.6894:-74.0166:25" },
   { path: "/track", summary: "Sun and Moon azimuth, true and apparent altitude on a UTC grid (≤ 8 days, ≤ 1 441 samples), columnar.",
     required: ["lat", "lon", "start", "end"], example: "/track?lat=40.7&lon=-74&start=2026-11-16T00:00:00Z&end=2026-11-17T00:00:00Z" },
   { path: "/magnetic", summary: "WMM2025 magnetic declination, inclination and intensity.", required: ["lat", "lon"], example: "/magnetic?lat=40.7&lon=-74" },
-  { path: "/weather", summary: "Nearest METAR stations, decoded, with distance and true/magnetic bearing.", required: ["lat", "lon"], example: "/weather?lat=40.7&lon=-74&n=2" },
+  { path: "/weather", summary: "Nearest METAR stations, decoded, with distance and true/magnetic bearing.", required: ["lat", "lon"], example: "/weather?lat=40.7&lon=-74&count=2" },
   { path: "/healthz", summary: "Liveness.", required: [], example: "/healthz" },
 ]
 
@@ -40,8 +40,8 @@ const RULES = [
 export const SEARCH_POST = {
   path: "/alignment/search",
   summary: "Every pass in [start, end) (≤ 400 days) when the alignment standing point lies inside a standing region, with exact entry / exit per in-region segment, Moon az / alt / illuminated and Sun altitude per pass. One call instead of crossing → alignment → polygon clip → position.",
-  fields: "body*, target* {lat, lon, height, heightRef}, region* (GeoJSON Polygon | MultiPolygon | Feature, or bbox [west, south, east, north]), observerHeight, heightRef, start*, end*, temperature, pressure, dut1, aim, include [sun, phase], minIlluminated, maxSunAltitude",
-  example: '{"body":"moon","target":{"lat":40.68925,"lon":-74.0445,"height":70,"heightRef":"msl"},"region":[-73.9995,40.7,-73.993,40.706],"observerHeight":5,"heightRef":"msl","start":"2026-11-16T00:00:00Z","end":"2026-11-18T00:00:00Z","maxSunAltitude":-4}',
+  fields: "body*, targetLat*, targetLon*, targetHeight*, targetHeightRef, region* (GeoJSON Polygon | MultiPolygon | Feature, or bbox [west, south, east, north]), height, heightRef, start*, end*, temperature, pressure, dut1, aim, include (sun, phase or sun,phase), minIlluminated, maxSunAltitude",
+  example: '{"body":"moon","targetLat":40.68925,"targetLon":-74.0445,"targetHeight":70,"targetHeightRef":"msl","region":[-73.9995,40.7,-73.993,40.706],"height":5,"heightRef":"msl","start":"2026-11-16T00:00:00Z","end":"2026-11-18T00:00:00Z","maxSunAltitude":-4}',
 }
 const params = (path: string, required: ReadonlyArray<string>) => (QUERY_PARAMS[path] ?? []).map(p => (required.includes(p) ? `${p}*` : p))
 
@@ -53,7 +53,7 @@ export const llmsTxt = (): string => [
   "",
   "## Machine-readable",
   `- OpenAPI 3.1: ${BASE}/openapi.json`,
-  `- MCP (Streamable HTTP, no auth): ${BASE}/mcp (tools: sun_moon_position, day_events, crossing, alignment, sight_line, sun_moon_track, weather_nearest, alignment_search; each returns the same JSON as its REST route)`,
+  `- MCP (Streamable HTTP, no auth): ${BASE}/mcp (one tool per endpoint, same names: position, track, day, crossing, alignment, alignment_search, sightline, magnetic, weather; each takes the same arguments and returns the same JSON)`,
   `- Human docs (plain HTML): ${BASE}/docs`,
   `- Page for people: ${BASE}/ (live sky; ?lat&lon&tz override the location)`,
   "",

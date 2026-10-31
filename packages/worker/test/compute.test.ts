@@ -37,7 +37,7 @@ describe("Api router", () => {
     const h = { "cf-ray": "r2-EWR", [VERSION_OVERRIDES]: PIN }
     expect((await front(new Request("http://x" + POS_T, { headers: h }))).status).toBe(200)
     const mcp = await front(new Request("http://x/mcp", { method: "POST", headers: { ...h, "content-type": "application/json", accept: "application/json, text/event-stream", "mcp-protocol-version": "2025-11-25" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "sun_moon_position", arguments: { lat: 40.7, lon: -74, time: "2026-10-28T11:51:00Z" } } }) }))
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "position", arguments: { lat: 40.7, lon: -74, time: "2026-10-28T11:51:00Z" } } }) }))
     expect(mcp.status).toBe(200)
     expect(seen.length).toBe(2)
     for (const s of seen) expect(s).toEqual({ "x-ephem-ray": "r2-EWR", [VERSION_OVERRIDES]: PIN })

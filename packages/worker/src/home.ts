@@ -1094,7 +1094,7 @@ function loadMag() {
     .catch(function () { S.decl = null; });
 }
 function loadWx() {
-  return api("/weather", Object.assign(q(), { n: 3 }), true).then(function (b) {
+  return api("/weather", Object.assign(q(), { count: 3 }), true).then(function (b) {
     S.wx = b; S.wxAt = Date.now(); if (S.decl !== b.observer.magneticDeclination) setDecl(b.observer.magneticDeclination); drawWx(); diag();
   }).catch(function (e) { $("wx").innerHTML = '<span class="err">Weather unavailable: ' + esc(e.message || e) + '</span>'; if (S.decl == null) loadMag(); });
 }
@@ -1182,7 +1182,7 @@ function header() {
   $("curl").textContent = "curl '" + b + "/position?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "'\\n\\n" +
     "curl '" + b + "/track?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "&start=" + new Date((Math.floor(tNow() / 864e5) - 1) * 864e5).toISOString().slice(0, 19) + "Z&end=" + new Date((Math.floor(tNow() / 864e5) + 2) * 864e5).toISOString().slice(0, 19) + "Z'\\n\\n" +
     "curl '" + b + "/day?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "&date=" + localDate(tNow()) + "&tz=" + loc.tz + "'\\n\\n" +
-    "curl '" + b + "/weather?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "&n=3'";
+    "curl '" + b + "/weather?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "&count=3'";
 }
 // First load: the server streams today's answers into the page (src/embed.ts; /position, /track, /day, verbatim),
 // so the first paint with data needs no API round trip. Whatever is missing (or ?at, which the server doesn't know) is fetched.

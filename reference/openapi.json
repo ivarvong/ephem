@@ -3,7 +3,7 @@
  "info": {
   "title": "Api",
   "version": "0.0.1",
-  "description": "Sun and Moon positions, day events, crossings and alignments from JPL DE440. Every response carries provenance (implementation, ephemeris, DE440 blocks read, compute time, cache tiers) and, for /position, /day, /crossing and /alignment, a conventions block with every threshold, horizon, refraction input and geoid value used.\n\nChanges on 2026-10-29 (API correctness pass):\n1. /day rise and set now depend on height. An explicit `height` is metres above the WGS-84 ellipsoid (unchanged meaning), and the sea-horizon dip is taken from the height above mean sea level (EGM96). Example: in New York `height=0` is ≈ 33 m above sea level, so sunrise is ≈ 1 min earlier and sunset ≈ 1 min later than before. Pass `heightRef=msl` for a height above sea level (iOS `altitude`, maps); omit `height` to stand at sea level, which gives the previous times (Sun within 1 ms).\n2. `apparentAltitude` in /position is now `number | null`: refraction is applied down to the observer's horizon (default the sea horizon, −dip) and the value is null below it or below −1.6963°. It used to repeat the true altitude below −1°. One refraction model now serves every endpoint (34′ at the horizon), so apparent altitudes are 1.3 % of the refraction lower than Skyfield's Bennett (0.45′ at 0°, 0.07′ at 10°), and /crossing at apparent 0° (upper limb) equals /day's sunrise.\n3. Unknown query parameters are rejected with 400 InvalidRequest (kind UnknownParameter, with the allowed list). They used to be ignored.\n4. New: /crossing; on /day `temperature`, `pressure`, `horizon` (sea | geometric | degrees), `horizonProfile`, `limb`; `heightRef` everywhere; `altitudeRate` and `azimuthRate` (°/min) in positions; observer heightMsl and geoidUndulation.\n5. New (2026-10-29): /track, the sampled Sun and Moon azimuth / altitude / apparent altitude over a UTC grid in one immutable answer (what the homepage draws its paths from).\n\nChanges on 2026-10-30 (round-2 feedback):\n6. /alignment: `heightRef` (observer) and `targetHeightRef`, each ellipsoid (default) | msl, as on /crossing; `target` echoes the target's heights and geoid undulation; every track point has `altitudeRate`, `azimuthRate` (°/min, as /position), `heightEllipsoid`, `heightMsl`, `geoidUndulation`; a `conventions` block. BEHAVIOUR CHANGE: without `observerHeight` the eye is now on the geoid (heightMsl 0, as on every other endpoint); it used to be 0 m above the ellipsoid (≈ 33 m below sea level in New York).\n7. `include=sun,phase` on /alignment (per track point and pass) and /crossing (per crossing): the Sun's azimuth, true and apparent altitude seen from that point, and the Moon's phase.\n8. `aim=center|upper|lower|litCentroid` on /alignment and /crossing (litCentroid: the Moon's lit-area centroid, (4r/3π)(1 − cos i) towards the bright limb), with aimOffset/aimAngle per point; /position moon.brightLimbAngleFromVertical (clockwise from the local vertical, topocentric). BEHAVIOUR CHANGE: none for existing queries (aim defaults to center).\n9. New: /sightline (the sight line's height above sea level against distance, with Earth curvature and k = 0.13 refraction, and obstacle clearances). /docs is plain HTML (no JavaScript needed); /llms.txt; the Scalar reference moved to /docs/interactive.\n10. New: POST /alignment/search — every pass in [start, end) (≤ 400 days) during which the alignment standing point lies inside a standing region (GeoJSON Polygon / MultiPolygon with holes, or a bbox), with exact entry and exit points (solved on the track to 1 mm, not sampled), the Moon's azimuth / altitude / illumination and the Sun's altitude per pass, optional filters (minIlluminated, maxSunAltitude) and include=sun,phase. Candidates come from the target's elevation band over the whole region, not one representative elevation. Computed per 30-day window (GET /internal/alignment-search-window, immutable and cached), so overlapping scans share work."
+  "description": "Sun and Moon from JPL DE440, checked against Skyfield. One endpoint per question: /position (an instant), /track (paths over a window), /day (rise, set, twilight), /crossing (when a body reaches an altitude), /alignment (where to stand so the body sits on a landmark), POST /alignment/search (every pass over an area you can stand in), /sightline (does the line of sight clear), /magnetic (declination), /weather (nearest METAR).\n\nOne vocabulary: lat, lon, height, heightRef (you); targetLat, targetLon, targetHeight, targetHeightRef (the landmark); body; time | start, end | date, tz; stepSeconds; temperature, pressure, horizon, horizonProfile, dut1; aim; include. Unknown parameters are rejected. Errors: 400 InvalidRequest names the parameter and what is allowed; 503 Unavailable when a data source fails. Every response carries conventions (every threshold and model used) and provenance."
  },
  "paths": {
   "/position": {
@@ -735,7 +735,7 @@
       "required": false
      },
      {
-      "name": "limb",
+      "name": "aim",
       "in": "query",
       "schema": {
        "type": "string",
@@ -874,13 +874,26 @@
             "riseSet": {
              "type": "object",
              "properties": {
-              "limb": {
-               "type": "string",
-               "enum": [
-                "upper",
-                "center",
-                "lower"
-               ]
+              "aim": {
+               "type": "object",
+               "properties": {
+                "point": {
+                 "type": "string",
+                 "enum": [
+                  "upper",
+                  "center",
+                  "lower"
+                 ]
+                },
+                "definition": {
+                 "type": "string"
+                }
+               },
+               "required": [
+                "point",
+                "definition"
+               ],
+               "additionalProperties": false
               },
               "definition": {
                "type": "string"
@@ -1003,7 +1016,7 @@
               }
              },
              "required": [
-              "limb",
+              "aim",
               "definition",
               "horizon",
               "refraction",
@@ -1300,19 +1313,6 @@
       "required": false
      },
      {
-      "name": "limb",
-      "in": "query",
-      "schema": {
-       "type": "string",
-       "enum": [
-        "upper",
-        "center",
-        "lower"
-       ]
-      },
-      "required": false
-     },
-     {
       "name": "direction",
       "in": "query",
       "schema": {
@@ -1602,13 +1602,27 @@
             "definition": {
              "type": "string"
             },
-            "limb": {
-             "type": "string",
-             "enum": [
-              "upper",
-              "center",
-              "lower"
-             ]
+            "aim": {
+             "type": "object",
+             "properties": {
+              "point": {
+               "type": "string",
+               "enum": [
+                "center",
+                "upper",
+                "lower",
+                "litCentroid"
+               ]
+              },
+              "definition": {
+               "type": "string"
+              }
+             },
+             "required": [
+              "point",
+              "definition"
+             ],
+             "additionalProperties": false
             },
             "altitudeType": {
              "type": "string",
@@ -1778,33 +1792,11 @@
             },
             "include": {
              "type": "string"
-            },
-            "aim": {
-             "type": "object",
-             "properties": {
-              "point": {
-               "type": "string",
-               "enum": [
-                "center",
-                "upper",
-                "lower",
-                "litCentroid"
-               ]
-              },
-              "definition": {
-               "type": "string"
-              }
-             },
-             "required": [
-              "point",
-              "definition"
-             ],
-             "additionalProperties": false
             }
            },
            "required": [
             "definition",
-            "limb",
+            "aim",
             "altitudeType",
             "trueLimbAltitude",
             "refraction",
@@ -1963,7 +1955,7 @@
       "required": false
      },
      {
-      "name": "observerHeight",
+      "name": "height",
       "in": "query",
       "schema": {
        "type": "string"
@@ -2039,7 +2031,7 @@
       "required": false
      },
      {
-      "name": "observerLat",
+      "name": "lat",
       "in": "query",
       "schema": {
        "type": "string"
@@ -2047,7 +2039,7 @@
       "required": false
      },
      {
-      "name": "observerLon",
+      "name": "lon",
       "in": "query",
       "schema": {
        "type": "string"
@@ -2511,14 +2503,14 @@
              ],
              "additionalProperties": false
             },
-            "observerHeightRef": {
+            "heightRef": {
              "type": "string",
              "enum": [
               "ellipsoid",
               "msl",
               "default"
              ],
-             "description": "What observerHeight was measured from; default = no observerHeight, the eye is on the geoid."
+             "description": "What height was measured from; default = no height, the eye is on the geoid."
             },
             "targetHeightRef": {
              "type": "string",
@@ -2598,7 +2590,7 @@
             "terrestrialRefraction",
             "heights",
             "rates",
-            "observerHeightRef",
+            "heightRef",
             "targetHeightRef",
             "terrestrialRefractionK",
             "refraction",
@@ -2706,7 +2698,7 @@
     "operationId": "sky.sightline",
     "parameters": [
      {
-      "name": "observerLat",
+      "name": "lat",
       "in": "query",
       "schema": {
        "type": "string"
@@ -2714,7 +2706,7 @@
       "required": true
      },
      {
-      "name": "observerLon",
+      "name": "lon",
       "in": "query",
       "schema": {
        "type": "string"
@@ -2722,7 +2714,7 @@
       "required": true
      },
      {
-      "name": "observerHeight",
+      "name": "height",
       "in": "query",
       "schema": {
        "type": "string"
@@ -3811,9 +3803,9 @@
           "observer": {
            "type": "object",
            "properties": {
-            "observerHeight": {
+            "height": {
              "type": "number",
-             "description": "As given (0 with heightRef msl when omitted: the eye on the geoid)."
+             "description": "The eye's height as given (0 with heightRef default when omitted: the eye on the geoid)."
             },
             "heightRef": {
              "type": "string",
@@ -3825,7 +3817,7 @@
             }
            },
            "required": [
-            "observerHeight",
+            "height",
             "heightRef"
            ],
            "additionalProperties": false
@@ -3914,7 +3906,7 @@
             "properties": {
              "time": {
               "type": "string",
-              "description": "Midpoint of the pass's first entry and last exit; standingPoint, moon, sunAlt, sun and phase are at this instant."
+              "description": "Midpoint of the pass's first entry and last exit; standingPoint and the body's and Sun's values are at this instant."
              },
              "segments": {
               "type": "array",
@@ -3994,61 +3986,34 @@
                },
                "distanceKm": {
                 "type": "number"
-               },
-               "azimuth": {
-                "type": "number"
-               },
-               "apparentAltitude": {
-                "type": "number"
                }
               },
               "required": [
                "lat",
                "lon",
-               "distanceKm",
-               "azimuth",
-               "apparentAltitude"
+               "distanceKm"
               ],
               "additionalProperties": false,
-              "description": "The alignment standing point at `time` (may lie between segments, outside the region)."
+              "description": "The alignment standing point at `time` (may lie between segments, outside the region); distanceKm to the target."
              },
-             "moon": {
-              "type": "object",
-              "properties": {
-               "az": {
-                "type": "number",
-                "description": "The Moon's azimuth from the standing point, degrees true."
-               },
-               "alt": {
-                "anyOf": [
-                 {
-                  "type": "number"
-                 },
-                 {
-                  "type": "null"
-                 }
-                ],
-                "description": "The Moon's apparent (refracted) altitude from the standing point, degrees."
-               },
-               "illuminated": {
-                "type": "number",
-                "description": "Illuminated fraction, 0–1 (geocentric, as /position)."
-               },
-               "angularRadius": {
-                "type": "number"
-               }
-              },
-              "required": [
-               "az",
-               "alt",
-               "illuminated",
-               "angularRadius"
-              ],
-              "additionalProperties": false
-             },
-             "sunAlt": {
+             "azimuth": {
               "type": "number",
-              "description": "The Sun centre's true altitude from the standing point, degrees (twilight convention: −6/−12/−18)."
+              "description": "The body's (aim point's) azimuth from the standing point, degrees true = the bearing to the target."
+             },
+             "apparentAltitude": {
+              "type": "number",
+              "description": "The body's (aim point's) apparent altitude from the standing point = the target's apparent elevation, degrees."
+             },
+             "angularRadius": {
+              "type": "number"
+             },
+             "illuminatedFraction": {
+              "type": "number",
+              "description": "The Moon's illuminated fraction, 0–1 (geocentric, as /position), whichever the body (minIlluminated filters on it)."
+             },
+             "sunAltitude": {
+              "type": "number",
+              "description": "The Sun centre's true altitude from the standing point, degrees (twilight convention −6/−12/−18; maxSunAltitude filters on it)."
              },
              "sun": {
               "type": "object",
@@ -4120,8 +4085,11 @@
              "time",
              "segments",
              "standingPoint",
-             "moon",
-             "sunAlt"
+             "azimuth",
+             "apparentAltitude",
+             "angularRadius",
+             "illuminatedFraction",
+             "sunAltitude"
             ],
             "additionalProperties": false
            },
@@ -4349,7 +4317,7 @@
             "heights": {
              "type": "string"
             },
-            "observerHeightRef": {
+            "heightRef": {
              "type": "string",
              "enum": [
               "ellipsoid",
@@ -4461,7 +4429,7 @@
             "azimuth",
             "terrestrialRefraction",
             "heights",
-            "observerHeightRef",
+            "heightRef",
             "targetHeightRef",
             "terrestrialRefractionK",
             "refraction",
@@ -4577,40 +4545,29 @@
            "moon"
           ]
          },
-         "target": {
-          "type": "object",
-          "properties": {
-           "lat": {
-            "type": "number",
-            "minimum": -90,
-            "maximum": 90
-           },
-           "lon": {
-            "type": "number",
-            "minimum": -180,
-            "maximum": 180
-           },
-           "height": {
-            "type": "number",
-            "minimum": -500,
-            "maximum": 100000,
-            "description": "Height of the point to frame (e.g. the figure's middle), metres; see heightRef."
-           },
-           "heightRef": {
-            "type": "string",
-            "enum": [
-             "ellipsoid",
-             "msl"
-            ],
-            "description": "What target.height is measured from: ellipsoid (default) or msl (EGM96)."
-           }
-          },
-          "required": [
-           "lat",
-           "lon",
-           "height"
+         "targetLat": {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90
+         },
+         "targetLon": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180
+         },
+         "targetHeight": {
+          "type": "number",
+          "minimum": -500,
+          "maximum": 100000,
+          "description": "Height of the point to frame (e.g. the figure's middle), metres; see targetHeightRef."
+         },
+         "targetHeightRef": {
+          "type": "string",
+          "enum": [
+           "ellipsoid",
+           "msl"
           ],
-          "additionalProperties": false
+          "description": "What targetHeight is measured from: ellipsoid (default) or msl (EGM96)."
          },
          "region": {
           "anyOf": [
@@ -4839,11 +4796,11 @@
           ],
           "description": "Where you can stand: a GeoJSON Polygon or MultiPolygon (holes allowed; a Feature wrapping one is accepted) or a bbox. Edges are straight lines in (lon, lat) (RFC 7946 §3.1.1); insideness is even-odd per polygon. At most 1 000 vertices and 100 rings, ≤ 50 km across, ≤ 100 km from the target and not containing it. Coordinates are quantised to 1e-7° (≤ 1.1 cm)."
          },
-         "observerHeight": {
+         "height": {
           "type": "number",
           "minimum": -500,
           "maximum": 100000,
-          "description": "Eye height, metres; see heightRef. Default: the eye on the geoid (heightMsl 0)."
+          "description": "Eye height wherever you stand, metres; see heightRef. Default: the eye on the geoid (heightMsl 0)."
          },
          "heightRef": {
           "type": "string",
@@ -4851,7 +4808,7 @@
            "ellipsoid",
            "msl"
           ],
-          "description": "What observerHeight is measured from: ellipsoid (default) or msl, in which case the eye is observerHeight + N(P) at every standing point P."
+          "description": "What height is measured from: ellipsoid (default) or msl, in which case the eye is height + N(P) at every standing point P."
          },
          "start": {
           "type": "string"
@@ -4886,15 +4843,8 @@
           "description": "Which point of the disc sits on the target (as /alignment): center (default), upper, lower, litCentroid (Moon)."
          },
          "include": {
-          "type": "array",
-          "items": {
-           "type": "string",
-           "enum": [
-            "sun",
-            "phase"
-           ]
-          },
-          "description": "Extra context per pass: sun (azimuth, true and apparent altitude) and/or phase (the Moon's full phase block)."
+          "type": "string",
+          "description": "Extra context per pass, as on every endpoint: sun (azimuth, true and apparent altitude), phase (the Moon's phase block), or sun,phase."
          },
          "minIlluminated": {
           "type": "number",
@@ -4911,7 +4861,9 @@
         },
         "required": [
          "body",
-         "target",
+         "targetLat",
+         "targetLon",
+         "targetHeight",
          "region",
          "start",
          "end"
@@ -4956,6 +4908,18 @@
       "required": false
      },
      {
+      "name": "heightRef",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "ellipsoid",
+        "msl"
+       ]
+      },
+      "required": false
+     },
+     {
       "name": "time",
       "in": "query",
       "schema": {
@@ -4990,13 +4954,38 @@
              "maximum": 180
             },
             "height": {
+             "type": "number",
+             "description": "Metres above the WGS-84 ellipsoid (same as heightEllipsoid; kept for compatibility)."
+            },
+            "heightEllipsoid": {
              "type": "number"
+            },
+            "heightMsl": {
+             "type": "number",
+             "description": "Metres above the EGM96 geoid (≈ mean sea level)."
+            },
+            "geoidUndulation": {
+             "type": "number",
+             "description": "EGM96 N, metres: heightEllipsoid = heightMsl + geoidUndulation."
+            },
+            "heightRef": {
+             "type": "string",
+             "enum": [
+              "ellipsoid",
+              "msl",
+              "default"
+             ],
+             "description": "What the request's height was measured from; default = no height given, the observer is on the geoid."
             }
            },
            "required": [
             "lat",
             "lon",
-            "height"
+            "height",
+            "heightEllipsoid",
+            "heightMsl",
+            "geoidUndulation",
+            "heightRef"
            ],
            "additionalProperties": false
           },
@@ -5069,6 +5058,16 @@
         }
        }
       }
+     },
+     "503": {
+      "description": "GeoidUnavailable",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/GeoidUnavailableEncoded"
+        }
+       }
+      }
      }
     }
    }
@@ -5097,7 +5096,7 @@
       "required": true
      },
      {
-      "name": "n",
+      "name": "count",
       "in": "query",
       "schema": {
        "type": "string"
@@ -5589,6 +5588,25 @@
     ],
     "additionalProperties": false
    },
+   "GeoidUnavailableEncoded": {
+    "type": "object",
+    "properties": {
+     "_tag": {
+      "type": "string",
+      "enum": [
+       "GeoidUnavailable"
+      ]
+     },
+     "message": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "_tag",
+     "message"
+    ],
+    "additionalProperties": false
+   },
    "InvalidInputEncoded": {
     "type": "object",
     "properties": {
@@ -5615,25 +5633,6 @@
       "type": "string",
       "enum": [
        "OutOfRange"
-      ]
-     },
-     "message": {
-      "type": "string"
-     }
-    },
-    "required": [
-     "_tag",
-     "message"
-    ],
-    "additionalProperties": false
-   },
-   "GeoidUnavailableEncoded": {
-    "type": "object",
-    "properties": {
-     "_tag": {
-      "type": "string",
-      "enum": [
-       "GeoidUnavailable"
       ]
      },
      "message": {

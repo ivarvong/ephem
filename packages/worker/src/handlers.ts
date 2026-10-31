@@ -67,7 +67,7 @@ export const SkyLive = HttpApiBuilder.group(EphemApi, "sky", h => h
     if (t0 < SUPPORTED.fromMs || t1 >= SUPPORTED.toMs) return yield* new OutOfRange({ message: `${q.date} is outside the supported range` })
     const { out, provenance } = yield* compute("day", blocksFor(jd(t0), jd(t1)), src =>
       dayRequest(src, { date: q.date, tz: q.tz, lat: q.lat, lon: q.lon, height: q.height, heightRef: q.heightRef, temperature: q.temperature, pressure: q.pressure,
-        horizon: q.horizon, horizonProfile: q.horizonProfile, limb: q.limb, dut1: q.dut1 }), o => ("ok" in o ? { "ephem.events": o.ok.events.length } : {}), geoidAt(q.lat))
+        horizon: q.horizon, horizonProfile: q.horizonProfile, aim: q.aim, dut1: q.dut1 }), o => ("ok" in o ? { "ephem.events": o.ok.events.length } : {}), geoidAt(q.lat))
     if ("error" in out) return yield* new InvalidInput({ message: out.error })
     return { ...out.ok, provenance }
   }).pipe(Effect.withSpan("day")))
@@ -81,7 +81,7 @@ export const SkyLive = HttpApiBuilder.group(EphemApi, "sky", h => h
     if (startMs < SUPPORTED.fromMs || endMs >= SUPPORTED.toMs) return yield* new OutOfRange({ message: "the window is outside 1972-01-01 … 2149-12-31 UTC" })
     const { out, provenance } = yield* compute("crossing", blocksFor(jd(startMs), jd(endMs)), src =>
       crossingRequest(src, { startMs, endMs, lat: q.lat, lon: q.lon, height: q.height, heightRef: q.heightRef, body: q.body, altitude: q.altitude, altitudeType: q.altitudeType,
-        horizonProfile: q.horizonProfile, limb: q.limb, direction: q.direction, temperature: q.temperature, pressure: q.pressure, dut1: q.dut1, include: parseInclude(q.include) ?? undefined, aim: q.aim }),
+        horizonProfile: q.horizonProfile, direction: q.direction, temperature: q.temperature, pressure: q.pressure, dut1: q.dut1, include: parseInclude(q.include) ?? undefined, aim: q.aim }),
       o => ("ok" in o ? { "ephem.crossings": o.ok.crossings.length } : {}), geoidAt(q.lat))
     if ("error" in out) return yield* new InvalidInput({ message: out.error })
     return { ...out.ok, provenance }
@@ -90,13 +90,13 @@ export const SkyLive = HttpApiBuilder.group(EphemApi, "sky", h => h
     const start = yield* parseUtc(q.start), end = yield* parseUtc(q.end), step = q.stepSeconds ?? 60
     if (end <= start) return yield* new InvalidInput({ message: "end must be after start" })
     if ((end - start) / 1000 / step > 2000) return yield* new InvalidInput({ message: "at most 2000 steps per request" })
-    if ((q.observerLat === undefined) !== (q.observerLon === undefined)) return yield* new InvalidInput({ message: "observerLat and observerLon go together" })
+    if ((q.lat === undefined) !== (q.lon === undefined)) return yield* new InvalidInput({ message: "lat and lon go together (a fixed spot to watch the pass from); omit both for where-to-stand only" })
     if (q.aim === "litCentroid" && q.body !== "moon") return yield* new InvalidInput({ message: "aim=litCentroid is the Moon's lit-area centroid: body must be moon" })
     const maxDistanceKm = q.maxDistanceKm ?? 20
-    const observer = q.observerLat !== undefined && q.observerLon !== undefined ? { lat: q.observerLat, lon: q.observerLon } : undefined
+    const observer = q.lat !== undefined && q.lon !== undefined ? { lat: q.lat, lon: q.lon } : undefined
     const { out, provenance } = yield* compute("alignment", blocksFor(jd(start), jd(end)), src =>
       alignmentRequest(src, { body: q.body, targetLat: q.targetLat, targetLon: q.targetLon, targetHeight: q.targetHeight, targetHeightRef: q.targetHeightRef,
-        observerHeight: q.observerHeight, heightRef: q.heightRef, startMs: start, endMs: end, stepSeconds: step, maxDistanceKm,
+        height: q.height, heightRef: q.heightRef, startMs: start, endMs: end, stepSeconds: step, maxDistanceKm,
         temperature: q.temperature, pressure: q.pressure, dut1: q.dut1, observer, include: parseInclude(q.include) ?? undefined, aim: q.aim }),
       o => ({ "ephem.instants": Math.floor((end - start) / 1000 / step) + 1, "ephem.track_points": o.track.length, "ephem.iterations": o.track.reduce((s, p) => s + p.iterations, 0), "ephem.passes": o.fromObserver?.passes.length }),
       geoidAcross(alignmentLatRange(q.targetLat, maxDistanceKm), ...(observer ? [observer.lat] : [])))
@@ -106,16 +106,16 @@ export const SkyLive = HttpApiBuilder.group(EphemApi, "sky", h => h
   .handle("sightline", ({ query: q }) => Effect.gen(function* () {
     const obstacles = parseObstacles(q.obstacles)
     if (typeof obstacles === "string") return yield* new InvalidInput({ message: obstacles })
-    const km = inverse(q.observerLat, q.observerLon, q.targetLat, q.targetLon).distanceM / 1000
+    const km = inverse(q.lat, q.lon, q.targetLat, q.targetLon).distanceM / 1000
     if (km > MAX_SIGHTLINE_KM) return yield* new InvalidInput({ message: `observer and target are ${km.toFixed(1)} km apart; at most ${MAX_SIGHTLINE_KM} km` })
     if (km < 0.001) return yield* new InvalidInput({ message: "observer and target are at the same place" })
     // Geoid bands for every latitude the line and the obstacles touch.
-    const lats = [q.observerLat, q.targetLat, ...obstacles.map(o => o.lat)], lo = Math.min(...lats), hi = Math.max(...lats)
+    const lats = [q.lat, q.targetLat, ...obstacles.map(o => o.lat)], lo = Math.min(...lats), hi = Math.max(...lats)
     const { out, provenance } = yield* compute("sightline", [], () => sightline({
-      observer: q.observerHeight === undefined ? { lat: q.observerLat, lon: q.observerLon, height: 0, heightRef: "msl" } : { lat: q.observerLat, lon: q.observerLon, height: q.observerHeight, heightRef: q.heightRef },
+      observer: q.height === undefined ? { lat: q.lat, lon: q.lon, height: 0, heightRef: "msl" } : { lat: q.lat, lon: q.lon, height: q.height, heightRef: q.heightRef },
       target: { lat: q.targetLat, lon: q.targetLon, height: q.targetHeight, heightRef: q.targetHeightRef },
       samples: q.samples ?? 101, obstacles }), o => ({ "ephem.instants": o.samples, "ephem.obstacles": o.obstacles.length }), geoidAcross([lo, hi]))
-    const observer = { ...out.observer, heightRef: q.observerHeight === undefined ? "default" as const : out.observer.heightRef }
+    const observer = { ...out.observer, heightRef: q.height === undefined ? "default" as const : out.observer.heightRef }
     return { ...out, observer, conventions: { ...SIGHTLINE_CONVENTIONS, terrestrialRefractionK: K_TERRESTRIAL, geoid: { model: GEOID.model, source: GEOID.source, interpolationErrorM: GEOID.interpolationErrorM } }, provenance }
   }).pipe(Effect.withSpan("sightline")))
   .handle("track", ({ query: q }) => Effect.gen(function* () {

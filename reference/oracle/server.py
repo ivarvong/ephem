@@ -217,8 +217,8 @@ def day(q):
     lat, lon = fnum(q, "lat", lo=-90, hi=90), fnum(q, "lon", lo=-180, hi=180)
     dut1 = fnum(q, "dut1", 0.0, -0.9, 0.9)
     T, P = fnum(q, "temperature", 10.0, -90, 60), fnum(q, "pressure", 1010.0, 0, 1100)
-    hs = heights(q, lat, lon); limb = q.get("limb", "upper")
-    if limb not in LIMB: raise BadInput("limb must be upper, center or lower")
+    hs = heights(q, lat, lon); limb = q.get("aim", "upper")
+    if limb not in LIMB: raise BadInput("aim must be upper, center or lower")
     if "horizonProfile" in q:
         if "horizon" in q: raise BadInput("horizon or horizonProfile, not both")
         prof, hz = parse_profile(q["horizonProfile"]), None
@@ -261,7 +261,7 @@ def day(q):
     ev = [(x, b, "blueHourStart" if k == "blueHourEnd*" else k) for x, b, k in ev]
     ev.sort(key=lambda e: (e[0], e[1], e[2]))
     R = None if prof is not None else rise_set_refraction(hz["altitude"], T, P)
-    conv = dict(riseSet=dict(limb=limb, horizon=dict(hz) if hz else dict(kind="profile", altitude=None, dip=None),
+    conv = dict(riseSet=dict(aim=dict(point=limb), horizon=dict(hz) if hz else dict(kind="profile", altitude=None, dip=None),
                              refraction=dict(temperatureC=T, pressureHpa=P, atHorizon=R), trueLimbAltitude=None if R is None else hz["altitude"] - R),
                 twilight=dict(civil=-6, nautical=-12, astronomical=-18), goldenHour={"from": -4, "to": 6}, blueHour={"from": -6, "to": -4})
     return dict(date=q["date"], tz=q["tz"], start=iso_ms(ts.tt_jd(t0)), end=iso_ms(ts.tt_jd(t1)), observer=observer_out(lat, lon, hs),
@@ -275,8 +275,8 @@ def crossing(q):
     body = q.get("body")
     if body not in ("sun", "moon"): raise BadInput("body must be sun or moon")
     B = SUN if body == "sun" else MOON
-    limb = q.get("limb", "center"); direction = q.get("direction", "either")
-    if limb not in LIMB or direction not in ("rise", "set", "either"): raise BadInput("bad limb or direction")
+    limb = q.get("aim", "center"); direction = q.get("direction", "either")
+    if limb not in LIMB or direction not in ("rise", "set", "either"): raise BadInput("bad aim or direction")
     if ("altitude" in q) == ("horizonProfile" in q): raise BadInput("altitude or horizonProfile")
     kind = q.get("altitudeType", "true")
     if kind not in ("true", "apparent"): raise BadInput("bad altitudeType")
@@ -314,7 +314,7 @@ def crossing(q):
         t = ts.tt_jd(x); p = body_position(o, B, t, T, P, None, topo)
         out.append(dict(time=iso_ms(t), direction="rise" if up else "set", azimuth=p["azimuth"], altitude=p["altitude"], altitudeRate=p["altitudeRate"]))
     return dict(body=body, start=iso_ms(ts.tt_jd(t0)), end=iso_ms(ts.tt_jd(t1)), observer=observer_out(lat, lon, hs), crossings=out,
-                conventions=dict(limb=limb, altitudeType="profile" if target is None else kind, trueLimbAltitude=target), provenance=PROV)
+                conventions=dict(aim=dict(point=limb), altitudeType="profile" if target is None else kind, trueLimbAltitude=target), provenance=PROV)
 
 # ── alignment ──
 def ecef(lat, lon, h):
@@ -371,13 +371,13 @@ def alignment(q):
     tN = geoid_n(tlat, tlon)
     if tref == "msl": th = th + tN
     step, maxd = fnum(q, "stepSeconds", 60.0, 1, 3600), fnum(q, "maxDistanceKm", 20.0, 0.01, 200)
-    if "observerHeight" not in q: oh, msl = 0.0, True          # no height: the eye on the geoid, as every endpoint
-    else: oh, msl = fnum(q, "observerHeight", lo=-500, hi=100000), oref == "msl"
+    if "height" not in q: oh, msl = 0.0, True          # no height: the eye on the geoid, as every endpoint
+    else: oh, msl = fnum(q, "height", lo=-500, hi=100000), oref == "msl"
     eye = (lambda la, lo: oh + geoid_n(la, lo)) if msl else (lambda la, lo: oh)
     T, P, dut1 = fnum(q, "temperature", 10.0), fnum(q, "pressure", 1010.0), fnum(q, "dut1", 0.0, -0.9, 0.9)
     s, e = parse_utc(q.get("start")), parse_utc(q.get("end"))
     if e <= s or (e - s).total_seconds() / step > 2000: raise BadInput("end must follow start, at most 2000 steps")
-    if ("observerLat" in q) != ("observerLon" in q): raise BadInput("observerLat and observerLon go together")
+    if ("lat" in q) != ("lon" in q): raise BadInput("lat and lon go together")
     ts = timescale_with_dut1(dut1); track = []
     n = int((e - s).total_seconds() // step) + 1
     for i in range(n):
@@ -385,8 +385,8 @@ def alignment(q):
         if p: track.append(p)
     out = dict(body=body, target=dict(lat=tlat, lon=tlon, height=th, heightEllipsoid=th, heightMsl=th - tN, geoidUndulation=tN, heightRef=tref),
                track=track, provenance=PROV)
-    if "observerLat" in q:
-        olat, olon = fnum(q, "observerLat", lo=-90, hi=90), fnum(q, "observerLon", lo=-180, hi=180)
+    if "lat" in q:
+        olat, olon = fnum(q, "lat", lo=-90, hi=90), fnum(q, "lon", lo=-180, hi=180)
         el, dist = target_elevation(olat, olon, eye(olat, olon), tlat, tlon, th)
         az_t, _, _ = GEOD.inv(olon, olat, tlon, tlat); az_t %= 360
         o = EARTH + wgs84.latlon(olat, olon, elevation_m=eye(olat, olon))
@@ -404,11 +404,11 @@ def alignment(q):
 ROUTES = {"/position": position, "/day": day, "/crossing": crossing, "/alignment": alignment}
 ALLOWED = {
     "/position": {"lat", "lon", "height", "heightRef", "time", "temperature", "pressure", "horizon", "dut1"},
-    "/day": {"lat", "lon", "height", "heightRef", "date", "tz", "temperature", "pressure", "horizon", "horizonProfile", "limb", "dut1"},
-    "/crossing": {"lat", "lon", "height", "heightRef", "body", "altitude", "altitudeType", "horizonProfile", "limb", "direction",
+    "/day": {"lat", "lon", "height", "heightRef", "date", "tz", "temperature", "pressure", "horizon", "horizonProfile", "aim", "dut1"},
+    "/crossing": {"lat", "lon", "height", "heightRef", "body", "altitude", "altitudeType", "horizonProfile", "aim", "direction",
                      "start", "end", "date", "tz", "temperature", "pressure", "dut1"},
-    "/alignment": {"body", "targetLat", "targetLon", "targetHeight", "targetHeightRef", "observerHeight", "heightRef", "start", "end", "stepSeconds", "maxDistanceKm",
-                      "temperature", "pressure", "dut1", "observerLat", "observerLon"},
+    "/alignment": {"body", "targetLat", "targetLon", "targetHeight", "targetHeightRef", "height", "heightRef", "start", "end", "stepSeconds", "maxDistanceKm",
+                      "temperature", "pressure", "dut1", "lat", "lon"},
 }
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass

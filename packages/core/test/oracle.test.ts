@@ -55,13 +55,13 @@ describe("day", () => {
   it.each(fx.day.map((c: any) => [`${c.query.date} ${c.query.tz}`, c]) as [string, any][])("%s", (_t, c: any) => {
     const q = c.query, e = c.expect, ctx = `${q.date} ${q.tz} @${q.lat},${q.lon}`
     const out = dayRequest(diskBlocks, { date: q.date, tz: q.tz, ...obs(q), temperature: num(q, "temperature"), pressure: num(q, "pressure"), horizon: horizon(q),
-      horizonProfile: q.horizonProfile, limb: q.limb as "upper" | "center" | "lower" | undefined, dut1: num(q, "dut1") })
+      horizonProfile: q.horizonProfile, aim: (q.aim ?? q.limb) as "upper" | "center" | "lower" | undefined, dut1: num(q, "dut1") })   // fixtures recorded with the old name `limb`
     if (!("ok" in out)) throw new Error(out.error)
     const r = out.ok
     expect(r.start).toBe(e.start); expect(r.end).toBe(e.end)
     cmpObserver(r.observer, e.observer, ctx)
     const rs = r.conventions.riseSet, es = e.conventions.riseSet
-    expect(rs.limb).toBe(es.limb)
+    expect(rs.aim.point).toBe(es.aim?.point ?? es.limb)
     nullable("day.horizon.altitude", rs.horizon.altitude, es.horizon.altitude, TOL.angle, ctx)
     nullable("day.refraction.atHorizon", rs.refraction.atHorizon, es.refraction.atHorizon, TOL.angle, ctx)
     nullable("day.trueLimbAltitude", rs.trueLimbAltitude, es.trueLimbAltitude, TOL.angle, ctx)
@@ -76,7 +76,7 @@ describe("crossing", () => {
     const q = c.query, e = c.expect, ctx = _t
     const w = crossingWindow(q); if (!("ok" in w)) throw new Error(w.error)
     const out = crossingRequest(diskBlocks, { ...w.ok, ...obs(q), body: q.body, altitude: num(q, "altitude"), altitudeType: q.altitudeType, horizonProfile: q.horizonProfile,
-      limb: q.limb, direction: q.direction, temperature: num(q, "temperature"), pressure: num(q, "pressure"), dut1: num(q, "dut1") })
+      aim: q.aim ?? q.limb, direction: q.direction, temperature: num(q, "temperature"), pressure: num(q, "pressure"), dut1: num(q, "dut1") })
     if (!("ok" in out)) throw new Error(out.error)
     const r = out.ok
     expect(r.start).toBe(e.start); expect(r.end).toBe(e.end); cmpObserver(r.observer, e.observer, ctx)

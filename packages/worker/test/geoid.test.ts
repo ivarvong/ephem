@@ -66,11 +66,12 @@ describe("geoid bands via BlockStore", () => {
     expect(calls).toEqual(geoidBandsFor(40.7))   // L1
     expect(r1.observer.geoidUndulation).toBe(want)
   })
-  it("routes without an observer never touch the geoid; alignment loads only the bands its standing points can reach", async () => {
+  it("routes without an observer never touch the geoid; magnetic has observer heights now; alignment loads only the bands its standing points can reach", async () => {
     const calls: number[] = []
     const h = makeHandler(blocks(), undefined, undefined, makeGeoid(async b => { calls.push(b); throw new Error("no") }))
-    expect((await h(new Request("http://x/magnetic?lat=40.7&lon=-74&time=2026-10-28T12:00:00Z"))).status).toBe(200)
+    expect((await h(new Request("http://x/healthz"))).status).toBe(200)
     expect(calls).toEqual([])
+    expect((await h(new Request("http://x/magnetic?lat=40.7&lon=-74&time=2026-10-28T12:00:00Z"))).status).toBe(503)   // heightRef: fails closed like every observer
     // alignment has heights (heightRef / targetHeightRef, and the eye on the geoid by default) since 2026-10-30
     const ok: number[] = []
     const h2 = makeHandler(blocks(), undefined, undefined, makeGeoid(async b => { ok.push(b); return { buf: ab(bundledGeoidBand(b)), status: "MISS" } }))

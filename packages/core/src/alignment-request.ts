@@ -13,8 +13,8 @@ export interface AlignmentRequest {
   readonly body: BodyName
   readonly targetLat: number; readonly targetLon: number; readonly targetHeight: number
   readonly targetHeightRef?: HeightRef | undefined      // default ellipsoid (as `height` everywhere)
-  readonly observerHeight?: number | undefined          // default: the eye on the geoid (heightMsl 0), as every endpoint
-  readonly heightRef?: HeightRef | undefined            // what observerHeight is measured from; default ellipsoid
+  readonly height?: number | undefined          // default: the eye on the geoid (heightMsl 0), as every endpoint
+  readonly heightRef?: HeightRef | undefined            // what height is measured from; default ellipsoid
   readonly startMs: number; readonly endMs: number; readonly stepSeconds: number; readonly maxDistanceKm: number
   readonly temperature?: number | undefined; readonly pressure?: number | undefined; readonly dut1?: number | undefined
   readonly observer?: { readonly lat: number; readonly lon: number } | undefined
@@ -27,7 +27,7 @@ export const ALIGNMENT_CONVENTIONS = {
   azimuth: "track[].azimuth: the body's azimuth seen from that standing point, degrees from true north through east, [0, 360). By construction it equals the forward geodesic (WGS-84) azimuth from the standing point to the target.",
   apparentAltitude: "track[].apparentAltitude: the body's apparent (refracted) altitude seen from the standing point = the target's apparent elevation from there, degrees. With aim, azimuth and apparentAltitude are the aim point's.",
   terrestrialRefraction: `Modelled, as a constant coefficient: the target's apparent elevation = its geometric elevation (exact WGS-84 ECEF vectors, eye to target) + k·θ/2, k = ${K_TERRESTRIAL}, θ = geodesic distance / ${R_MEAN_M} m (the sight line is an arc of curvature k/R). No atmospheric profile, inversion or ducting; real k near the ground varies roughly 0–0.3 with the temperature gradient, which moves the elevation by about ±k·θ/2 (±0.005° at 4 km).`,
-  heights: "observerHeight and targetHeight are metres above the WGS-84 ellipsoid by default; heightRef=msl / targetHeightRef=msl make them metres above the EGM96 geoid (≈ mean sea level). With heightRef=msl the eye's ellipsoidal height is observerHeight + N at every standing point (N varies along the track). Without observerHeight the eye is on the geoid (heightMsl 0), as on every other endpoint. Each track point gives heightEllipsoid, heightMsl and geoidUndulation N (heightEllipsoid = heightMsl + N).",
+  heights: "height (the eye, wherever you stand) and targetHeight are metres above the WGS-84 ellipsoid by default; heightRef=msl / targetHeightRef=msl make them metres above the EGM96 geoid (≈ mean sea level). With heightRef=msl the eye's ellipsoidal height is height + N at every standing point (N varies along the track). Without height the eye is on the geoid (heightMsl 0), as on every other endpoint. Each track point gives heightEllipsoid, heightMsl and geoidUndulation N (heightEllipsoid = heightMsl + N).",
   rates: `altitudeRate, azimuthRate: degrees per minute, d(true altitude)/dt and d(azimuth)/dt of the body seen from the (fixed) standing point; ${RATE_METHOD}, as /position.`,
 } as const
 
@@ -43,10 +43,10 @@ export const alignmentRequest = (src: BlockSource, q: AlignmentRequest) => {
   const T = q.temperature ?? T_DEFAULT, P = q.pressure ?? P_DEFAULT
   const tN = geoidUndulation(q.targetLat, q.targetLon), tRef = q.targetHeightRef ?? "ellipsoid"
   const tE = tRef === "msl" ? q.targetHeight + tN : q.targetHeight
-  const oRef: HeightRef | "default" = q.observerHeight === undefined ? "default" : q.heightRef ?? "ellipsoid"
+  const oRef: HeightRef | "default" = q.height === undefined ? "default" : q.heightRef ?? "ellipsoid"
   const inp: AlignmentInput = {
     body: q.body, target: { lat: q.targetLat, lon: q.targetLon, height: tE },
-    observerHeight: q.observerHeight ?? 0, observerHeightRef: oRef === "ellipsoid" ? "ellipsoid" : "msl",
+    observerHeight: q.height ?? 0, observerHeightRef: oRef === "ellipsoid" ? "ellipsoid" : "msl",
     startMs: q.startMs, endMs: q.endMs, stepSeconds: q.stepSeconds, maxDistanceKm: q.maxDistanceKm,
     temperature: T, pressure: P, dut1: q.dut1, observer: q.observer, aim: q.aim,
   }
@@ -62,7 +62,7 @@ export const alignmentRequest = (src: BlockSource, q: AlignmentRequest) => {
   }))
   let fromObserver
   if (r.fromObserver && q.observer) {
-    const h = observerHeights(q.observer.lat, q.observer.lon, q.observerHeight, q.heightRef)
+    const h = observerHeights(q.observer.lat, q.observer.lon, q.height, q.heightRef)
     const geo = { lat: q.observer.lat, lon: q.observer.lon, height: h.heightEllipsoid }
     const passes = r.fromObserver.passes.map(x => ({ ...x, ...contextAt(src, inc, geo, h.heightMsl, Date.parse(x.time), ctx) }))
     fromObserver = { ...r.fromObserver, passes, observer: { lat: q.observer.lat, lon: q.observer.lon, height: h.heightEllipsoid, heightEllipsoid: h.heightEllipsoid, heightMsl: h.heightMsl, geoidUndulation: h.geoidUndulation, heightRef: h.heightRef } }
@@ -76,7 +76,7 @@ export const alignmentRequest = (src: BlockSource, q: AlignmentRequest) => {
       ...ALIGNMENT_CONVENTIONS,
       ...(inc.size ? { include: CONTEXT_CONVENTIONS } : {}),
       ...(q.aim !== undefined ? { aim: { point: q.aim, definition: AIM_DEFINITIONS[q.aim] } } : {}),
-      observerHeightRef: oRef, targetHeightRef: tRef,
+      heightRef: oRef, targetHeightRef: tRef,
       terrestrialRefractionK: K_TERRESTRIAL,
       refraction: { model: REFRACTION_MODEL, temperatureC: T, pressureHpa: P },
       geoid: { model: GEOID.model, source: GEOID.source, interpolationErrorM: GEOID.interpolationErrorM },

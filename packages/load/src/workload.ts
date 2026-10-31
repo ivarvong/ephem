@@ -230,10 +230,10 @@ export const build = (kind: Kind, rand: () => number, i: number, now: number): B
     }
     case "weather": {
       const [la0, la1, lo0, lo1] = BOXES[Math.floor(rand() * BOXES.length)]!
-      return { kind, method: "GET", path: `/weather?lat=${fx(la0 + (la1 - la0) * rand(), 3)}&lon=${fx(lo0 + (lo1 - lo0) * rand(), 3)}&n=${1 + Math.floor(rand() * 3)}` }
+      return { kind, method: "GET", path: `/weather?lat=${fx(la0 + (la1 - la0) * rand(), 3)}&lon=${fx(lo0 + (lo1 - lo0) * rand(), 3)}&count=${1 + Math.floor(rand() * 3)}` }
     }
     case "search": {
-      const body = { body: "moon", target: { lat: 40.68925, lon: -74.0445, height: 71 + rand(), heightRef: "msl" }, region: park, observerHeight: 5, heightRef: "msl", start: "2026-10-30T00:00:00Z", end: "2027-10-30T00:00:00Z" }
+      const body = { body: "moon", targetLat: 40.68925, targetLon: -74.0445, targetHeight: 71 + rand(), targetHeightRef: "msl", region: park, height: 5, heightRef: "msl", start: "2026-10-30T00:00:00Z", end: "2027-10-30T00:00:00Z" }
       return { kind, method: "POST", path: "/alignment/search", body: JSON.stringify(body) }
     }
   }

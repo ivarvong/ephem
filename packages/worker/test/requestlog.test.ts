@@ -140,18 +140,18 @@ describe("request rows (through the app)", () => {
     for (const r of [oor, bad, nf]) matchesSchema(r.rows[0]!)
   })
   it("/weather records the feed tier and data age", async () => {
-    const { res, rows } = await run("/weather?lat=40.7&lon=-74&n=2")
+    const { res, rows } = await run("/weather?lat=40.7&lon=-74&count=2")
     expect(res.status).toBe(200)
     expect(rows[0]).toMatchObject({ route: "/weather", weather_tier: expect.any(String), lat_r: 40.7, lon_r: -74 })
     expect(rows[0]!.data_age_s).toBeTypeOf("number"); matchesSchema(rows[0]!)
   })
   it("an MCP tools/call is one row (not one per in-process API call), with method, tool, client and the tool's work", async () => {
-    const body = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "sun_moon_position", arguments: { lat: 40.7127, lon: -74.0059, time: "2026-10-28T11:51:00Z" },
+    const body = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "position", arguments: { lat: 40.7127, lon: -74.0059, time: "2026-10-28T11:51:00Z" },
       _meta: { "io.modelcontextprotocol/protocolVersion": LATEST, "io.modelcontextprotocol/clientCapabilities": {}, "io.modelcontextprotocol/clientInfo": { name: "vitest", version: "1" } } } }
     const { res, rows } = await run("/mcp", { method: "POST", body: JSON.stringify(body),
-      headers: { "content-type": "application/json", "mcp-protocol-version": LATEST, "mcp-method": "tools/call", "mcp-name": "sun_moon_position" } })
+      headers: { "content-type": "application/json", "mcp-protocol-version": LATEST, "mcp-method": "tools/call", "mcp-name": "position" } })
     expect(res.status).toBe(200); expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ method: "POST", route: "/mcp", mcp_method: "tools/call", mcp_tool: "sun_moon_position", ua_family: "mcp:vitest", lat_r: 40.7, lon_r: -73.99, status: 200 })
+    expect(rows[0]).toMatchObject({ method: "POST", route: "/mcp", mcp_method: "tools/call", mcp_tool: "position", ua_family: "mcp:vitest", lat_r: 40.7, lon_r: -73.99, status: 200 })
     expect(rows[0]!.blocks).toBeGreaterThan(0); matchesSchema(rows[0]!)
   })
   it("an MCP JSON-RPC error is tagged", async () => {

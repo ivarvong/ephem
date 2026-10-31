@@ -8,7 +8,7 @@
 import * as Effect from "effect/Effect"
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder"
 import { EphemApi, GeoidUnavailable, InvalidInput, OutOfRange, type SearchPayload, type SearchWindowResponse } from "@ephem/api"
-import { SEARCH, SUPPORTED, WINDOW_MS, blocksFor, decodeRegion, encodeRegion, isoMs, parseRegion, searchLatRange, searchWindowRequest, windowReadRange, windowsFor } from "@ephem/core"
+import { SEARCH, SUPPORTED, parseInclude, WINDOW_MS, blocksFor, decodeRegion, encodeRegion, isoMs, parseRegion, searchLatRange, searchWindowRequest, windowReadRange, windowsFor } from "@ephem/core"
 import { PROV, compute, geoidAcross, jd, parseUtc } from "./handlers.ts"
 import { Edge, canonical, forwardHeaders } from "./responses.ts"
 
@@ -18,7 +18,7 @@ export const MAX_PASSES = 1000
 
 interface WindowQuery {
   readonly body: "sun" | "moon"; readonly targetLat: number; readonly targetLon: number; readonly targetHeight: number; readonly targetHeightRef?: "ellipsoid" | "msl" | undefined
-  readonly observerHeight?: number | undefined; readonly heightRef?: "ellipsoid" | "msl" | undefined
+  readonly height?: number | undefined; readonly heightRef?: "ellipsoid" | "msl" | undefined
   readonly region: string; readonly start: string
   readonly temperature?: number | undefined; readonly pressure?: number | undefined; readonly dut1?: number | undefined
   readonly aim?: "center" | "upper" | "lower" | "litCentroid" | undefined
@@ -34,7 +34,7 @@ const windowAnswer = (q: WindowQuery) => Effect.gen(function* () {
   if ("error" in reg) return yield* new InvalidInput({ message: reg.error })
   const { out, provenance } = yield* compute("search", blocksFor(jd(fromMs), jd(toMs)), src =>
     searchWindowRequest(src, { body: q.body, targetLat: q.targetLat, targetLon: q.targetLon, targetHeight: q.targetHeight, targetHeightRef: q.targetHeightRef,
-      observerHeight: q.observerHeight, heightRef: q.heightRef, region: reg.ok, encoding: q.region, startMs: start, temperature: q.temperature, pressure: q.pressure, dut1: q.dut1, aim: q.aim }),
+      height: q.height, heightRef: q.heightRef, region: reg.ok, encoding: q.region, startMs: start, temperature: q.temperature, pressure: q.pressure, dut1: q.dut1, aim: q.aim }),
     o => ("ok" in o ? { "ephem.passes": o.ok.passes.length, "ephem.region_vertices": o.ok.region.vertices, ...Object.fromEntries(Object.entries(o.ok.counters).map(([k, v]) => [`ephem.search.${k}`, v])) } : {}),
     geoidAcross(searchLatRange(reg.ok, q.targetLat)))
   if ("error" in out) return yield* new InvalidInput({ message: out.error })
@@ -43,8 +43,8 @@ const windowAnswer = (q: WindowQuery) => Effect.gen(function* () {
 
 /** The window GET for a POST: every parameter explicit (defaults filled), so equal searches share keys. */
 export const windowQuery = (p: SearchPayload, encoding: string, startMs: number): WindowQuery => ({
-  body: p.body, targetLat: p.target.lat, targetLon: p.target.lon, targetHeight: p.target.height, targetHeightRef: p.target.heightRef ?? "ellipsoid",
-  ...(p.observerHeight !== undefined ? { observerHeight: p.observerHeight, heightRef: p.heightRef ?? "ellipsoid" } : {}),
+  body: p.body, targetLat: p.targetLat, targetLon: p.targetLon, targetHeight: p.targetHeight, targetHeightRef: p.targetHeightRef ?? "ellipsoid",
+  ...(p.height !== undefined ? { height: p.height, heightRef: p.heightRef ?? "ellipsoid" } : {}),
   region: encoding, start: isoMs(startMs), temperature: p.temperature ?? 10, pressure: p.pressure ?? 1010, dut1: p.dut1 ?? 0,
   ...(p.aim !== undefined ? { aim: p.aim } : {}),
 })
@@ -58,6 +58,14 @@ const failFrom = (status: number, body: any) =>
     : undefined
 
 type Pass = SearchWindowResponse["passes"][number]
+/** A window's pass in the public shape (src: the window's every-field pass; docs/API.md "one vocabulary"). */
+const publicPass = (x: Pass, include: ReadonlySet<string>) => ({
+  time: x.time, segments: x.segments,
+  standingPoint: { lat: x.standingPoint.lat, lon: x.standingPoint.lon, distanceKm: x.standingPoint.distanceKm },
+  azimuth: x.standingPoint.azimuth, apparentAltitude: x.standingPoint.apparentAltitude, angularRadius: x.standingPoint.angularRadius,
+  illuminatedFraction: x.moon.illuminated, sunAltitude: x.sunAlt,
+  ...(include.has("sun") && x.sun ? { sun: x.sun } : {}), ...(include.has("phase") && x.phase ? { phase: x.phase } : {}),
+})
 const tally = (xs: ReadonlyArray<string>) => { const m = new Map<string, number>(); for (const x of xs) m.set(x, (m.get(x) ?? 0) + 1); return [...m].map(([k, v]) => `${k}:${v}`).join(",") }
 
 export const SearchLive = HttpApiBuilder.group(EphemApi, "search", h => h
@@ -84,11 +92,11 @@ export const SearchLive = HttpApiBuilder.group(EphemApi, "search", h => h
       return { cache, body: body as SearchWindowResponse }
     }).pipe(Effect.withSpan("search.window.fetch", { attributes: { "ephem.window": isoMs(w) } })), { concurrency: "unbounded" })
 
-    const first = results[0]!.body, include = new Set(p.include ?? [])
+    const first = results[0]!.body, include = parseInclude(p.include) ?? new Set<string>()
     const all: Pass[] = results.flatMap(r => r.body.passes).filter(x => { const t = Date.parse(x.segments[0]!.enter.time); return t >= start && t < end })
     if (all.length > MAX_PASSES) return yield* new InvalidInput({ message: `${all.length} passes; at most ${MAX_PASSES}: use a smaller region or window` })
     const kept = all.filter(x => (p.minIlluminated === undefined || x.moon.illuminated >= p.minIlluminated) && (p.maxSunAltitude === undefined || x.sunAlt <= p.maxSunAltitude))
-      .map(({ sun, phase, ...x }) => ({ ...x, ...(include.has("sun") ? { sun } : {}), ...(include.has("phase") ? { phase } : {}) }))
+      .map(x => publicPass(x, include))
     const counters: Record<string, number> = {}
     for (const r of results) for (const [k, v] of Object.entries(r.body.counters)) counters[k] = k === "maxSagittaM" ? Math.max(counters[k] ?? 0, v) : (counters[k] ?? 0) + v
     const statuses = results.map(r => r.cache)

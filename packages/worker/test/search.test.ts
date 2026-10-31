@@ -15,7 +15,7 @@ const FIX = resolve(__dirname, "../../core/test/fixtures")
 const blocks = () => makeBlocks(direct(async first => { const b = readFileSync(`${FIX}/blocks/${first}.bin`); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer }))
 // © OpenStreetMap contributors, ODbL 1.0 (OSM way 56469108; attribution in the fixture's properties)
 const PARK = JSON.parse(readFileSync(`${FIX}/regions/brooklyn-bridge-park.geojson`, "utf8"))
-const BODY = { body: "moon", target: { lat: 40.68925, lon: -74.0445, height: 70, heightRef: "msl" }, region: PARK, observerHeight: 5, heightRef: "msl", start: "2026-11-16T00:00:00Z", end: "2026-11-18T00:00:00Z" }
+const BODY = { body: "moon", targetLat: 40.68925, targetLon: -74.0445, targetHeight: 70, targetHeightRef: "msl", region: PARK, height: 5, heightRef: "msl", start: "2026-11-16T00:00:00Z", end: "2026-11-18T00:00:00Z" }
 const local = makeHandler(blocks())
 const post = async (h: typeof local, body: unknown, headers: Record<string, string> = {}) => {
   const r = await h(new Request("http://x/alignment/search", { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) }))
@@ -31,17 +31,18 @@ describe("POST /alignment/search", () => {
     expect(Math.abs(Date.parse(e.time) - Date.parse("2026-11-17T03:45:19.646Z"))).toBeLessThanOrEqual(5)
     expect(e.lat).toBeCloseTo(40.70329, 5); expect(e.lon).toBeCloseTo(-73.9963, 5)
     expect(p.segments).toHaveLength(2)                                   // the track crosses an inlet
-    expect(p.moon.illuminated).toBeCloseTo(0.469, 3); expect(p.moon.alt).toBeCloseTo(0.80, 2); expect(p.sunAlt).toBeLessThan(-60)
+    expect(p.illuminatedFraction).toBeCloseTo(0.469, 3); expect(p.apparentAltitude).toBeCloseTo(0.80, 2); expect(p.sunAltitude).toBeLessThan(-60)
+    expect(p.angularRadius).toBeCloseTo(0.26, 1)
     expect(p).not.toHaveProperty("sun"); expect(p).not.toHaveProperty("phase")
-    expect(j.target).toMatchObject({ heightMsl: 70, heightRef: "msl" }); expect(j.observer).toMatchObject({ observerHeight: 5, heightRef: "msl" })
+    expect(j.target).toMatchObject({ heightMsl: 70, heightRef: "msl" }); expect(j.observer).toMatchObject({ height: 5, heightRef: "msl" })
     expect(j.region).toMatchObject({ polygons: 1, vertices: 423, encoding: encodeRegion((parseRegion(PARK) as any).ok) })
-    expect(j.conventions).toMatchObject({ observerHeightRef: "msl", targetHeightRef: "msl", terrestrialRefractionK: 0.13 })
+    expect(j.conventions).toMatchObject({ heightRef: "msl", targetHeightRef: "msl", terrestrialRefractionK: 0.13 })
     expect(j.search.windows.map((w: any) => w.cache)).toEqual(["LOCAL"]); expect(j.search.counters.anomalies).toBe(0)
     expect(j.provenance.diagnostics.cache.windows).toBe(1)
   }, 30_000)
   it("filters and include run after the windows", async () => {
-    const dark = await post(local, { ...BODY, maxSunAltitude: -4, minIlluminated: 0.1, include: ["sun", "phase"] })
-    expect(dark.j.passes).toHaveLength(1); expect(dark.j.passes[0].phase.name).toMatch(/quarter|crescent|gibbous/); expect(dark.j.passes[0].sun.altitude).toBe(dark.j.passes[0].sunAlt)
+    const dark = await post(local, { ...BODY, maxSunAltitude: -4, minIlluminated: 0.1, include: "sun,phase" })
+    expect(dark.j.passes).toHaveLength(1); expect(dark.j.passes[0].phase.name).toMatch(/quarter|crescent|gibbous/); expect(dark.j.passes[0].sun.altitude).toBe(dark.j.passes[0].sunAltitude)
     const bright = await post(local, { ...BODY, minIlluminated: 0.5 })
     expect(bright.j.passes).toHaveLength(0); expect(bright.j.search.passesBeforeFilters).toBe(1)
   }, 30_000)
@@ -57,7 +58,7 @@ describe("POST /alignment/search", () => {
     await bad({ end: "2028-01-01T00:00:00Z" }, 422, /at most 400 days/)
     await bad({ region: [-74.05, 40.68, -74.04, 40.70] }, 422, /target is inside the region/)
     await bad({ region: [-74, 40, -73, 41] }, 422, /km across/)
-    await bad({ observerHeight: 200 }, 422, /above the eye/)
+    await bad({ height: 200 }, 422, /above the eye/)
     await bad({ start: "1960-01-01T00:00:00Z" }, 422, /outside/)
     expect((await post(local, { ...BODY, nope: 1 })).status).toBe(400)
   }, 30_000)
@@ -65,7 +66,7 @@ describe("POST /alignment/search", () => {
 
 describe("GET /internal/alignment-search-window", () => {
   const enc = encodeRegion((parseRegion(PARK) as any).ok)
-  const W = `${SEARCH_WINDOW_PATH}?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&observerHeight=5&heightRef=msl&region=${enc}&start=2026-11-03T00:00:00Z`
+  const W = `${SEARCH_WINDOW_PATH}?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&height=5&heightRef=msl&region=${enc}&start=2026-11-03T00:00:00Z`
   it("is deterministic (immutable) and refuses off-grid starts and non-canonical regions", async () => {
     expect(deterministic(new URL("http://x" + W))).toBe(true)
     const r = await local(new Request("http://x" + W)); const j = await r.json() as any
@@ -92,13 +93,13 @@ describe("front door → Api windows (fake Workers Caching)", () => {
     const a = await post(front, scan, { "cf-ray": "abc-EWR" })
     expect(a.status).toBe(200); expect(a.j.search.windows.map((w: any) => w.cache)).toEqual(["MISS", "MISS", "MISS"])
     expect(keys.every(k => k.startsWith(SEARCH_WINDOW_PATH + "?"))).toBe(true)
-    const b = await post(front, { ...scan, maxSunAltitude: -4, include: ["phase"] })
+    const b = await post(front, { ...scan, maxSunAltitude: -4, include: "phase" })
     expect(b.j.search.windows.map((w: any) => w.cache)).toEqual(["HIT", "HIT", "HIT"])
     const c = await post(front, { ...scan, start: "2026-11-02T00:00:00Z", end: "2027-01-05T00:00:00Z" })
     expect(c.j.search.windows.map((w: any) => w.cache)).toEqual(["HIT", "HIT", "HIT", "MISS"])   // only the new window computes
     expect(store.size).toBe(4)
     const strip = (x: any) => x.passes.map((p: any) => p.segments)
-    expect(strip(b.j)).toEqual(strip(a.j).filter((_: unknown, i: number) => a.j.passes[i].sunAlt <= -4))
+    expect(strip(b.j)).toEqual(strip(a.j).filter((_: unknown, i: number) => a.j.passes[i].sunAltitude <= -4))
     // the merged answer equals the in-process one
     expect(strip(a.j)).toEqual(strip((await post(local, scan)).j))
   }, 60_000)

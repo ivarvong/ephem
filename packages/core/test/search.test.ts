@@ -153,11 +153,11 @@ describe("search: the customer's Statue of Liberty / Brooklyn Bridge Park scan (
   })
   it("request level: heights, region info and conventions echoed", () => {
     const w = windowsFor(Date.parse("2026-11-16T00:00:00Z"), Date.parse("2026-11-17T00:00:00Z"))[0]!
-    const r = searchWindowRequest(diskBlocks, { body: "moon", targetLat: LIBERTY.lat, targetLon: LIBERTY.lon, targetHeight: 70, targetHeightRef: "msl", observerHeight: 5, heightRef: "msl", region: park, encoding: encodeRegion(park), startMs: w })
+    const r = searchWindowRequest(diskBlocks, { body: "moon", targetLat: LIBERTY.lat, targetLon: LIBERTY.lon, targetHeight: 70, targetHeightRef: "msl", height: 5, heightRef: "msl", region: park, encoding: encodeRegion(park), startMs: w })
     if (!("ok" in r)) throw new Error(r.error)
     expect(r.ok.target).toMatchObject({ heightMsl: 70, heightRef: "msl" }); expect(r.ok.target.geoidUndulation).toBeCloseTo(-32.9, 1)
     expect(r.ok.region).toMatchObject({ polygons: 1, rings: 1, vertices: 423 })
-    expect(r.ok.conventions).toMatchObject({ observerHeightRef: "msl", targetHeightRef: "msl", terrestrialRefractionK: 0.13 })
+    expect(r.ok.conventions).toMatchObject({ heightRef: "msl", targetHeightRef: "msl", terrestrialRefractionK: 0.13 })
     expect(r.ok.geometry.elevation.min).toBeGreaterThan(0.6); expect(r.ok.geometry.elevation.max).toBeLessThan(1.1)
   })
 })

@@ -12,7 +12,7 @@ if [ "${LOAD:-}" = weather ]; then
     for _ in 1 2 3 4; do
       read -r la0 la1 lo0 lo1 <<< "${BOXES[$((RANDOM % ${#BOXES[@]}))]}"
       LAT=$(awk -v a="$la0" -v b="$la1" -v r=$RANDOM 'BEGIN{printf "%.3f", a+(b-a)*r/32767}'); LON=$(awk -v a="$lo0" -v b="$lo1" -v r=$RANDOM 'BEGIN{printf "%.3f", a+(b-a)*r/32767}')
-      curl -s -o /dev/null -w "w %{http_code} %{time_total}\n" "$B/weather?lat=$LAT&lon=$LON&n=$((1 + RANDOM % 3))" &
+      curl -s -o /dev/null -w "w %{http_code} %{time_total}\n" "$B/weather?lat=$LAT&lon=$LON&count=$((1 + RANDOM % 3))" &
     done
     sleep 0.25
   done
@@ -23,7 +23,7 @@ if [ "${LOAD:-}" = search ]; then
   for i in $(seq 1 "$N"); do
     H=$(awk -v r=$RANDOM -v s=$RANDOM -v t="$(date +%s)" 'BEGIN{printf "%.6f", 71 + ((t % 1000) * 1e6 + r * 32768 + s) % 1e9 / 1e9}')
     curl -s -o /dev/null -w "s %{http_code} %{time_total}\n" -X POST -H 'content-type: application/json' "$B/alignment/search" \
-      --data "{\"body\":\"moon\",\"target\":{\"lat\":40.68925,\"lon\":-74.0445,\"height\":$H,\"heightRef\":\"msl\"},\"region\":$PARK,\"observerHeight\":5,\"heightRef\":\"msl\",\"start\":\"2026-10-30T00:00:00Z\",\"end\":\"2027-10-30T00:00:00Z\"}" &
+      --data "{\"body\":\"moon\",\"targetLat\":40.68925,\"targetLon\":-74.0445,\"targetHeight\":$H,\"targetHeightRef\":\"msl\",\"region\":$PARK,\"height\":5,\"heightRef\":\"msl\",\"start\":\"2026-10-30T00:00:00Z\",\"end\":\"2027-10-30T00:00:00Z\"}" &
     sleep "${SEARCH_SLEEP:-0.5}"
   done
   wait; exit 0

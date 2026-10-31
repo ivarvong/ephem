@@ -6,7 +6,8 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder"
 import { EphemApi, InvalidInput, OutOfRange, WeatherUnavailable, type WeatherResponse } from "@ephem/api"
-import { SUPPORTED, WMM_VALID, decimalYear, wmm } from "@ephem/core"
+import { SUPPORTED, WMM_VALID, decimalYear, observerHeights, wmm } from "@ephem/core"
+import { Geoid, geoidCache } from "./geoid.ts"
 import { nearest, type Metar } from "./metar.ts"
 import { currentTraceparent } from "./trace.ts"
 import { FEED_URL, FRESH_MS, type Feed, type FeedResult } from "./metar-feed.ts"
@@ -22,7 +23,7 @@ const httpDate = (s: string | null) => { if (!s) return null; const t = Date.par
 export const declinationAt = (lat: number, lon: number, utcMs: number, heightM = 0) => wmm(lat, lon, heightM / 1000, decimalYear(utcMs))
 
 export class Weather extends Context.Service<Weather, {
-  readonly nearest: (q: { readonly lat: number; readonly lon: number; readonly n?: number | undefined }) => Effect.Effect<WeatherResponse, WeatherUnavailable>
+  readonly nearest: (q: { readonly lat: number; readonly lon: number; readonly count?: number | undefined }) => Effect.Effect<WeatherResponse, WeatherUnavailable>
 }>()("@ephem/worker/Weather") {}
 
 const station = (s: Metar, distanceKm: number, bearing: number, decl: number, now: number) => {
@@ -60,7 +61,7 @@ export const weatherLive = (feed: Feed) => Layer.succeed(Weather, {
       Effect.withSpan("metar.feed"))
     const now = yield* Clock.currentTimeMillis
     const decl = declinationAt(q.lat, q.lon, now).declination
-    const n = q.n ?? 1
+    const n = q.count ?? 1
     const near = yield* Effect.sync(() => nearest(f.snap.table, q.lat, q.lon, n)).pipe(
       Effect.tap(r => Effect.annotateCurrentSpan({ "metar.n": n, "metar.nearest": r[0]?.station.stationId ?? "", "metar.nearest_km": r[0] ? Math.round(r[0].distanceKm) : -1 })),
       Effect.withSpan("metar.nearest"))
@@ -91,9 +92,11 @@ export const EarthLive = HttpApiBuilder.group(EphemApi, "earth", h => h
       if (!Number.isFinite(ms)) return yield* new InvalidInput({ message: `not a UTC instant: ${q.time}` })
       if (ms < SUPPORTED.fromMs || ms >= SUPPORTED.toMs) return yield* new OutOfRange({ message: `${q.time} is outside 1972-01-01 … 2149-12-31 UTC` })
     }
-    const height = q.height ?? 0, year = decimalYear(ms), m = declinationAt(q.lat, q.lon, ms, height)
+    const g = yield* (yield* Geoid).load(q.lat).pipe(Effect.withSpan("geoid.load"))
+    yield* Effect.annotateCurrentSpan({ "ephem.geoid_cache": geoidCache(g) })
+    const h = observerHeights(q.lat, q.lon, q.height, q.heightRef), year = decimalYear(ms), m = declinationAt(q.lat, q.lon, ms, h.heightEllipsoid)
     return {
-      time: iso(ms), observer: { lat: q.lat, lon: q.lon, height },
+      time: iso(ms), observer: { lat: q.lat, lon: q.lon, height: h.heightEllipsoid, ...h },
       magnetic: { model: "WMM2025" as const, declination: m.declination, inclination: m.inclination, horizontalIntensityNt: m.h, totalIntensityNt: m.f,
         decimalYear: year, inValidityWindow: year >= WMM_VALID.from && year < WMM_VALID.to },
     }

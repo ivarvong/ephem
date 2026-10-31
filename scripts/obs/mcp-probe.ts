@@ -27,16 +27,17 @@ if (OVR || RUN || MANIFEST) {
 const LATEST = "2026-07-28", LEGACY = "2025-11-25"
 const day = new Date(Date.now() + 86_400_000 * (1 + Math.floor(Math.random() * 300))).toISOString().slice(0, 10)   // fresh day: response cache miss
 const ARGS = {
-  sun_moon_position: { lat: 40.7127, lon: -74.0059, height: -22.6, time: "2026-10-28T11:51:00Z" },
-  day_events: { lat: 40.7127 + Math.random() / 100, lon: -74.0059, date: day, tz: "America/New_York", height: 320, heightRef: "msl", temperature: -5, pressure: 1025, limb: "upper" },
+  position: { lat: 40.7127, lon: -74.0059, height: -22.6, time: "2026-10-28T11:51:00Z" },
+  day: { lat: 40.7127 + Math.random() / 100, lon: -74.0059, date: day, tz: "America/New_York", height: 320, heightRef: "msl", temperature: -5, pressure: 1025, aim: "upper" },
   crossing: { lat: 40.7484, lon: -73.9857, body: "sun", altitude: -0.927, direction: "set", date: day, tz: "America/New_York", height: 320, heightRef: "msl" },
-  alignment: { body: "moon", targetLat: 40.68925, targetLon: -74.0445, targetHeight: 70, targetHeightRef: "msl", observerHeight: 5, heightRef: "msl", start: "2026-11-17T03:44:30Z", end: "2026-11-17T03:46:00Z", stepSeconds: 30, maxDistanceKm: 8, aim: "litCentroid", include: "sun,phase" },
-  sight_line: { observerLat: 40.6935, observerLon: -74.0017, observerHeight: 5, heightRef: "msl", targetLat: 40.68925, targetLon: -74.0445, targetHeight: 70, targetHeightRef: "msl", samples: 11, obstacles: "40.6894:-74.0166:25" },
-  sun_moon_track: { lat: 40.7127, lon: -74.0059, height: -22.6, start: "2026-10-28T00:00:00Z", end: "2026-10-29T00:00:00Z", stepSeconds: 1200 },
-  alignment_search: { body: "moon", target: { lat: 40.68925, lon: -74.0445, height: 70, heightRef: "msl" }, region: [-73.9995, 40.7, -73.993, 40.706], observerHeight: 5, heightRef: "msl", start: "2026-11-16T00:00:00Z", end: "2026-11-18T00:00:00Z", include: ["phase"] },
-  weather_nearest: { lat: 40.7, lon: -74, n: 3 },
+  alignment: { body: "moon", targetLat: 40.68925, targetLon: -74.0445, targetHeight: 70, targetHeightRef: "msl", height: 5, heightRef: "msl", start: "2026-11-17T03:44:30Z", end: "2026-11-17T03:46:00Z", stepSeconds: 30, maxDistanceKm: 8, aim: "litCentroid", include: "sun,phase" },
+  sightline: { lat: 40.6935, lon: -74.0017, height: 5, heightRef: "msl", targetLat: 40.68925, targetLon: -74.0445, targetHeight: 70, targetHeightRef: "msl", samples: 11, obstacles: "40.6894:-74.0166:25" },
+  track: { lat: 40.7127, lon: -74.0059, height: -22.6, start: "2026-10-28T00:00:00Z", end: "2026-10-29T00:00:00Z", stepSeconds: 1200 },
+  alignment_search: { body: "moon", targetLat: 40.68925, targetLon: -74.0445, targetHeight: 70, targetHeightRef: "msl", region: [-73.9995, 40.7, -73.993, 40.706], height: 5, heightRef: "msl", start: "2026-11-16T00:00:00Z", end: "2026-11-18T00:00:00Z", include: "phase" },
+  magnetic: { lat: 40.7, lon: -74, time: "2026-11-17T03:45:00Z" },
+  weather: { lat: 40.7, lon: -74, count: 3 },
 } as const
-const REST_PATH: Record<string, string> = { sun_moon_position: "/position", day_events: "/day", crossing: "/crossing", alignment: "/alignment", sight_line: "/sightline", sun_moon_track: "/track", weather_nearest: "/weather", alignment_search: "/alignment/search" }
+const REST_PATH: Record<string, string> = { position: "/position", day: "/day", crossing: "/crossing", alignment: "/alignment", sightline: "/sightline", track: "/track", weather: "/weather", alignment_search: "/alignment/search", magnetic: "/magnetic" }
 const POST_TOOLS = new Set(["alignment_search"])   // JSON body, not a query
 
 type Row = { step: string; expect: string; got: string; ok: boolean; ms: number; ray: string }
@@ -58,7 +59,7 @@ const legacy = (step: string, method: string, params?: Record<string, unknown>) 
 const check = (step: string, expect: string, r: { status: number; ms: number; ray: string }, ok: boolean, got: string) => rows.push({ step, expect, got: `${r.status} ${got}`, ok, ms: r.ms, ray: r.ray })
 
 /** Inputs-only part of a response: provenance has cache tiers and timings; weather ages move with the clock. */
-const comparable = (tool: string, x: any) => tool === "weather_nearest" ? JSON.stringify({ s: x?.stations?.map((s: any) => s.raw), o: { ...x?.observer, magneticDeclination: x?.observer?.magneticDeclination?.toFixed(4) } })   // full-precision declination moves ~1e-12° between calls
+const comparable = (tool: string, x: any) => tool === "weather" ? JSON.stringify({ s: x?.stations?.map((s: any) => s.raw), o: { ...x?.observer, magneticDeclination: x?.observer?.magneticDeclination?.toFixed(4) } })   // full-precision declination moves ~1e-12° between calls
   : JSON.stringify(x, (k, v) => (k === "provenance" ? undefined : v))
 async function restOf(tool: string) {
   const q = new URLSearchParams(Object.entries(ARGS[tool as keyof typeof ARGS]).map(([k, v]) => [k, String(v)]))
@@ -121,9 +122,9 @@ const ut = await modern("err.unknown_tool", "tools/call", { name: "nope", argume
 check("err.unknown_tool", "-32602", ut, ut.json?.error?.code === -32602, `code=${ut.json?.error?.code} ${ut.json?.error?.message}`)
 const ip = await legacy("err.invalid_params", "tools/call", { arguments: {} })
 check("err.invalid_params", "-32602", ip, ip.json?.error?.code === -32602, `code=${ip.json?.error?.code}`)
-const ba = await modern("err.bad_args", "tools/call", { name: "sun_moon_position", arguments: { lat: 91, lon: 0 } })
+const ba = await modern("err.bad_args", "tools/call", { name: "position", arguments: { lat: 91, lon: 0 } })
 check("err.bad_args", "isError=true", ba, ba.json?.result?.isError === true, (ba.json?.result?.content?.[0]?.text ?? "").slice(0, 60).replace(/\n/g, " "))
-const oor = await modern("err.out_of_range", "tools/call", { name: "sun_moon_position", arguments: { lat: 0, lon: 0, time: "1960-01-01T00:00:00Z" } })
+const oor = await modern("err.out_of_range", "tools/call", { name: "position", arguments: { lat: 0, lon: 0, time: "1960-01-01T00:00:00Z" } })
 check("err.out_of_range", "isError=true OutOfRange", oor, oor.json?.result?.isError === true && /^OutOfRange/.test(oor.json.result.content[0].text), oor.json?.result?.content?.[0]?.text?.slice(0, 60))
 const ver = await send({ jsonrpc: "2.0", id: `${run}-err.version`, method: "tools/list", params: { _meta: { ...meta, "io.modelcontextprotocol/protocolVersion": "1900-01-01" } } }, { "mcp-protocol-version": "1900-01-01", "mcp-method": "tools/list" })
 check("err.unsupported_version", "400 -32022", ver, ver.status === 400 && ver.json?.error?.code === -32022, `code=${ver.json?.error?.code} supported=${ver.json?.error?.data?.supported}`)
@@ -133,7 +134,7 @@ const batch = await send([{ jsonrpc: "2.0", id: `${run}-b1`, method: "ping" }], 
 check("err.batch(2025-11-25)", "400 -32600", batch, batch.status === 400 && batch.json?.error?.code === -32600, `code=${batch.json?.error?.code}`)
 const b03 = await send([{ jsonrpc: "2.0", id: `${run}-b2`, method: "ping" }, { jsonrpc: "2.0", method: "notifications/initialized" }])
 check("batch(2025-03-26, no header)", "200 [1 reply]", b03, b03.status === 200 && Array.isArray(b03.json) && b03.json.length === 1, JSON.stringify(b03.json))
-const xa = await modern("err.excess_arg", "tools/call", { name: "day_events", arguments: { lat: 40.7, lon: -74, date: day, tz: "America/New_York", temprature: -20 } })
+const xa = await modern("err.excess_arg", "tools/call", { name: "day", arguments: { lat: 40.7, lon: -74, date: day, tz: "America/New_York", temprature: -20 } })
 check("err.excess_arg", "isError=true (unknown argument)", xa, xa.json?.result?.isError === true, (xa.json?.result?.content?.[0]?.text ?? "").slice(0, 60).replace(/\n/g, " "))
 const unk = await fetch(`${base}/day?lat=40.7&lon=-74&date=${day}&tz=America/New_York&temprature=-20`), unkBody: any = await unk.json().catch(() => ({}))
 check("rest.unknown_param", "400 UnknownParameter + allowed", { status: unk.status, ms: 0, ray: unk.headers.get("cf-ray") ?? "" },

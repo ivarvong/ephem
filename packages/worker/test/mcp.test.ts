@@ -30,10 +30,10 @@ const handler = makeHandler(makeBlocks(direct(r2Origin(bucket))), undefined, wea
 
 const POS = { lat: 40.7127, lon: -74.0059, height: -22.6, time: "2026-10-28T11:51:00Z" }
 const DAY = { lat: 40.7127, lon: -74.0059, height: -22.6, date: "2026-10-28", tz: "America/New_York" }
-const ALIGN = { body: "moon", targetLat: 40.68925, targetLon: -74.0445, targetHeight: 63.4, observerHeight: -30.9, start: "2026-10-28T23:45:00Z", end: "2026-10-29T02:00:00Z", stepSeconds: 1800, maxDistanceKm: 20, observerLat: 40.6892, observerLon: -74.076 }
-const WX = { lat: 40.7, lon: -74, n: 3 }
+const ALIGN = { body: "moon", targetLat: 40.68925, targetLon: -74.0445, targetHeight: 63.4, height: -30.9, start: "2026-10-28T23:45:00Z", end: "2026-10-29T02:00:00Z", stepSeconds: 1800, maxDistanceKm: 20, lat: 40.6892, lon: -74.076 }
+const WX = { lat: 40.7, lon: -74, count: 3 }
 const TRACK = { lat: 40.7127, lon: -74.0059, height: -22.6, start: "2026-10-28T00:00:00Z", end: "2026-10-28T06:00:00Z", stepSeconds: 1800 }
-const REST: Record<string, [string, Record<string, unknown>]> = { sun_moon_position: ["/position", POS], day_events: ["/day", DAY], alignment: ["/alignment", ALIGN], sun_moon_track: ["/track", TRACK], weather_nearest: ["/weather", WX] }
+const REST: Record<string, [string, Record<string, unknown>]> = { position: ["/position", POS], day: ["/day", DAY], alignment: ["/alignment", ALIGN], track: ["/track", TRACK], weather: ["/weather", WX], magnetic: ["/magnetic", { lat: 40.7, lon: -74, height: 10, heightRef: "msl", time: "2026-11-17T03:45:00Z" }] }
 
 /** Modern (2026-07-28) request: _meta plus the mirrored headers. */
 const modern = (method: string, params: Record<string, unknown> = {}, id: number | string = 1, extra: Record<string, string> = {}) => post({
@@ -51,7 +51,7 @@ const restGet = async (path: string, q: Record<string, unknown>) => (await handl
 const strip = (x: any) => { const { provenance: _p, ...rest } = x; return rest }
 /** The JSON that is a pure function of the inputs: provenance carries cache tiers / timings; weather has ages vs now. */
 // weather: observer.magneticDeclination is full precision at "now", so two calls ms apart differ at ~1e-12°: compare it at 4 dp
-const comparable = (tool: string, x: any) => tool === "weather_nearest" ? { stations: x.stations.map((s: any) => s.raw), observer: { ...x.observer, magneticDeclination: x.observer.magneticDeclination.toFixed(4) } } : strip(x)
+const comparable = (tool: string, x: any) => tool === "weather" ? { stations: x.stations.map((s: any) => s.raw), observer: { ...x.observer, magneticDeclination: x.observer.magneticDeclination.toFixed(4) } } : strip(x)
 
 describe("MCP handshake and discovery", () => {
   it("legacy initialize negotiates the client's version (or the newest legacy one), no session id", async () => {
@@ -71,19 +71,19 @@ describe("MCP handshake and discovery", () => {
   })
   it("tools/list: deterministic, schemas generated from the REST contract, every property documented", async () => {
     const r = await modern("tools/list"), tools = r.body.result.tools
-    expect(tools.map((t: any) => t.name)).toEqual(["sun_moon_position", "day_events", "crossing", "alignment", "weather_nearest", "sun_moon_track", "sight_line", "alignment_search"])
+    expect(tools.map((t: any) => t.name)).toEqual(["position", "track", "day", "crossing", "alignment", "alignment_search", "sightline", "magnetic", "weather"])
     expect((await legacy("tools/list")).body.result.tools).toEqual(tools)
     const pos = tools[0]
     expect(pos.inputSchema).toMatchObject({ type: "object", required: ["lat", "lon"], additionalProperties: false,
       properties: { lat: { type: "number", minimum: -90, maximum: 90 }, time: { type: "string" }, pressure: { minimum: 0, maximum: 1100 } } })
     expect(pos.outputSchema.required).toEqual(["time", "observer", "sun", "moon", "conventions", "provenance"])
-    expect(tools[1].inputSchema.required).toEqual(["lat", "lon", "date", "tz"])
-    expect(tools[2].inputSchema.properties.limb.enum).toEqual(["upper", "center", "lower"])
-    expect(tools[3].inputSchema.properties.body.enum).toEqual(["sun", "moon"])
-    expect(tools[4].inputSchema.properties.n.type).toBe("integer")
-    expect(tools[5].inputSchema).toMatchObject({ required: ["lat", "lon", "start", "end"], properties: { stepSeconds: { type: "integer", minimum: 60, maximum: 3600 } } })
+    expect(tools[2].inputSchema.required).toEqual(["lat", "lon", "date", "tz"])
+    expect(tools[2].inputSchema.properties.aim.enum).toEqual(["upper", "center", "lower"])
+    expect(tools[4].inputSchema.properties.body.enum).toEqual(["sun", "moon"])
+    expect(tools[8].inputSchema.properties.count.type).toBe("integer")
+    expect(tools[1].inputSchema).toMatchObject({ required: ["lat", "lon", "start", "end"], properties: { stepSeconds: { type: "integer", minimum: 60, maximum: 3600 } } })
     for (const t of tools) for (const [k, v] of Object.entries<any>(t.inputSchema.properties)) expect(v.description, `${t.name}.${k}`).toBeTruthy()
-    expect(tools[7].inputSchema).toMatchObject({ type: "object", required: ["body", "target", "region", "start", "end"], additionalProperties: false })
+    expect(tools[5].inputSchema).toMatchObject({ type: "object", required: ["body", "targetLat", "targetLon", "targetHeight", "region", "start", "end"], additionalProperties: false })
     for (const t of TOOLS) expect(Object.keys(t.docs).toSorted()).toEqual(Object.keys(t.payload ? (t.payload as any).fields : t.query).toSorted())   // docs cannot drift from the query either
     expect((await legacy("tools/list", undefined, 1, "2025-03-26")).body.result.tools[0].outputSchema).toBeUndefined()
   })
@@ -101,7 +101,7 @@ describe("tools/call equals the REST endpoint", () => {
   })
   it("alignment_search (a POST): the tool's answer is the REST POST's", async () => {
     const park = JSON.parse(readFileSync(`${FIX}/regions/brooklyn-bridge-park.geojson`, "utf8"))
-    const args = { body: "moon", target: { lat: 40.68925, lon: -74.0445, height: 70, heightRef: "msl" }, region: park, observerHeight: 5, heightRef: "msl", start: "2026-11-16T00:00:00Z", end: "2026-11-18T00:00:00Z", include: ["phase"] }
+    const args = { body: "moon", targetLat: 40.68925, targetLon: -74.0445, targetHeight: 70, targetHeightRef: "msl", region: park, height: 5, heightRef: "msl", start: "2026-11-16T00:00:00Z", end: "2026-11-18T00:00:00Z", include: "phase" }
     const r = await modern("tools/call", { name: "alignment_search", arguments: args })
     expect(r.body.result.isError).toBe(false)
     const rest = await (await handler(new Request("http://x/alignment/search", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(args) }))).json()
@@ -111,19 +111,19 @@ describe("tools/call equals the REST endpoint", () => {
     expect(bad.body.result.isError).toBe(true); expect(bad.body.result.content[0].text).toMatch(/inside the region/)
   }, 30_000)
   it("position without time is now", async () => {
-    const t0 = Date.now(), r = await modern("tools/call", { name: "sun_moon_position", arguments: { lat: 0, lon: 0 } })
+    const t0 = Date.now(), r = await modern("tools/call", { name: "position", arguments: { lat: 0, lon: 0 } })
     expect(Date.parse(r.body.result.structuredContent.time.utc)).toBeGreaterThanOrEqual(t0 - 1)
   })
 })
 
 describe("errors", () => {
   it("bad arguments and out-of-range inputs are tool results with isError", async () => {
-    const a = await modern("tools/call", { name: "sun_moon_position", arguments: { lat: 91, lon: "x" } })
+    const a = await modern("tools/call", { name: "position", arguments: { lat: 91, lon: "x" } })
     expect(a.status).toBe(200); expect(a.body.result.isError).toBe(true); expect(a.body.result.content[0].text).toMatch(/lat[\s\S]*lon|between -90 and 90/)
-    const extra = await modern("tools/call", { name: "sun_moon_position", arguments: { lat: 1, lon: 2, latitude: 3 } }); expect(extra.body.result.isError).toBe(true)
-    const range = await modern("tools/call", { name: "sun_moon_position", arguments: { lat: 0, lon: 0, time: "1960-01-01T00:00:00Z" } })
+    const extra = await modern("tools/call", { name: "position", arguments: { lat: 1, lon: 2, latitude: 3 } }); expect(extra.body.result.isError).toBe(true)
+    const range = await modern("tools/call", { name: "position", arguments: { lat: 0, lon: 0, time: "1960-01-01T00:00:00Z" } })
     expect(range.body.result).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/^OutOfRange: /) }] })
-    const tz = await legacy("tools/call", { name: "day_events", arguments: { ...DAY, tz: "Mars/Olympus" } })
+    const tz = await legacy("tools/call", { name: "day", arguments: { ...DAY, tz: "Mars/Olympus" } })
     expect(tz.body.result).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/^InvalidInput: unknown IANA time zone/) }] })
   })
   it("invalid params, unknown tool, unknown method: JSON-RPC errors", async () => {
@@ -144,8 +144,8 @@ describe("errors", () => {
   })
   it("modern header and version rules", async () => {
     const mismatch = await modern("tools/list", {}, 1, { "mcp-protocol-version": "2025-11-25" }); expect(mismatch.status).toBe(400); expect(mismatch.body.error.code).toBe(-32020)
-    const name = await modern("tools/call", { name: "alignment", arguments: ALIGN }, 1, { "mcp-name": "day_events" }); expect(name.body.error.code).toBe(-32020)
-    const b64 = await modern("tools/call", { name: "day_events", arguments: DAY }, 1, { "mcp-name": `=?base64?${btoa("day_events")}?=` }); expect(b64.body.result.isError).toBe(false)
+    const name = await modern("tools/call", { name: "alignment", arguments: ALIGN }, 1, { "mcp-name": "day" }); expect(name.body.error.code).toBe(-32020)
+    const b64 = await modern("tools/call", { name: "day", arguments: DAY }, 1, { "mcp-name": `=?base64?${btoa("day")}?=` }); expect(b64.body.result.isError).toBe(false)
     const noMeta = await post({ jsonrpc: "2.0", id: 1, method: "tools/list" }, { "mcp-protocol-version": LATEST }); expect(noMeta.status).toBe(400); expect(noMeta.body.error.code).toBe(-32602)
     const old = await post({ jsonrpc: "2.0", id: 1, method: "tools/list", params: { _meta: { "io.modelcontextprotocol/protocolVersion": "1900-01-01", "io.modelcontextprotocol/clientCapabilities": {} } } },
       { "mcp-protocol-version": "1900-01-01", "mcp-method": "tools/list" })
@@ -170,10 +170,10 @@ describe("tracing (through the Workers tracing bridge, as in prod)", () => {
     setTracing({ startSpan: name => { const s = { name, attrs: {} as Record<string, unknown> }; spans.push(s)
       return { isTraced: true, setAttribute: (k: string, v: unknown) => { s.attrs[k] = v }, setStatus: () => {}, end: () => {} } } })
     try {
-      const r = await modern("tools/call", { name: "sun_moon_position", arguments: POS }, "c1")
+      const r = await modern("tools/call", { name: "position", arguments: POS }, "c1")
       expect(r.status).toBe(200)
       const mcp = spans.find(s => s.name === "mcp.tools/call")!
-      expect(mcp.attrs).toMatchObject({ "mcp.method": "tools/call", "mcp.tool": "sun_moon_position", "jsonrpc.id": "c1", "mcp.protocol_version": LATEST, "mcp.client": "vitest/1", "mcp.is_error": false })
+      expect(mcp.attrs).toMatchObject({ "mcp.method": "tools/call", "mcp.tool": "position", "jsonrpc.id": "c1", "mcp.protocol_version": LATEST, "mcp.client": "vitest/1", "mcp.is_error": false })
       const position = spans.find(s => s.name === "position")!; expect(position.attrs["effect.parent_id"]).toBe(mcp.attrs["effect.span_id"])
       expect(spans.find(s => s.name === "compute.position")!.attrs["effect.parent_id"]).toBe(position.attrs["effect.span_id"])
       expect(spans.find(s => s.name === "blocks.load")!.attrs["effect.parent_id"]).toBe(position.attrs["effect.span_id"])
@@ -181,7 +181,7 @@ describe("tracing (through the Workers tracing bridge, as in prod)", () => {
       expect(spans.find(s => s.name === "mcp.nope")!.attrs).toMatchObject({ "mcp.error_code": -32601, "mcp.is_error": true, "jsonrpc.id": "2" })
       await post("{")
       expect(spans.find(s => s.name === "mcp.parse_error")!.attrs).toMatchObject({ "mcp.error_code": -32700 })
-      const bad = await modern("tools/call", { name: "sun_moon_position", arguments: { lat: 99, lon: 0 } }, "c2")
+      const bad = await modern("tools/call", { name: "position", arguments: { lat: 99, lon: 0 } }, "c2")
       expect(bad.body.result.isError).toBe(true)
       expect(spans.findLast(s => s.name === "mcp.tools/call")!.attrs).toMatchObject({ "jsonrpc.id": "c2", "mcp.is_error": true })
     } finally { setTracing(undefined) }

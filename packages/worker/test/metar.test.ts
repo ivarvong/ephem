@@ -206,7 +206,7 @@ describe("/weather end to end (fake upstream)", () => {
   it("nearest stations with units, bearings true and magnetic, two ages, short cache-control", async () => {
     const h = harness()
     const handler = makeHandler(makeBlocks(async () => { throw new Error("no blocks") }), undefined, weatherLive(h.feed))
-    const r = await handler(new Request("http://x/weather?lat=40.7&lon=-74.0&n=3"))
+    const r = await handler(new Request("http://x/weather?lat=40.7&lon=-74.0&count=3"))
     expect(r.status).toBe(200); expect(r.headers.get("cache-control")).toBe("private, max-age=30")
     const j = await r.json() as any
     expect(j.stations.map((s: any) => s.stationId)).toEqual(["KNYC", "KLGA", "KEWR"])
@@ -216,7 +216,7 @@ describe("/weather end to end (fake upstream)", () => {
     expect(((s.bearing.true - decl - s.bearing.magnetic) % 360 + 360) % 360).toBeLessThan(0.011)
     expect(s.observationStale).toBe(typeof s.observationAgeSeconds === "number" && s.observationAgeSeconds > 4500)
     expect(j.feed).toMatchObject({ tier: expect.any(String), stale: false, lastModified: "2026-10-29T11:25:16.000Z", stations: 22 })
-    const bad = await handler(new Request("http://x/weather?lat=40.7&lon=-74.0&n=0")); expect(bad.status).toBe(400)
+    const bad = await handler(new Request("http://x/weather?lat=40.7&lon=-74.0&count=0")); expect(bad.status).toBe(400)
   })
   it("503 when there is no copy and upstream is down", async () => {
     const feed = makeFeed({ fetch: req => serveFeed(req, { fetch: async () => { throw new Error("down") }, log: () => {} }) })

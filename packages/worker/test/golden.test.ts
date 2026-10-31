@@ -22,14 +22,14 @@ export const GOLDEN: Record<string, string> = {
   "day.tromso": "/day?date=2026-11-15&tz=Europe/Oslo&lat=69.6492&lon=18.9553",
   "position.nyc": "/position?lat=40.7127&lon=-74.0059&height=-22.6&time=2026-10-28T11:51:00Z",
   "position.sydney.refraction": "/position?lat=-33.8568&lon=151.2153&time=2026-10-29T08:30:00Z&temperature=25&pressure=1005",
-  "alignment.moon.liberty": "/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&observerHeight=-30.9&start=2026-10-28T23:45:00Z&end=2026-10-29T02:00:00Z&stepSeconds=1800&maxDistanceKm=20&observerLat=40.6892&observerLon=-74.076",
+  "alignment.moon.liberty": "/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&height=-30.9&start=2026-10-28T23:45:00Z&end=2026-10-29T02:00:00Z&stepSeconds=1800&maxDistanceKm=20&lat=40.6892&lon=-74.076",
   "crossing.sun.civil": "/crossing?body=sun&altitude=-6&lat=40.7&lon=-74&date=2026-10-28&tz=America/New_York",
   "crossing.moon.apparent": "/crossing?body=moon&altitude=0&altitudeType=apparent&lat=51.5&lon=-0.12&start=2026-10-27T00:00:00Z&end=2026-10-30T00:00:00Z",
   "track.nyc": "/track?lat=40.7127&lon=-74.0059&height=-22.6&start=2026-10-27T12:00:00Z&end=2026-10-29T12:00:00Z",
   "track.tromso.step": "/track?lat=69.6492&lon=18.9553&start=2026-11-15T00:00:00Z&end=2026-11-16T00:00:00Z&stepSeconds=600&temperature=-15&pressure=1020&horizon=geometric",
-  "sightline.pier6": "/sightline?observerLat=40.6935&observerLon=-74.0017&observerHeight=5&heightRef=msl&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&samples=21&obstacles=40.6894:-74.0166:25",
+  "sightline.pier6": "/sightline?lat=40.6935&lon=-74.0017&height=5&heightRef=msl&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&samples=21&obstacles=40.6894:-74.0166:25",
   "magnetic.nyc": "/magnetic?lat=40.7&lon=-74&time=2026-10-29T12:00:00Z",
-  "search.window.liberty": `/internal/alignment-search-window?body=moon&dut1=0&heightRef=msl&observerHeight=5&pressure=1010&region=${encodeRegion((parseRegion([-73.999, 40.7, -73.993, 40.706]) as { ok: never }).ok)}&start=2026-11-03T00:00:00.000Z&targetHeight=70&targetHeightRef=msl&targetLat=40.68925&targetLon=-74.0445&temperature=10`,
+  "search.window.liberty": `/internal/alignment-search-window?body=moon&dut1=0&heightRef=msl&height=5&pressure=1010&region=${encodeRegion((parseRegion([-73.999, 40.7, -73.993, 40.706]) as { ok: never }).ok)}&start=2026-11-03T00:00:00.000Z&targetHeight=70&targetHeightRef=msl&targetLat=40.68925&targetLon=-74.0445&temperature=10`,
 }
 
 const strip = (x: unknown): unknown => Array.isArray(x) ? x.map(strip) : x && typeof x === "object"

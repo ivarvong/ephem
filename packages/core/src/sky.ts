@@ -73,7 +73,7 @@ export const trackRequest = (src: BlockSource, q: TrackRequest) => {
 // ─────────────── /day ───────────────
 export interface DayRequest extends SkyObserverInput {
   readonly date: string; readonly tz: string; readonly temperature?: number | undefined; readonly pressure?: number | undefined
-  readonly horizon?: HorizonSpec | undefined; readonly horizonProfile?: string | undefined; readonly limb?: Limb | undefined; readonly dut1?: number | undefined
+  readonly horizon?: HorizonSpec | undefined; readonly horizonProfile?: string | undefined; readonly aim?: Limb | undefined; readonly dut1?: number | undefined
 }
 type HorizonChoice = { kind: "sea" | "geometric" | "custom"; altitude: number; dip: number | null } | { kind: "profile"; profile: HorizonProfile }
 const resolveHorizon = (spec: HorizonSpec | undefined, profile: string | undefined, hMsl: number): SkyResult<HorizonChoice> => {
@@ -87,7 +87,7 @@ const resolveHorizon = (spec: HorizonSpec | undefined, profile: string | undefin
   return { ok: hz }
 }
 export const dayRequest = (src: BlockSource, q: DayRequest): SkyResult<ReturnType<typeof dayOut>> => {
-  const { h, geo } = geoOf(q), T = q.temperature ?? T_DEFAULT, P = q.pressure ?? P_DEFAULT, limb = q.limb ?? "upper"
+  const { h, geo } = geoOf(q), T = q.temperature ?? T_DEFAULT, P = q.pressure ?? P_DEFAULT, limb = q.aim ?? "upper"
   const hz = resolveHorizon(q.horizon, q.horizonProfile, h.heightMsl)
   if ("error" in hz) return hz
   const H = hz.ok.kind === "profile" ? hz.ok.profile : hz.ok.altitude
@@ -100,7 +100,7 @@ const dayOut = (q: DayRequest, h: ObserverHeights, r: ReturnType<typeof day>, hz
     date: r.date, tz: r.tz, start: r.start, end: r.end, observer: observerOut(q, h), events: r.events,
     conventions: {
       riseSet: {
-        limb, definition: `rise/set: the ${limb === "center" ? "centre" : `${limb} limb`} of the Sun or Moon at apparent altitude = the horizon (true limb altitude = horizon − refraction at the horizon)`,
+        aim: { point: limb, definition: AIM_DEFINITIONS[limb] }, definition: `rise/set: the ${limb === "center" ? "centre" : `${limb} limb`} of the Sun or Moon at apparent altitude = the horizon (true limb altitude = horizon − refraction at the horizon)`,
         horizon: horizonOut(hz),
         refraction: { model: REFRACTION_MODEL, temperatureC: T, pressureHpa: P, atHorizon: R },
         trueLimbAltitude: hz.kind === "profile" || R === null ? null : hz.altitude - R,
@@ -118,10 +118,10 @@ const dayOut = (q: DayRequest, h: ObserverHeights, r: ReturnType<typeof day>, hz
 export interface CrossingRequest extends SkyObserverInput {
   readonly startMs: number; readonly endMs: number; readonly body: BodyName
   readonly altitude?: number | undefined; readonly altitudeType?: "true" | "apparent" | undefined; readonly horizonProfile?: string | undefined
-  readonly limb?: Limb | undefined; readonly direction?: "rise" | "set" | "either" | undefined
+  readonly direction?: "rise" | "set" | "either" | undefined
   readonly temperature?: number | undefined; readonly pressure?: number | undefined; readonly dut1?: number | undefined
   readonly include?: ReadonlySet<Include> | undefined   // sun, phase: context per crossing
-  readonly aim?: Aim | undefined                        // instead of limb; litCentroid for the Moon only
+  readonly aim?: Aim | undefined                        // which point of the disc: center (default), upper, lower, litCentroid (Moon only)
 }
 /** Window from start/end or from a local date + tz; validation messages are the API's. */
 export const crossingWindow = (q: { start?: string | undefined; end?: string | undefined; date?: string | undefined; tz?: string | undefined }): SkyResult<{ startMs: number; endMs: number }> => {
@@ -138,10 +138,9 @@ export const crossingWindow = (q: { start?: string | undefined; end?: string | u
   return { ok: { startMs: localMidnight(q.date, q.tz), endMs: localMidnight(nextDate(q.date), q.tz) } }
 }
 export const crossingRequest = (src: BlockSource, q: CrossingRequest): SkyResult<ReturnType<typeof crossingOut>> => {
-  if (q.aim !== undefined && q.limb !== undefined) return { error: "pass limb or aim, not both (aim=upper|lower|center is the same as limb)" }
   if (q.aim === "litCentroid" && q.body !== "moon") return { error: "aim=litCentroid is the Moon's lit-area centroid: body must be moon" }
   const { h, geo } = geoOf(q), T = q.temperature ?? T_DEFAULT, P = q.pressure ?? P_DEFAULT
-  const limb: Limb = q.limb ?? (q.aim === undefined || q.aim === "litCentroid" ? "center" : q.aim)
+  const limb: Limb = q.aim === undefined || q.aim === "litCentroid" ? "center" : q.aim
   if ((q.altitude === undefined) === (q.horizonProfile === undefined)) return { error: "give altitude or horizonProfile (exactly one)" }
   let target: Parameters<typeof crossing>[1]["target"], profile: HorizonProfile | undefined
   if (q.horizonProfile !== undefined) {
@@ -167,12 +166,11 @@ const crossingOut = (q: CrossingRequest, h: ObserverHeights, r: { crossings: Rea
       definition: target.kind === "true" ? `the ${what}'s true (vacuum) altitude = ${target.altitude}°`
         : target.kind === "apparent" ? `the ${what}'s apparent altitude = ${target.altitude}° (the one refraction model, as /position and /day)`
         : `the ${what}'s apparent altitude = the horizon profile's elevation at the body's azimuth (the one refraction model, as /position and /day)`,
-      limb, altitudeType: target.kind, trueLimbAltitude: trueLimb,
+      aim: { point: q.aim ?? "center", definition: AIM_DEFINITIONS[q.aim ?? "center"] }, altitudeType: target.kind, trueLimbAltitude: trueLimb,
       refraction: target.kind === "true" ? null : { model: REFRACTION_MODEL, temperatureC: T, pressureHpa: P },
       horizon: profile ? horizonOut({ kind: "profile", profile }) : null,
       geoid: geoidOut,
       ...(q.include && q.include.size ? { include: CONTEXT_CONVENTIONS } : {}),
-      ...(q.aim !== undefined ? { aim: { point: q.aim, definition: AIM_DEFINITIONS[q.aim] } } : {}),
     },
   }
 }

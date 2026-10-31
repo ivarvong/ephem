@@ -13,7 +13,7 @@ import { type Aim, AIM_DEFINITIONS } from "./aim.ts"
 export interface SearchWindowRequest {
   readonly body: BodyName
   readonly targetLat: number; readonly targetLon: number; readonly targetHeight: number; readonly targetHeightRef?: HeightRef | undefined
-  readonly observerHeight?: number | undefined; readonly heightRef?: HeightRef | undefined
+  readonly height?: number | undefined; readonly heightRef?: HeightRef | undefined
   readonly region: Region; readonly encoding: string
   readonly startMs: number   // on the window grid
   readonly temperature?: number | undefined; readonly pressure?: number | undefined; readonly dut1?: number | undefined
@@ -45,10 +45,10 @@ export const searchWindowRequest = (src: BlockSource, q: SearchWindowRequest) =>
   const T = q.temperature ?? T_DEFAULT, P = q.pressure ?? P_DEFAULT
   const tN = geoidUndulation(q.targetLat, q.targetLon), tRef = q.targetHeightRef ?? "ellipsoid"
   const tE = tRef === "msl" ? q.targetHeight + tN : q.targetHeight
-  const oRef: HeightRef | "default" = q.observerHeight === undefined ? "default" : q.heightRef ?? "ellipsoid"
+  const oRef: HeightRef | "default" = q.height === undefined ? "default" : q.heightRef ?? "ellipsoid"
   const r = searchWindow(src, {
     body: q.body, target: { lat: q.targetLat, lon: q.targetLon, height: tE },
-    observerHeight: q.observerHeight ?? 0, observerHeightRef: oRef === "ellipsoid" ? "ellipsoid" : "msl",
+    observerHeight: q.height ?? 0, observerHeightRef: oRef === "ellipsoid" ? "ellipsoid" : "msl",
     region: q.region, startMs: q.startMs, endMs: q.startMs + WINDOW_MS, temperature: T, pressure: P, dut1: q.dut1, aim: q.aim,
   })
   if ("error" in r) return { error: r.error }
@@ -57,7 +57,7 @@ export const searchWindowRequest = (src: BlockSource, q: SearchWindowRequest) =>
     ok: {
       body: q.body, start: isoMs(q.startMs), end: isoMs(q.startMs + WINDOW_MS),
       target: { lat: q.targetLat, lon: q.targetLon, height: tE, heightEllipsoid: tE, heightMsl: tE - tN, geoidUndulation: tN, heightRef: tRef },
-      observer: { observerHeight: q.observerHeight ?? 0, heightRef: oRef },
+      observer: { height: q.height ?? 0, heightRef: oRef },
       region: {
         encoding: q.encoding, polygons: q.region.length, rings: q.region.reduce((s, p) => s + p.length, 0), vertices: verts.length,
         bbox: [b.west, b.south, b.east, b.north] as const, geoidUndulation: { min: Math.min(...Ns), max: Math.max(...Ns) },
@@ -67,7 +67,7 @@ export const searchWindowRequest = (src: BlockSource, q: SearchWindowRequest) =>
       counters: r.counters as unknown as Record<string, number>,
       conventions: {
         ...SEARCH_CONVENTIONS,
-        observerHeightRef: oRef, targetHeightRef: tRef,
+        heightRef: oRef, targetHeightRef: tRef,
         terrestrialRefractionK: K_TERRESTRIAL,
         refraction: { model: REFRACTION_MODEL, temperatureC: T, pressureHpa: P },
         geoid: { model: GEOID.model, source: GEOID.source, interpolationErrorM: GEOID.interpolationErrorM },

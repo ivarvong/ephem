@@ -70,7 +70,7 @@ describe("refraction down to the horizon (2026-10-29)", () => {
       const d = dayRequest(diskBlocks, { date, tz, lat, lon, ...extra }); if (!("ok" in d)) throw new Error(d.error)
       const H = d.ok.conventions.riseSet.horizon.altitude!
       const w = { startMs: Date.parse(d.ok.start), endMs: Date.parse(d.ok.end) }
-      const c = crossingRequest(diskBlocks, { ...w, lat, lon, ...extra, body: "sun", altitude: H, altitudeType: "apparent", limb: "upper" }); if (!("ok" in c)) throw new Error(c.error)
+      const c = crossingRequest(diskBlocks, { ...w, lat, lon, ...extra, body: "sun", altitude: H, altitudeType: "apparent", aim: "upper" }); if (!("ok" in c)) throw new Error(c.error)
       const sun = d.ok.events.filter(e => e.body === "sun" && (e.kind === "rise" || e.kind === "set"))
       expect(c.ok.crossings.map(x => x.direction)).toEqual(sun.map(e => e.kind))
       c.ok.crossings.forEach((x, i) => expect(Math.abs(Date.parse(x.time) - Date.parse(sun[i]!.time)), `${lat} ${date} ${x.direction}`).toBeLessThanOrEqual(1))
@@ -136,7 +136,7 @@ describe("rates and observer heights", () => {
     expect(t(z, "rise") - t(hi, "rise")).toBeGreaterThan(150_000); expect(t(hi, "set") - t(z, "set")).toBeGreaterThan(150_000)   // ≈ 3 min at 320 m
     expect(Math.abs(t(g, "rise") - t(z, "rise"))).toBeLessThan(50)   // only the 320 m of parallax-free height differs
     expect(Math.abs(t(hi, "civilDawn") - t(z, "civilDawn"))).toBeLessThan(50)   // twilight does not use the horizon (parallax only)
-    const lo = ev({ height: 320, limb: "lower" }), c = ev({ height: 320, limb: "center" })
+    const lo = ev({ height: 320, aim: "lower" }), c = ev({ height: 320, aim: "center" })
     expect(t(hi, "rise")).toBeLessThan(t(c, "rise")); expect(t(c, "rise")).toBeLessThan(t(lo, "rise"))
     expect(dayRequest(diskBlocks, { date: "2026-10-28", tz: "America/New_York", lat: 40.7, lon: -74, height: 5000, heightRef: "msl" })).toHaveProperty("error")
   })

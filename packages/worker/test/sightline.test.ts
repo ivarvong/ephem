@@ -7,7 +7,7 @@ import { direct, makeBlocks } from "../src/blocks.ts"
 const handler = makeHandler(makeBlocks(direct(async () => { throw new Error("sightline reads no DE440 blocks") })))
 const get = async (q: string) => { const r = await handler(new Request(`http://x/sightline?${q}`)); return { status: r.status, j: await r.json() as any } }
 // Pier 6, Brooklyn Bridge Park (eye 5 m MSL) → Statue of Liberty figure middle (70 m MSL), across Governors Island.
-const PIER6 = "observerLat=40.6935&observerLon=-74.0017&observerHeight=5&heightRef=msl&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl"
+const PIER6 = "lat=40.6935&lon=-74.0017&height=5&heightRef=msl&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl"
 const R = 6_371_008.8, K = 0.13
 
 describe("sight line", () => {
@@ -39,12 +39,12 @@ describe("sight line", () => {
     expect(a.lineHeightMsl).toBeCloseTo(interp, 3)
   })
   it("default eye on the geoid; refusals", async () => {
-    const d = await get("observerLat=40.6935&observerLon=-74.0017&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&samples=2")
+    const d = await get("lat=40.6935&lon=-74.0017&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&samples=2")
     expect(d.j.observer).toMatchObject({ heightMsl: 0, heightRef: "default" })
     expect((await get(`${PIER6}&obstacles=40.6:-74`)).status).toBe(400)
     expect((await get(`${PIER6}&obstacles=95:-74:3`)).status).toBe(422)
     expect((await get(`${PIER6}&samples=1`)).status).toBe(400)
-    expect((await get("observerLat=40&observerLon=-74&targetLat=42&targetLon=-74&targetHeight=0")).status).toBe(422)   // 222 km
+    expect((await get("lat=40&lon=-74&targetLat=42&targetLon=-74&targetHeight=0")).status).toBe(422)   // 222 km
     const u = await get(`${PIER6}&time=2026-11-17T03:45:00Z`)
     expect(u.status).toBe(400); expect(u.j.kind).toBe("UnknownParameter")
   })

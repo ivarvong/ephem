@@ -134,7 +134,7 @@ export interface Segment { readonly enter: Crossing; readonly exit: Crossing }
 export interface SearchPass {
   readonly time: string                          // midpoint of first entry and last exit: the context below is at this instant
   readonly segments: ReadonlyArray<Segment>
-  readonly standingPoint: { readonly lat: number; readonly lon: number; readonly distanceKm: number; readonly azimuth: number; readonly apparentAltitude: number }
+  readonly standingPoint: { readonly lat: number; readonly lon: number; readonly distanceKm: number; readonly azimuth: number; readonly apparentAltitude: number; readonly angularRadius: number }
   readonly moon: { readonly az: number; readonly alt: number | null; readonly illuminated: number; readonly angularRadius: number }
   readonly sunAlt: number
   readonly sun: { readonly azimuth: number; readonly altitude: number; readonly apparentAltitude: number | null }
@@ -399,7 +399,7 @@ export const searchWindow = (src: BlockSource, inp: SearchInput): { geometry: Se
     passes.push({
       time: isoMs(tm),
       segments: g.map(s => ({ enter: s.enterAt!, exit: s.exitAt! })),
-      standingPoint: { lat: sp.lat, lon: sp.lon, distanceKm: sp.distanceKm, azimuth: sp.azimuth, apparentAltitude: sp.apparentAltitude },
+      standingPoint: { lat: sp.lat, lon: sp.lon, distanceKm: sp.distanceKm, azimuth: sp.azimuth, apparentAltitude: sp.apparentAltitude, angularRadius: sp.angularRadius },
       moon: { az: moon.azimuth, alt: moon.altitude < REFRACTION_FLOOR - 1 ? null : refractTrue(moon.altitude, T, Pr), illuminated: phase.illuminatedFraction, angularRadius: Math.asin(1737.4 / ma.distanceKm) / DEG },
       sunAlt: sun.altitude,
       sun: { azimuth: sun.azimuth, altitude: sun.altitude, apparentAltitude: apparentAltitudeOf(sun.altitude, T, Pr, REFRACTION_FLOOR) },

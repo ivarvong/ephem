@@ -116,7 +116,7 @@ describe("worker handler", () => {
     const sea = await get("/day?lat=40.7127&lon=-74.0059&height=0&heightRef=msl&date=2026-10-28&tz=America/New_York")
     expect(sea.body.events.find((e: any) => e.kind === "rise" && e.body === "sun").time).toBe("2026-10-28T11:21:43.461Z")
     expect(d.headers.get("server-timing")).toMatch(/total;dur=/); expect(d.headers.get("access-control-allow-origin")).toBe("*")
-    const a = await get("/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&observerHeight=-30.9&start=2026-10-28T23:45:00Z&end=2026-10-29T02:00:00Z&stepSeconds=1800&maxDistanceKm=20&observerLat=40.6892&observerLon=-74.0760")
+    const a = await get("/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&height=-30.9&start=2026-10-28T23:45:00Z&end=2026-10-29T02:00:00Z&stepSeconds=1800&maxDistanceKm=20&lat=40.6892&lon=-74.0760")
     expect(a.status).toBe(200); expect(a.body.track.length).toBe(5); expect(a.body.track[0]).not.toHaveProperty("iterations")
   })
   it("track: one answer for the whole grid, each sample bit-identical to /position at that instant", async () => {
