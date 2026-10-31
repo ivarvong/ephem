@@ -8,6 +8,8 @@
   "scripts": {
     "build": "node --experimental-strip-types scripts/build-web.ts",
     "dev": "EPHEM_VITE=1 node --experimental-strip-types packages/worker/src/dev.ts",
+    "format": "scripts/format.sh",
+    "format:check": "scripts/format.sh --check",
     "golden:record": "GOLDEN_RECORD=1 vitest run packages/worker/test/golden.test.ts",
     "test": "node --experimental-strip-types scripts/build-web.ts --if-stale && vitest run",
     "lint": "oxlint packages",
@@ -17,6 +19,7 @@
     "@types/node": "^26.6.5",
     "fast-check": "^3.23.2",
     "oxlint": "^1.88.0",
+    "prettier": "3.9.10",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5",
     "wrangler": "^4.154.0"

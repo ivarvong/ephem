@@ -1,0 +1,24 @@
+# Prettier formats TS, TSX, JS, CSS, JSON, YAML and Markdown (npm run format; the gate runs npm run format:check).
+# Not formatted: generated, vendored, recorded or byte-compared files.
+node_modules/
+package-lock.json
+**/dist/
+**/dist.*/
+**/.cloudflare/
+**/.wrangler/
+packages/worker/assets/
+profiles/
+load-runs/
+.claude/
+*.html
+# generated (scripts/obs/basin.py types, scripts/og, scripts/openapi.ts)
+*.generated.ts
+reference/openapi.json
+# recorded data, fixtures and golden answers
+**/fixtures/
+packages/worker/test/golden/
+packages/worker/ops/basin/created-*.json
+reference/terrain_sunset/golden.json
+reference/geoid/inputs/
+data/jpl/testpo_sample.json
+packages/load/src/park.json
