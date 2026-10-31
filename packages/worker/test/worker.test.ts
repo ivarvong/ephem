@@ -144,6 +144,17 @@ describe("worker handler", () => {
     expect(t.body.observer).toEqual((await get("/position?lat=40.7127&lon=-74.0059&height=-22.6&time=2026-10-28T00:00:00Z")).body.observer)
     expect(t.body.provenance.diagnostics.blocks.length).toBeGreaterThan(0)
   })
+  it("track = /position with every refraction and height parameter too: msl, T/P, horizon (geometric, degrees), dut1 (sweep 2026-10-31)", async () => {
+    for (const extra of ["&height=320&heightRef=msl&temperature=-20&pressure=1040", "&horizon=geometric&dut1=0.31", "&height=1500&heightRef=msl&horizon=-1.2&temperature=30&pressure=850"]) {
+      const t = await get(`/track?lat=69.6492&lon=18.9553&start=2026-10-28T00:00:00Z&end=2026-10-29T00:00:00Z&stepSeconds=600${extra}`)
+      expect(t.status, extra).toBe(200)
+      for (const i of [0, 50, 100, 144]) {
+        const p = await get(`/position?lat=69.6492&lon=18.9553&time=${new Date(Date.parse(t.body.start) + i * 600e3).toISOString()}${extra}`)
+        for (const b of ["sun", "moon"]) for (const f of ["azimuth", "altitude", "apparentAltitude"]) expect(t.body[b][f][i], `${extra} ${b}.${f}[${i}]`).toBe(p.body[b][f])
+      }
+      expect(t.body.conventions.horizon).toEqual((await get(`/position?lat=69.6492&lon=18.9553&time=2026-10-28T00:00:00Z${extra}`)).body.conventions.horizon)
+    }
+  })
   it("track is bounded and grid-aligned (stable cache keys, no CPU bombs)", async () => {
     const base = "/track?lat=40.7&lon=-74"
     const off = await get(`${base}&start=2026-10-28T00:10:00Z&end=2026-10-28T06:00:00Z`)   // not on the 20 min grid

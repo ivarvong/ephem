@@ -43,6 +43,11 @@ describe("POST /alignment/search", () => {
   it("filters and include run after the windows", async () => {
     const dark = await post(local, { ...BODY, maxSunAltitude: -4, minIlluminated: 0.1, include: "sun,phase" })
     expect(dark.j.passes).toHaveLength(1); expect(dark.j.passes[0].phase.name).toMatch(/quarter|crescent|gibbous/); expect(dark.j.passes[0].sun.altitude).toBe(dark.j.passes[0].sunAltitude)
+    // include = /position at the pass instant from where the pass is seen (sweep 2026-10-31): the Sun's place and the Moon's phase
+    const p = dark.j.passes[0], seg = p.segments[0], where = `lat=${seg.enter.lat}&lon=${seg.enter.lon}&height=5&heightRef=msl&time=${p.time}`
+    const pos = await (await local(new Request(`http://x/position?${where}`))).json() as any
+    expect(Math.abs(p.sun.altitude - pos.sun.altitude)).toBeLessThan(1e-3); expect(Math.abs(p.sun.azimuth - pos.sun.azimuth)).toBeLessThan(1e-2)   // standing point of the instant ≈ the segment's entry (≤ km)
+    expect(Math.abs(p.phase.illuminatedFraction - pos.moon.phase.illuminatedFraction)).toBeLessThan(1e-4); expect(p.phase.name).toBe(pos.moon.phase.name)
     const bright = await post(local, { ...BODY, minIlluminated: 0.5 })
     expect(bright.j.passes).toHaveLength(0); expect(bright.j.search.passesBeforeFilters).toBe(1)
   }, 30_000)

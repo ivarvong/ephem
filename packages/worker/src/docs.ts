@@ -59,7 +59,7 @@ const PARAM_NAMES = Object.keys(PARAM_DOCS)
 export const llmsTxt = (): string => [
   "# ephem",
   "",
-  "> The Sun and Moon from JPL DE440, as a JSON HTTP API and an MCP server: where they are, what they do on a day, when they reach an altitude, and where to stand so one sits on a landmark. Every answer is checked against Skyfield and states its conventions.",
+  "> The Sun and Moon from JPL DE440, as a JSON HTTP API and an MCP server: where they are, what they do on a day, when they reach an altitude, and where to stand so one sits on a landmark. Every answer is checked against an independent implementation (Skyfield for the sky, PROJ and GeographicLib for geometry, NOAA test values and pygeomag for the magnetic field) and states its conventions.",
   "",
   "## Start here",
   ...QUICKSTART.flatMap(q => [`- ${q.question}`, `  curl '${BASE}${q.path}'`]),
@@ -92,7 +92,7 @@ const searchHtml = `<dt><code>POST ${SEARCH_POST.path}</code></dt><dd><strong>${
 export const docsHtml = (): string => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${ICON_LINK}<title>ephem API</title>
 <style>body{font:15px/1.5 system-ui,sans-serif;max-width:52rem;margin:2rem auto;padding:0 1rem;color:#111;background:#fff}code,pre{font:13px ui-monospace,monospace;background:#f3f3f3;padding:0 .2em;overflow-wrap:anywhere}pre{padding:.6em .8em;white-space:pre-wrap}h2{margin-top:2rem}dt{margin-top:1rem;font-weight:600}dd{margin:.2rem 0 0 1rem}@media(prefers-color-scheme:dark){body{color:#eee;background:#111}code,pre{background:#222}a{color:#8bf}}</style></head><body>
 <h1>ephem API</h1>
-<p>The Sun and Moon from JPL DE440: where they are, what they do on a day, when they reach an altitude, and where to stand so one sits on a landmark. JSON over HTTPS, CORS open, no key. Every answer is checked against Skyfield and states the conventions it used.</p>
+<p>The Sun and Moon from JPL DE440: where they are, what they do on a day, when they reach an altitude, and where to stand so one sits on a landmark. JSON over HTTPS, CORS open, no key. Every answer is checked against an independent implementation (Skyfield for the sky, PROJ and GeographicLib for geometry, NOAA test values and pygeomag for the magnetic field) and states the conventions it used.</p>
 ${QUICKSTART.map(q => `<p><strong>${esc(q.question)}</strong></p><pre>curl '${esc(BASE + q.path)}'</pre>`).join("\n")}
 <ul>
 <li>OpenAPI 3.1 spec: <a href="/openapi.json"><code>/openapi.json</code></a></li>
