@@ -1,0 +1,144 @@
+{
+ "note": "handler throws Error (ephem-abort-lab dc2296e8, 2026-10-31): outcome exception, 500, error log with the exception. Must FAIL.",
+ "service": "ephem-abort-lab",
+ "rays": [
+  "a5304707c82d43e7"
+ ],
+ "events": [
+  {
+   "$metadata": {
+    "id": "01M687393Q0000000000000003",
+    "rayId": "a5304707c82d43e7",
+    "traceId": "a289e603eb32c7cd760f62844577f317",
+    "trigger": "GET /",
+    "timestampNs": "1793424729207000000",
+    "service": "ephem-abort-lab",
+    "level": "error",
+    "error": "GET https://ephem-abort-lab.ivar.workers.dev/?mode=throw",
+    "message": "GET https://ephem-abort-lab.ivar.workers.dev/?mode=throw",
+    "type": "cf-worker-event"
+   },
+   "timestamp": 1793424729207,
+   "$workers": {
+    "scriptVersion": {
+     "id": "dc2296e8-d3e1-430d-951c-761cdedea5c1"
+    },
+    "outcome": "exception",
+    "eventType": "fetch",
+    "wallTimeMs": 900,
+    "cpuTimeMs": 0,
+    "event": {
+     "request": {
+      "method": "GET",
+      "url": "https://ephem-abort-lab.ivar.workers.dev/"
+     },
+     "response": {
+      "status": 500
+     }
+    }
+   },
+   "source": {
+    "level": "error",
+    "message": "GET https://ephem-abort-lab.ivar.workers.dev/?mode=throw"
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M687387K0000000000000001",
+    "rayId": "a5304707c82d43e7",
+    "traceId": "a289e603eb32c7cd760f62844577f317",
+    "spanId": "b7b7c2653c693070",
+    "trigger": "GET /",
+    "timestampNs": "1793424728307000000",
+    "service": "ephem-abort-lab",
+    "level": "error",
+    "error": "deliberate server error (gate fixture)",
+    "message": "deliberate server error (gate fixture)",
+    "type": "cf-worker"
+   },
+   "timestamp": 1793424728307,
+   "$workers": {
+    "scriptVersion": {
+     "id": "dc2296e8-d3e1-430d-951c-761cdedea5c1"
+    },
+    "eventType": "fetch",
+    "event": {
+     "request": {
+      "method": "GET",
+      "path": "/",
+      "url": "https://ephem-abort-lab.ivar.workers.dev/"
+     }
+    }
+   },
+   "source": {
+    "message": "deliberate server error (gate fixture)",
+    "exception": {
+     "name": "Error",
+     "stack": "    at Object.fetch (index.js:60:33)",
+     "timestamp": 1793424728307
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M68738750000000000000001",
+    "rayId": "a5304707c82d43e7",
+    "traceId": "a289e603eb32c7cd760f62844577f317",
+    "spanId": "b7b7c2653c693070",
+    "trigger": "ephem-abort-lab",
+    "timestampNs": "1793424728293000000",
+    "service": "ephem-abort-lab",
+    "level": "error",
+    "error": "deliberate server error (gate fixture)",
+    "message": "ephem-abort-lab GET 500",
+    "spanName": "GET",
+    "type": "span"
+   },
+   "timestamp": 1793424728293,
+   "source": {
+    "cloudflare": {
+     "ray_id": "a5304707c82d43e7",
+     "outcome": "exception",
+     "script_version": {
+      "id": "dc2296e8-d3e1-430d-951c-761cdedea5c1"
+     }
+    },
+    "url": {
+     "path": "/"
+    },
+    "http": {
+     "response": {
+      "status_code": 500
+     }
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M687387KHWXC431YQVKGQ975",
+    "traceId": "a289e603eb32c7cd760f62844577f317",
+    "spanId": "b7b7c2653c693070",
+    "trigger": "ephem-abort-lab",
+    "timestampNs": "1793424728307000000",
+    "service": "ephem-abort-lab",
+    "level": "error",
+    "error": "deliberate server error (gate fixture)",
+    "message": "exception",
+    "type": "span_event"
+   },
+   "timestamp": 1793424728307,
+   "source": {
+    "message": "exception",
+    "attributes": {
+     "exception": {
+      "type": "Error",
+      "message": "deliberate server error (gate fixture)",
+      "stacktrace": "    at Object.fetch (index.js:60:33)"
+     }
+    },
+    "traceId": "a289e603eb32c7cd760f62844577f317",
+    "spanId": "b7b7c2653c693070"
+   }
+  }
+ ]
+}

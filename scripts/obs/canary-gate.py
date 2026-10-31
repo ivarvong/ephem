@@ -28,10 +28,13 @@ FAIL on (rule; see docs/telemetry_and_profiling.md "Telemetry gate"):
   missing      at the deadline: coverage below --coverage (0.95) of the smoke's requests, a smoke check (route) with no
                front-door invocation at all, or a required entrypoint/span absent
   version      a smoke request answered by another version of <worker> than <new-version>
-  outcome      any invocation with outcome != ok (live: a user's `canceled` is a warning, it is their disconnect)
+  outcome      any invocation with outcome other than ok / canceled
   5xx          any 5xx; or a front-door status that differs from what the client recorded
   error log    any log line at level error, any key ending in `_failed` (basin_send_failed, request_log_failed), any
                {"evt": "*_failed"}
+  NOT a failure: a client abort (counted, one warning line): outcome `canceled`, the runtime's `Network connection lost.`
+               exception on a request whose invocation shows no server error, {"evt": "client_aborted"}. The rules are
+               scripts/obs/gate_rules.py, tested on recorded events (packages/worker/test/canary-gate.test.ts).
   live         an error of a signature (service, entrypoint, kind, path/evt) the previous version did not show in its
                baseline window; a signature the previous version also shows is a warning (pre-existing)
 WARN only: CPU p50/max per (entrypoint, path) vs the previous version's last --baseline-min minutes: new p50 > 2x base p50
@@ -47,6 +50,7 @@ from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).parent))
 import telemetry as t  # noqa: E402
+from gate_rules import classify, is_err_log  # noqa: E402  the per-event rules (tested: packages/worker/test/canary-gate.test.ts)
 
 ap = argparse.ArgumentParser()
 ap.add_argument("worker", choices=["ephem"])
@@ -136,17 +140,6 @@ def collect(until: int):
     return front, linked, tev, mine
 
 
-def is_err_log(e):
-    if e["$metadata"].get("type") != "cf-worker":
-        return None
-    src = e.get("source") if isinstance(e.get("source"), dict) else {}
-    lvl = e["$metadata"].get("level") or src.get("level")
-    failed = [k for k in src if k.endswith("_failed")] + ([src["evt"]] if str(src.get("evt", "")).endswith("_failed") else [])
-    if lvl == "error" or failed:
-        return (failed[0] if failed else "error") + ": " + json.dumps(src)[:160]
-    return None
-
-
 def judge(front, linked, tev, mine, final: bool):
     fails, warns, missing = [], [], []
     byray = collections.defaultdict(list)
@@ -166,32 +159,17 @@ def judge(front, linked, tev, mine, final: bool):
         if ver(e) != a.new: fails.append(f"version: {path(e)} answered by ephem {ver(e)[:8]} (ray {ray0(e)})")
     for e in linked:   # ctx.exports runs the caller's version: a forwarded MISS on another version is a routing bug
         if ver(e) != a.new: fails.append(f"version: {ep(e)} {path(e)} ran on {ver(e)[:8]} (ray {ray0(e)})")
-    # outcomes, 5xx, error logs: the smoke's invocations, everything on their traces, everything the new version ran
-    seen, errs = set(), []
-    for e in front + linked + tev + mine:
-        i = json.dumps(e["$metadata"], sort_keys=True)   # $metadata.id is not unique (guide gotcha)
-        if i in seen: continue
-        seen.add(i)
-        where = f"{svc(e)}/{ep(e)} {ver(e)[:8]}"
-        if e["$metadata"].get("type") == "cf-worker-event":
-            o, st = e["$workers"].get("outcome"), status(e)
-            if o and o != "ok": errs.append((e, f"outcome {o}", f"outcome: {where} {path(e)} {o} (ray {ray0(e)})"))
-            if isinstance(st, int) and st >= 500: errs.append((e, f"status {st}", f"5xx: {where} {path(e)} {st} (ray {ray0(e)})"))
-        elif e["$metadata"].get("type") == "span" and isinstance(e.get("source"), dict) and "ray_id" in e["source"].get("cloudflare", {}):
-            c = e["source"]["cloudflare"]; sc = ((e["source"].get("http") or {}).get("response") or {}).get("status_code")
-            pth = (e["source"].get("url") or {}).get("path", "")
-            if c.get("outcome") not in (None, "ok"): errs.append((e, f"outcome {c.get('outcome')}", f"outcome (root span): {where} {pth} {c.get('outcome')} (ray {c.get('ray_id')})"))
-            if isinstance(sc, int) and sc >= 500: errs.append((e, f"status {sc}", f"5xx (root span): {where} {pth} {sc} (ray {c.get('ray_id')})"))
-        else:
-            m = is_err_log(e)
-            if m: errs.append((e, "log " + m.split(":")[0], f"error log: {where} {m} (ray {ray0(e)})"))
+    # outcomes, 5xx, error logs: the smoke's invocations, everything on their traces, everything the new version ran.
+    # A client abort (outcome canceled, the runtime's "Network connection lost." on a request with no server error, our
+    # client_aborted record) is counted, never failed: scripts/obs/gate_rules.py.
+    errs, aborts = classify(front + linked + tev + mine, where=lambda e: f"{svc(e)}/{ep(e)} {ver(e)[:8]}", final=final)
+    if aborts: warns.append(f"client aborts: {len(aborts)} (" + "; ".join(m for _, _, m in aborts[:3]) + (" …" if len(aborts) > 3 else "") + ")")
     key = lambda e: json.dumps(e["$metadata"], sort_keys=True)  # noqa: E731
     smoke_ids = {key(e) for e in front + linked + tev}
     for e, kind, msg in errs:
         if a.live and key(e) not in smoke_ids:   # real traffic: judge by signature against the previous version
             sig = (svc(e), ep(e), kind, path(e))
-            if kind == "outcome canceled": warns.append("live (client disconnect): " + msg)
-            elif sig in BASE_SIGS: warns.append("live (pre-existing on prev): " + msg)
+            if sig in BASE_SIGS: warns.append("live (pre-existing on prev): " + msg)
             else: fails.append("live: " + msg)
         else:
             fails.append(msg)
@@ -223,7 +201,7 @@ def load_base():
         if e["$metadata"].get("type") == "cf-worker-event":
             BASE[(ep(e), "/block/…" if ep(e) == "BlockStore" else path(e))].append(e["$workers"].get("cpuTimeMs", 0))
             o, st = e["$workers"].get("outcome"), status(e)
-            if o and o != "ok": BASE_SIGS.add((svc(e), ep(e), f"outcome {o}", path(e)))
+            if o and o not in ("ok", "canceled"): BASE_SIGS.add((svc(e), ep(e), f"outcome {o}", path(e)))
             if isinstance(st, int) and st >= 500: BASE_SIGS.add((svc(e), ep(e), f"status {st}", path(e)))
         else:
             m = is_err_log(e)
@@ -260,7 +238,7 @@ while True:
 waited = time.time() - start
 first_complete = waited if complete else None
 BASE_T.join()
-if not a.live: fails, warns, missing, info = judge(front, linked, tev, mine, True)   # CPU warnings need the baseline
+fails, warns, missing, info = judge(front, linked, tev, mine, True)   # CPU warnings need the baseline; a disconnect log still unjoined to its invocation is an error now
 
 # --- table ---------------------------------------------------------------------------------------------------------------
 under = "ephem (front door, Api, BlockStore)"

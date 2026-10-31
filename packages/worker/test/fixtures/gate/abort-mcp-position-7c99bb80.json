@@ -1,0 +1,1465 @@
+{
+ "note": "abort-probe on prod 7c99bb80 (2026-10-31): POST /mcp tools/call position closed 5/15 ms after send, GET /position closed 3/8 ms after send: runtime 'Network connection lost.' error logs, outcome ok, no response. Must PASS.",
+ "service": "ephem",
+ "rays": [
+  "a53049d0de4543e7",
+  "a53049cf0d2c43e7",
+  "a5304ca23ab043e7",
+  "a5304ca0ba0a43e7"
+ ],
+ "events": [
+  {
+   "$metadata": {
+    "id": "01M6876R470000000000000012",
+    "rayId": "a53049d0de4543e7",
+    "traceId": "5f95ff26cd2b7c9825b9be471c423196",
+    "trigger": "POST /mcp",
+    "timestampNs": "1793424842887000000",
+    "service": "ephem",
+    "level": "info",
+    "message": "POST https://ephem.ivar.workers.dev/mcp",
+    "type": "cf-worker-event"
+   },
+   "timestamp": 1793424842887,
+   "$workers": {
+    "scriptVersion": {
+     "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+    },
+    "outcome": "ok",
+    "eventType": "fetch",
+    "wallTimeMs": 519,
+    "cpuTimeMs": 13,
+    "event": {
+     "request": {
+      "method": "POST",
+      "url": "https://ephem.ivar.workers.dev/mcp"
+     }
+    }
+   },
+   "source": {
+    "level": "info",
+    "message": "POST https://ephem.ivar.workers.dev/mcp"
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M6876QMJ000000000000000Y",
+    "rayId": "a53049d0de4543e7",
+    "traceId": "5f95ff26cd2b7c9825b9be471c423196",
+    "spanId": "d60384ff4889a87d",
+    "trigger": "POST /mcp",
+    "timestampNs": "1793424842386000000",
+    "service": "ephem",
+    "level": "error",
+    "error": "Network connection lost.",
+    "message": "Network connection lost.",
+    "type": "cf-worker"
+   },
+   "timestamp": 1793424842386,
+   "$workers": {
+    "scriptVersion": {
+     "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+    },
+    "eventType": "fetch",
+    "event": {
+     "request": {
+      "method": "POST",
+      "path": "/mcp",
+      "url": "https://ephem.ivar.workers.dev/mcp"
+     }
+    }
+   },
+   "source": {
+    "message": "Network connection lost.",
+    "exception": {
+     "name": "Error",
+     "timestamp": 1793424842386
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M6876QMC0000000000000001",
+    "rayId": "a53049d0de4543e7",
+    "traceId": "5f95ff26cd2b7c9825b9be471c423196",
+    "spanId": "d60384ff4889a87d",
+    "trigger": "ephem",
+    "timestampNs": "1793424842380000000",
+    "service": "ephem",
+    "level": "error",
+    "error": "Network connection lost.",
+    "message": "ephem POST ERROR",
+    "spanName": "POST",
+    "type": "span"
+   },
+   "timestamp": 1793424842380,
+   "source": {
+    "cloudflare": {
+     "ray_id": "a53049d0de4543e7",
+     "outcome": "ok",
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": "/mcp"
+    },
+    "http": {
+     "response": {}
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M6876QMJ4RXDA0ZFYCDS11E1",
+    "traceId": "5f95ff26cd2b7c9825b9be471c423196",
+    "spanId": "d60384ff4889a87d",
+    "trigger": "ephem",
+    "timestampNs": "1793424842386000000",
+    "service": "ephem",
+    "level": "error",
+    "error": "Network connection lost.",
+    "message": "exception",
+    "type": "span_event"
+   },
+   "timestamp": 1793424842386,
+   "source": {
+    "message": "exception",
+    "attributes": {
+     "exception": {
+      "type": "Error",
+      "message": "Network connection lost."
+     }
+    },
+    "traceId": "5f95ff26cd2b7c9825b9be471c423196",
+    "spanId": "d60384ff4889a87d"
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M6876QMJ000000000000000A",
+    "traceId": "5f95ff26cd2b7c9825b9be471c423196",
+    "spanId": "33ed90d3c7d696fc",
+    "trigger": "ephem",
+    "timestampNs": "1793424842386000002",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem jsRpcCall OK",
+    "spanName": "jsRpcCall",
+    "type": "span"
+   },
+   "timestamp": 1793424842386,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M6876QMJ0000000000000009",
+    "traceId": "5f95ff26cd2b7c9825b9be471c423196",
+    "spanId": "c085a3c517335417",
+    "trigger": "ephem",
+    "timestampNs": "1793424842386000001",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem jsRpcSession OK",
+    "spanName": "jsRpcSession",
+    "type": "span"
+   },
+   "timestamp": 1793424842386,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M6876QMJ0000000000000008",
+    "traceId": "5f95ff26cd2b7c9825b9be471c423196",
+    "spanId": "f9e7cce149219ad6",
+    "trigger": "ephem",
+    "timestampNs": "1793424842386000000",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem compute.position OK",
+    "spanName": "compute.position",
+    "type": "span"
+   },
+   "timestamp": 1793424842386,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    },
+    "ephem": {
+     "block_reads": 57,
+     "blocks": 1
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M6876QMC0000000000000007",
+    "traceId": "5f95ff26cd2b7c9825b9be471c423196",
+    "spanId": "01857a58a86119b8",
+    "trigger": "ephem",
+    "timestampNs": "1793424842380000006",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem geoid.load OK",
+    "spanName": "geoid.load",
+    "type": "span"
+   },
+   "timestamp": 1793424842380,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    },
+    "ephem": {
+     "geoid_cache": "L1"
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M6876QMC0000000000000006",
+    "traceId": "5f95ff26cd2b7c9825b9be471c423196",
+    "spanId": "7f16bee3bb15154e",
+    "trigger": "ephem",
+    "timestampNs": "1793424842380000005",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem fetch 200",
+    "spanName": "fetch",
+    "type": "span"
+   },
+   "timestamp": 1793424842380,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": "/block/v11/29915576d0a65557/5442"
+    },
+    "http": {
+     "response": {
+      "status_code": 200,
+      "body": {
+       "size": 8144
+      }
+     }
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M6876QMC0000000000000005",
+    "traceId": "5f95ff26cd2b7c9825b9be471c423196",
+    "spanId": "b5710561e757ad82",
+    "trigger": "ephem",
+    "timestampNs": "1793424842380000004",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem blocks.load OK",
+    "spanName": "blocks.load",
+    "type": "span"
+   },
+   "timestamp": 1793424842380,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    },
+    "ephem": {
+     "blocks_cache": "HIT:1"
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M6876QMC0000000000000004",
+    "traceId": "5f95ff26cd2b7c9825b9be471c423196",
+    "spanId": "bdb24a56109db34a",
+    "trigger": "ephem",
+    "timestampNs": "1793424842380000003",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem position OK",
+    "spanName": "position",
+    "type": "span"
+   },
+   "timestamp": 1793424842380,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    },
+    "ephem": {
+     "isolate_computes": 1
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M6876QMC0000000000000003",
+    "traceId": "5f95ff26cd2b7c9825b9be471c423196",
+    "spanId": "0312f1a98832234a",
+    "trigger": "ephem",
+    "timestampNs": "1793424842380000002",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem mcp.tools/call 200",
+    "spanName": "mcp.tools/call",
+    "type": "span"
+   },
+   "timestamp": 1793424842380,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    },
+    "ephem": {
+     "api_cache": "LOCAL"
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M6876QMC0000000000000002",
+    "traceId": "5f95ff26cd2b7c9825b9be471c423196",
+    "spanId": "504dcc179e1e2086",
+    "trigger": "ephem",
+    "timestampNs": "1793424842380000001",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem POST 200",
+    "spanName": "POST",
+    "type": "span"
+   },
+   "timestamp": 1793424842380,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": "/mcp"
+    },
+    "http": {
+     "response": {
+      "status_code": 200
+     }
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M6876R4C000000000000000Z",
+    "rayId": "a53049cf0d2c43e7",
+    "traceId": "f0cedcdb7ead54c8e7af759fa41acaaa",
+    "trigger": "POST /mcp",
+    "timestampNs": "1793424842892000000",
+    "service": "ephem",
+    "level": "info",
+    "message": "POST https://ephem.ivar.workers.dev/mcp",
+    "type": "cf-worker-event"
+   },
+   "timestamp": 1793424842892,
+   "$workers": {
+    "scriptVersion": {
+     "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+    },
+    "outcome": "ok",
+    "eventType": "fetch",
+    "wallTimeMs": 809,
+    "cpuTimeMs": 5,
+    "event": {
+     "request": {
+      "method": "POST",
+      "url": "https://ephem.ivar.workers.dev/mcp"
+     }
+    }
+   },
+   "source": {
+    "level": "info",
+    "message": "POST https://ephem.ivar.workers.dev/mcp"
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M6876QBA000000000000000V",
+    "rayId": "a53049cf0d2c43e7",
+    "traceId": "f0cedcdb7ead54c8e7af759fa41acaaa",
+    "spanId": "e5aee30667fcbaaa",
+    "trigger": "POST /mcp",
+    "timestampNs": "1793424842090000000",
+    "service": "ephem",
+    "level": "error",
+    "error": "Network connection lost.",
+    "message": "Network connection lost.",
+    "type": "cf-worker"
+   },
+   "timestamp": 1793424842090,
+   "$workers": {
+    "scriptVersion": {
+     "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+    },
+    "eventType": "fetch",
+    "event": {
+     "request": {
+      "method": "POST",
+      "path": "/mcp",
+      "url": "https://ephem.ivar.workers.dev/mcp"
+     }
+    }
+   },
+   "source": {
+    "message": "Network connection lost.",
+    "exception": {
+     "name": "Error",
+     "timestamp": 1793424842090
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M6876QBA0000000000000001",
+    "rayId": "a53049cf0d2c43e7",
+    "traceId": "f0cedcdb7ead54c8e7af759fa41acaaa",
+    "spanId": "e5aee30667fcbaaa",
+    "trigger": "ephem",
+    "timestampNs": "1793424842090000000",
+    "service": "ephem",
+    "level": "error",
+    "error": "Network connection lost.",
+    "message": "ephem POST ERROR",
+    "spanName": "POST",
+    "type": "span"
+   },
+   "timestamp": 1793424842090,
+   "source": {
+    "cloudflare": {
+     "ray_id": "a53049cf0d2c43e7",
+     "outcome": "ok",
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": "/mcp"
+    },
+    "http": {
+     "response": {}
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M6876QBAPQ0Z6GFQSVT32DJZ",
+    "traceId": "f0cedcdb7ead54c8e7af759fa41acaaa",
+    "spanId": "e5aee30667fcbaaa",
+    "trigger": "ephem",
+    "timestampNs": "1793424842090000000",
+    "service": "ephem",
+    "level": "error",
+    "error": "Network connection lost.",
+    "message": "exception",
+    "type": "span_event"
+   },
+   "timestamp": 1793424842090,
+   "source": {
+    "message": "exception",
+    "attributes": {
+     "exception": {
+      "type": "Error",
+      "message": "Network connection lost."
+     }
+    },
+    "traceId": "f0cedcdb7ead54c8e7af759fa41acaaa",
+    "spanId": "e5aee30667fcbaaa"
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M6876QBA0000000000000009",
+    "traceId": "f0cedcdb7ead54c8e7af759fa41acaaa",
+    "spanId": "d17007dae6352f6c",
+    "trigger": "ephem",
+    "timestampNs": "1793424842090000008",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem jsRpcCall OK",
+    "spanName": "jsRpcCall",
+    "type": "span"
+   },
+   "timestamp": 1793424842090,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M6876QBA0000000000000008",
+    "traceId": "f0cedcdb7ead54c8e7af759fa41acaaa",
+    "spanId": "40c3715024d996cd",
+    "trigger": "ephem",
+    "timestampNs": "1793424842090000007",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem jsRpcSession OK",
+    "spanName": "jsRpcSession",
+    "type": "span"
+   },
+   "timestamp": 1793424842090,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M6876QBA0000000000000007",
+    "traceId": "f0cedcdb7ead54c8e7af759fa41acaaa",
+    "spanId": "dd1dfa8e0b8a923d",
+    "trigger": "ephem",
+    "timestampNs": "1793424842090000006",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem compute.position OK",
+    "spanName": "compute.position",
+    "type": "span"
+   },
+   "timestamp": 1793424842090,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    },
+    "ephem": {
+     "block_reads": 57,
+     "blocks": 1
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M6876QBA0000000000000006",
+    "traceId": "f0cedcdb7ead54c8e7af759fa41acaaa",
+    "spanId": "79175b1a7ac041e7",
+    "trigger": "ephem",
+    "timestampNs": "1793424842090000005",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem geoid.load OK",
+    "spanName": "geoid.load",
+    "type": "span"
+   },
+   "timestamp": 1793424842090,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    },
+    "ephem": {
+     "geoid_cache": "L1"
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M6876QBA0000000000000005",
+    "traceId": "f0cedcdb7ead54c8e7af759fa41acaaa",
+    "spanId": "7cfc81d069ff412d",
+    "trigger": "ephem",
+    "timestampNs": "1793424842090000004",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem blocks.load OK",
+    "spanName": "blocks.load",
+    "type": "span"
+   },
+   "timestamp": 1793424842090,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    },
+    "ephem": {
+     "blocks_cache": "L1"
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M6876QBA0000000000000004",
+    "traceId": "f0cedcdb7ead54c8e7af759fa41acaaa",
+    "spanId": "792e5ff9cc082e1f",
+    "trigger": "ephem",
+    "timestampNs": "1793424842090000003",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem position OK",
+    "spanName": "position",
+    "type": "span"
+   },
+   "timestamp": 1793424842090,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    },
+    "ephem": {
+     "isolate_computes": 4
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M6876QBA0000000000000003",
+    "traceId": "f0cedcdb7ead54c8e7af759fa41acaaa",
+    "spanId": "15332a05aa64adbb",
+    "trigger": "ephem",
+    "timestampNs": "1793424842090000002",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem mcp.tools/call 200",
+    "spanName": "mcp.tools/call",
+    "type": "span"
+   },
+   "timestamp": 1793424842090,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    },
+    "ephem": {
+     "api_cache": "LOCAL"
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M6876QBA0000000000000002",
+    "traceId": "f0cedcdb7ead54c8e7af759fa41acaaa",
+    "spanId": "dd5b1ba1d38f22da",
+    "trigger": "ephem",
+    "timestampNs": "1793424842090000001",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem POST 200",
+    "spanName": "POST",
+    "type": "span"
+   },
+   "timestamp": 1793424842090,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": "/mcp"
+    },
+    "http": {
+     "response": {
+      "status_code": 200
+     }
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M687A8NG000000000000000V",
+    "rayId": "a5304ca23ab043e7",
+    "traceId": "1dda45cd4f920a012a20d3797383681e",
+    "trigger": "GET /position",
+    "timestampNs": "1793424958128000000",
+    "service": "ephem",
+    "level": "info",
+    "message": "GET https://ephem.ivar.workers.dev/position?lat=40.7&lon=-74",
+    "type": "cf-worker-event"
+   },
+   "timestamp": 1793424958128,
+   "$workers": {
+    "scriptVersion": {
+     "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+    },
+    "outcome": "ok",
+    "eventType": "fetch",
+    "wallTimeMs": 331,
+    "cpuTimeMs": 5,
+    "event": {
+     "request": {
+      "method": "GET",
+      "url": "https://ephem.ivar.workers.dev/position"
+     }
+    }
+   },
+   "source": {
+    "level": "info",
+    "message": "GET https://ephem.ivar.workers.dev/position?lat=40.7&lon=-74"
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M687A8B8000000000000000Q",
+    "rayId": "a5304ca23ab043e7",
+    "traceId": "1dda45cd4f920a012a20d3797383681e",
+    "spanId": "011471b455b45936",
+    "trigger": "GET /position",
+    "timestampNs": "1793424957800000000",
+    "service": "ephem",
+    "level": "error",
+    "error": "Network connection lost.",
+    "message": "Network connection lost.",
+    "type": "cf-worker"
+   },
+   "timestamp": 1793424957800,
+   "$workers": {
+    "scriptVersion": {
+     "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+    },
+    "eventType": "fetch",
+    "event": {
+     "request": {
+      "method": "GET",
+      "path": "/position",
+      "url": "https://ephem.ivar.workers.dev/position"
+     }
+    }
+   },
+   "source": {
+    "message": "Network connection lost.",
+    "exception": {
+     "name": "Error",
+     "timestamp": 1793424957800
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M687A8B80000000000000001",
+    "rayId": "a5304ca23ab043e7",
+    "traceId": "1dda45cd4f920a012a20d3797383681e",
+    "spanId": "011471b455b45936",
+    "trigger": "ephem",
+    "timestampNs": "1793424957800000000",
+    "service": "ephem",
+    "level": "error",
+    "error": "Network connection lost.",
+    "message": "ephem GET ERROR",
+    "spanName": "GET",
+    "type": "span"
+   },
+   "timestamp": 1793424957800,
+   "source": {
+    "cloudflare": {
+     "ray_id": "a5304ca23ab043e7",
+     "outcome": "ok",
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": "/position"
+    },
+    "http": {
+     "response": {}
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M687A8B8R87CXGRPSKF60P2W",
+    "traceId": "1dda45cd4f920a012a20d3797383681e",
+    "spanId": "011471b455b45936",
+    "trigger": "ephem",
+    "timestampNs": "1793424957800000000",
+    "service": "ephem",
+    "level": "error",
+    "error": "Network connection lost.",
+    "message": "exception",
+    "type": "span_event"
+   },
+   "timestamp": 1793424957800,
+   "source": {
+    "message": "exception",
+    "attributes": {
+     "exception": {
+      "type": "Error",
+      "message": "Network connection lost."
+     }
+    },
+    "traceId": "1dda45cd4f920a012a20d3797383681e",
+    "spanId": "011471b455b45936"
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M687A8B80000000000000008",
+    "traceId": "1dda45cd4f920a012a20d3797383681e",
+    "spanId": "cc6b768c69645ae9",
+    "trigger": "ephem",
+    "timestampNs": "1793424957800000007",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem jsRpcCall OK",
+    "spanName": "jsRpcCall",
+    "type": "span"
+   },
+   "timestamp": 1793424957800,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M687A8B80000000000000007",
+    "traceId": "1dda45cd4f920a012a20d3797383681e",
+    "spanId": "72e3868be51f34b7",
+    "trigger": "ephem",
+    "timestampNs": "1793424957800000006",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem jsRpcSession OK",
+    "spanName": "jsRpcSession",
+    "type": "span"
+   },
+   "timestamp": 1793424957800,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M687A8B80000000000000006",
+    "traceId": "1dda45cd4f920a012a20d3797383681e",
+    "spanId": "53626e87e4bda44d",
+    "trigger": "ephem",
+    "timestampNs": "1793424957800000005",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem compute.position OK",
+    "spanName": "compute.position",
+    "type": "span"
+   },
+   "timestamp": 1793424957800,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    },
+    "ephem": {
+     "block_reads": 57,
+     "blocks": 1
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M687A8B80000000000000005",
+    "traceId": "1dda45cd4f920a012a20d3797383681e",
+    "spanId": "91e5a726cce3e98c",
+    "trigger": "ephem",
+    "timestampNs": "1793424957800000004",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem geoid.load OK",
+    "spanName": "geoid.load",
+    "type": "span"
+   },
+   "timestamp": 1793424957800,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    },
+    "ephem": {
+     "geoid_cache": "L1"
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M687A8B80000000000000004",
+    "traceId": "1dda45cd4f920a012a20d3797383681e",
+    "spanId": "371318fea28e903c",
+    "trigger": "ephem",
+    "timestampNs": "1793424957800000003",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem blocks.load OK",
+    "spanName": "blocks.load",
+    "type": "span"
+   },
+   "timestamp": 1793424957800,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    },
+    "ephem": {
+     "blocks_cache": "L1"
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M687A8B80000000000000003",
+    "traceId": "1dda45cd4f920a012a20d3797383681e",
+    "spanId": "b4b2513e45cc9a69",
+    "trigger": "ephem",
+    "timestampNs": "1793424957800000002",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem position OK",
+    "spanName": "position",
+    "type": "span"
+   },
+   "timestamp": 1793424957800,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    },
+    "ephem": {
+     "isolate_computes": 3
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M687A8B80000000000000002",
+    "traceId": "1dda45cd4f920a012a20d3797383681e",
+    "spanId": "5e4c10d6e0cacfbb",
+    "trigger": "ephem",
+    "timestampNs": "1793424957800000001",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem GET 200",
+    "spanName": "GET",
+    "type": "span"
+   },
+   "timestamp": 1793424957800,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": "/position"
+    },
+    "http": {
+     "response": {
+      "status_code": 200
+     }
+    },
+    "ephem": {
+     "api_cache": "LOCAL"
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M687A8NC000000000000000V",
+    "rayId": "a5304ca0ba0a43e7",
+    "traceId": "0de1b0d3d5a34c486be64ff13a8c5c79",
+    "trigger": "GET /position",
+    "timestampNs": "1793424958124000000",
+    "service": "ephem",
+    "level": "info",
+    "message": "GET https://ephem.ivar.workers.dev/position?lat=40.7&lon=-74",
+    "type": "cf-worker-event"
+   },
+   "timestamp": 1793424958124,
+   "$workers": {
+    "scriptVersion": {
+     "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+    },
+    "outcome": "ok",
+    "eventType": "fetch",
+    "wallTimeMs": 576,
+    "cpuTimeMs": 4,
+    "event": {
+     "request": {
+      "method": "GET",
+      "url": "https://ephem.ivar.workers.dev/position"
+     }
+    }
+   },
+   "source": {
+    "level": "info",
+    "message": "GET https://ephem.ivar.workers.dev/position?lat=40.7&lon=-74"
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M687A83J000000000000000Q",
+    "rayId": "a5304ca0ba0a43e7",
+    "traceId": "0de1b0d3d5a34c486be64ff13a8c5c79",
+    "spanId": "75589ee708de0c11",
+    "trigger": "GET /position",
+    "timestampNs": "1793424957554000000",
+    "service": "ephem",
+    "level": "error",
+    "error": "Network connection lost.",
+    "message": "Network connection lost.",
+    "type": "cf-worker"
+   },
+   "timestamp": 1793424957554,
+   "$workers": {
+    "scriptVersion": {
+     "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+    },
+    "eventType": "fetch",
+    "event": {
+     "request": {
+      "method": "GET",
+      "path": "/position",
+      "url": "https://ephem.ivar.workers.dev/position"
+     }
+    }
+   },
+   "source": {
+    "message": "Network connection lost.",
+    "exception": {
+     "name": "Error",
+     "timestamp": 1793424957554
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M687A83J0000000000000001",
+    "rayId": "a5304ca0ba0a43e7",
+    "traceId": "0de1b0d3d5a34c486be64ff13a8c5c79",
+    "spanId": "75589ee708de0c11",
+    "trigger": "ephem",
+    "timestampNs": "1793424957554000000",
+    "service": "ephem",
+    "level": "error",
+    "error": "Network connection lost.",
+    "message": "ephem GET ERROR",
+    "spanName": "GET",
+    "type": "span"
+   },
+   "timestamp": 1793424957554,
+   "source": {
+    "cloudflare": {
+     "ray_id": "a5304ca0ba0a43e7",
+     "outcome": "ok",
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": "/position"
+    },
+    "http": {
+     "response": {}
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M687A83JYMCVFR71D1KY3Z2Z",
+    "traceId": "0de1b0d3d5a34c486be64ff13a8c5c79",
+    "spanId": "75589ee708de0c11",
+    "trigger": "ephem",
+    "timestampNs": "1793424957554000000",
+    "service": "ephem",
+    "level": "error",
+    "error": "Network connection lost.",
+    "message": "exception",
+    "type": "span_event"
+   },
+   "timestamp": 1793424957554,
+   "source": {
+    "message": "exception",
+    "attributes": {
+     "exception": {
+      "type": "Error",
+      "message": "Network connection lost."
+     }
+    },
+    "traceId": "0de1b0d3d5a34c486be64ff13a8c5c79",
+    "spanId": "75589ee708de0c11"
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M687A83J0000000000000008",
+    "traceId": "0de1b0d3d5a34c486be64ff13a8c5c79",
+    "spanId": "3add8c1eb37bb06b",
+    "trigger": "ephem",
+    "timestampNs": "1793424957554000007",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem jsRpcCall OK",
+    "spanName": "jsRpcCall",
+    "type": "span"
+   },
+   "timestamp": 1793424957554,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M687A83J0000000000000007",
+    "traceId": "0de1b0d3d5a34c486be64ff13a8c5c79",
+    "spanId": "c0e65d5db30236bb",
+    "trigger": "ephem",
+    "timestampNs": "1793424957554000006",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem jsRpcSession OK",
+    "spanName": "jsRpcSession",
+    "type": "span"
+   },
+   "timestamp": 1793424957554,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M687A83J0000000000000006",
+    "traceId": "0de1b0d3d5a34c486be64ff13a8c5c79",
+    "spanId": "f61c2a25db50133f",
+    "trigger": "ephem",
+    "timestampNs": "1793424957554000005",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem compute.position OK",
+    "spanName": "compute.position",
+    "type": "span"
+   },
+   "timestamp": 1793424957554,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    },
+    "ephem": {
+     "block_reads": 57,
+     "blocks": 1
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M687A83J0000000000000005",
+    "traceId": "0de1b0d3d5a34c486be64ff13a8c5c79",
+    "spanId": "6049b3f10c9ff817",
+    "trigger": "ephem",
+    "timestampNs": "1793424957554000004",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem geoid.load OK",
+    "spanName": "geoid.load",
+    "type": "span"
+   },
+   "timestamp": 1793424957554,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    },
+    "ephem": {
+     "geoid_cache": "L1"
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M687A83J0000000000000004",
+    "traceId": "0de1b0d3d5a34c486be64ff13a8c5c79",
+    "spanId": "89e3ab4e3934733f",
+    "trigger": "ephem",
+    "timestampNs": "1793424957554000003",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem blocks.load OK",
+    "spanName": "blocks.load",
+    "type": "span"
+   },
+   "timestamp": 1793424957554,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    },
+    "ephem": {
+     "blocks_cache": "L1"
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M687A83J0000000000000003",
+    "traceId": "0de1b0d3d5a34c486be64ff13a8c5c79",
+    "spanId": "345a3778c44b3211",
+    "trigger": "ephem",
+    "timestampNs": "1793424957554000002",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem position OK",
+    "spanName": "position",
+    "type": "span"
+   },
+   "timestamp": 1793424957554,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": ""
+    },
+    "http": {
+     "response": {}
+    },
+    "ephem": {
+     "isolate_computes": 2
+    }
+   }
+  },
+  {
+   "$metadata": {
+    "id": "01M687A83J0000000000000002",
+    "traceId": "0de1b0d3d5a34c486be64ff13a8c5c79",
+    "spanId": "4a3457cd8573c98b",
+    "trigger": "ephem",
+    "timestampNs": "1793424957554000001",
+    "service": "ephem",
+    "level": "info",
+    "message": "ephem GET 200",
+    "spanName": "GET",
+    "type": "span"
+   },
+   "timestamp": 1793424957554,
+   "source": {
+    "cloudflare": {
+     "script_version": {
+      "id": "7c99bb80-f064-493b-8d07-017c64d82ac3"
+     }
+    },
+    "url": {
+     "path": "/position"
+    },
+    "http": {
+     "response": {
+      "status_code": 200
+     }
+    },
+    "ephem": {
+     "api_cache": "LOCAL"
+    }
+   }
+  }
+ ]
+}
