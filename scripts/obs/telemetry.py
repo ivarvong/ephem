@@ -65,3 +65,4 @@ def events_all(filters: list, window: tuple[int, int], step: int = 60_000, worke
                 if i not in seen:
                     seen.add(i); out.append(e)
     return out
+# ship.sh proof commit 1 (2026-10-31T01:25:06Z): comment only
