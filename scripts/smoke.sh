@@ -91,6 +91,9 @@ U="/v1/position?lat=40.$(printf '%07d' $((RANDOM * 32768 + RANDOM)))&lon=-74&tim
 want compute && ORDER+=(compute); want compute-hit && ORDER+=(compute-hit)
 { chk_one compute 200 "$U" '"provenance"' "" MISS "${CEXPECT:-any}"; chk_one compute-hit 200 "$U" '"provenance"' "" HIT any; } &   # in order
 chk blocks-miss 200 "/v1/position?lat=40.7&lon=-74&time=$(python3 -c 'import random,datetime as d; print((d.datetime(1972,1,2)+d.timedelta(seconds=random.randrange(5_617_000_000))).strftime("%Y-%m-%dT%H:%M:%SZ"))')" '"provenance"' "" MISS "${CEXPECT:-any}"
+# Link preview (src/og-render.ts): the font glyph fetches (from the public host, so it must be live before a canary renders) and the touch icon.
+chk og-font 200 "/assets/7dd8d6ff43f63a15/ephem-din-regular.woff2"
+chk touch-icon 200 "/apple-touch-icon.png" "PNG"
 if want mcp; then
   ORDER+=(mcp)
   { if EPHEM_VERSION=$PIN EPHEM_SMOKE_RUN=$RUN EPHEM_SMOKE_MANIFEST=$MANIFEST node --experimental-strip-types "$(dirname "$0")/obs/mcp-probe.ts" "$B" > "$D/mcp" 2>&1; then echo "ok   mcp $(tail -1 "$D/mcp")" > "$D/mcp.res"

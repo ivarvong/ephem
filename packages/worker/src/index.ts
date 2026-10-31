@@ -20,7 +20,9 @@ import { weatherLive } from "./weather.ts"
 import { pipelineSink, type PipelineLike, type RequestRow, type RequestRowV2 } from "./requestlog.ts"
 import { rumPipelineSink, type RumRow } from "./rum.ts"
 import { favicon } from "./favicon.ts"
+import { ogFront, setOgTracing } from "./og-render.ts"
 export { Admin } from "./admin.ts"
+export { Og } from "./og-entry.ts"   // cache ON: the link-preview PNG (src/og.ts scene, rendered by glyph)
 export { Api, BlockStore } from "./compute.ts"   // cache ON (cloudflare.config.ts); called over ctx.exports
 
 // LOGS: Basin stream ephem_requests (one row per request, src/requestlog.ts); VERSION: this Worker version's id for the row;
@@ -30,6 +32,7 @@ interface Env { readonly LOGS?: PipelineLike<RequestRow>; readonly LOGS_V2?: Pip
 interface Ctx { waitUntil(p: Promise<unknown>): void; readonly exports: Bindings }
 
 setTracing(tracing)
+setOgTracing(tracing)
 // ctx.exports of the invocation in flight. The bindings are the same objects for every invocation of this isolate.
 let loop: Bindings | undefined
 const lb = makeLoopback(() => resolveBindings(loop))   // every loopback fetch goes through src/loopback.ts (test/loopback.test.ts)
@@ -66,6 +69,7 @@ export default {
   async fetch(request: Request, env: Env, ctx: Ctx): Promise<Response> {
     const icon = favicon(request); if (icon) return withVersion(icon, env.VERSION?.id)   // before the app: no router, no request row
     loop = ctx.exports
+    const og = await ogFront(request, lb, tracing); if (og) return withErrors(withVersion(og, env.VERSION?.id), request)   // /og.png, its font, the touch icon
     front ??= makeHandler(blocks, { role: "front", api: lb.api }, weather, geoid)
     const wu = (p: Promise<unknown>) => ctx.waitUntil(p)
     return withErrors(withVersion(await front(request, logs(env, wu, "front"), env.RUM && env.REQUEST_LOGS !== "off" ? rumPipelineSink(env.RUM, wu, env.VERSION?.id) : undefined), env.VERSION?.id), request)

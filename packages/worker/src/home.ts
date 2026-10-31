@@ -10,6 +10,7 @@ import { RUM_JS } from "./rum.ts"
 import { ICON_LINK } from "./favicon.ts"
 import { DIN_CSS, DIN_LICENSE } from "./din.ts"
 import { FLUSH, READ_EMBED_JS, jsonScript, routeText, streamHtml } from "./embed.ts"
+import { ogHeadFor, originOf } from "./og-head.ts"
 import { CLIENT_TRACE_JS, documentTrace, documentTraceHeaders, traceparentMeta, type DocumentTrace } from "./clienttrace.ts"
 
 interface CfLocation {
@@ -76,7 +77,8 @@ export const Home = HttpRouter.use(router => Effect.gen(function* () {
       Effect.withSpan("home.embed"),
       Effect.map(parts => parts.join("") + BOOT + FLUSH + FONT_STYLE + PAGE_END),   // the font: a chunk of its own, after the boot
       Effect.catchCause(() => Effect.succeed(BOOT + FLUSH + FONT_STYLE + PAGE_END)))   // never fails: the page fetches what is missing
-    return yield* streamHtml(pageHead(v, tid), tail, { "cache-control": "private, no-store", ...documentTraceHeaders(tid) })
+    const og = yield* ogHeadFor(router, req, originOf(req, url), v, tid.traceparent)   // link-preview tags (src/og-head.ts)
+    return yield* streamHtml(pageHead(v, tid, og), tail, { "cache-control": "private, no-store", ...documentTraceHeaders(tid) })
   }).pipe(Effect.withSpan("home"))
   }))
 }))
@@ -498,7 +500,7 @@ function aimText(name, b, pose) {
 export const page = (v: Visitor, trace?: DocumentTrace) => pageHead(v, trace) + FONT_STYLE + PAGE_END
 
 /** Everything the browser can parse, style, paint and boot before the data: flushed at once (src/embed.ts streamHtml). */
-export const pageHead = (v: Visitor, trace?: DocumentTrace) => `<!doctype html>
+export const pageHead = (v: Visitor, trace?: DocumentTrace, og = "") => `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
 ${traceparentMeta(trace)}
@@ -506,7 +508,7 @@ ${traceparentMeta(trace)}
 <title>ephem · the sky over ${v.city.replace(/[<>&"]/g, "")}</title>
 <meta name="description" content="Where the Sun and the Moon are right now, from JPL DE440, computed on Cloudflare's edge.">
 <meta name="theme-color" content="#07090c"><meta name="color-scheme" content="dark">
-${ICON_LINK}
+${og}${ICON_LINK}
 <style>
 /* Mission control (ivar 2026-10-31: "More SpaceX control center style"): white on near-black; DIN for labels and values
    (labels small caps letter-spaced, values large with tabular figures); one accent (cyan) only for LIVE and NOW; amber Sun,

@@ -21,6 +21,8 @@ export default defineConfig({
 			// src/compute.ts: every deterministic /v1 answer and search window; DE440 blocks and EGM96 bands from R2.
 			Api: exports.worker({ cache: { enabled: true } }),
 			BlockStore: exports.worker({ cache: { enabled: true } }),
+			// src/og-render.ts: the link-preview PNG per rounded place and 10-minute bucket (public, max-age=600), rendered by glyph.
+			Og: exports.worker({ cache: { enabled: true } }),
 		},
 		// ephem-tail (packages/tail): one ephem_invocations row per invocation, incl. exceededCpu / exceededMemory / exception.
 		tailConsumers: [{ worker: "ephem-tail" }],
@@ -34,6 +36,9 @@ export default defineConfig({
 			// ephem_rum (ops/basin/rum.schema.json): browser RUM spans from POST /rum (src/rum.ts).
 			RUM: bindings.pipeline({ name: "3f7057f2350a4c7695ac6046305ac339" }),
 			VERSION: bindings.versionMetadata(),
+			// glyph (github.com/ivarvong/glyph): JSON scene → PNG, the Og entrypoint's renderer. A service binding: a public fetch
+			// from one *.ivar.workers.dev Worker to another is refused (same zone); glyph fetches our font from the public host.
+			GLYPH: bindings.worker({ worker: "glyph" }),
 			REQUEST_LOGS: bindings.text("on"), // "off": no rows (logging-overhead A/B)
 		},
 	},
