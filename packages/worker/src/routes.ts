@@ -2,7 +2,7 @@
 // (packages/tail/src/row.ts), so the two can't drift. No imports: the tail bundles this file.
 // test/requestlog.test.ts checks it against /openapi.json, /docs and the router; packages/tail/test checks the tail uses it.
 export const ROUTES: ReadonlySet<string> = new Set([
-  "/", "/instrument", "/rum", "/docs", "/docs/interactive", "/llms.txt", "/openapi.json", "/healthz", "/mcp",
+  "/", "/rum", "/docs", "/docs/interactive", "/llms.txt", "/openapi.json", "/healthz", "/mcp",
   "/v1/position", "/v1/day", "/v1/crossing", "/v1/alignment", "/v1/alignment/search", "/v1/alignment/search/window",
   "/v1/sightline", "/v1/track", "/v1/magnetic", "/v1/weather",
 ])

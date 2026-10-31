@@ -2,16 +2,12 @@ import { describe, expect, it } from "vitest"
 import { ICON_LINK, ICON_SVG, favicon } from "../src/favicon.ts"
 import { page } from "../src/home.ts"
 import { SCALAR_HTML, docsHtml } from "../src/docs.ts"
-import { makeHandler } from "../src/app.ts"
-import { makeBlocks } from "../src/blocks.ts"
 
 const V = { lat: 1, lon: 2, place: "x", city: "x", tz: "UTC", colo: null, source: "query" } as const
 
 describe("favicon: zero requests from our pages, a tiny immutable /favicon.ico for everyone else", () => {
   it("every HTML page inlines the icon as a data URI (so the browser never asks for /favicon.ico)", async () => {
-    const handler = makeHandler(makeBlocks({ read: async () => { throw new Error("no blocks needed") } } as never))
-    const inst = await (await handler(new Request("http://x/instrument?lat=1&lon=2&tz=UTC"))).text()
-    for (const html of [page(V), inst, docsHtml(), SCALAR_HTML]) {
+    for (const html of [page(V), docsHtml(), SCALAR_HTML]) {
       expect(html).toContain(ICON_LINK)
       expect(html.match(/<link rel="icon"/g)).toHaveLength(1)
     }

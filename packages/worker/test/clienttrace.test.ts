@@ -9,7 +9,6 @@ import { setTracing, type Tracing } from "../src/trace.ts"
 import { CLIENT_TRACE_JS, parseTraceparent, traceparentMeta } from "../src/clienttrace.ts"
 import { forwardHeaders, forwards } from "../src/responses.ts"
 import { page as homePage } from "../src/home.ts"
-import { instrumentPage } from "../src/instrument.ts"
 import { RUM_JS } from "../src/rum.ts"
 
 const FIX = resolve(__dirname, "../../core/test/fixtures/blocks")
@@ -55,7 +54,7 @@ describe("traceparent", () => {
   const TPRE = /^00-([0-9a-f]{32})-([0-9a-f]{16})-01$/
   const metaOf = (html: string) => /<meta name="traceparent" content="([^"]*)">/.exec(html)?.[1]
   it("a page document carries trace context: <meta name=traceparent> in the head, Server-Timing, x-ephem-trace, on the root span", async () => {
-    for (const path of ["/", "/instrument"]) {
+    for (const path of ["/"]) {
       const { spans, tracing } = recorder(); setTracing(tracing)
       const res = await makeHandler(makeBlocks(origin))(new Request("http://x" + path))
       const html = await res.text(), meta = metaOf(html)!, m = TPRE.exec(meta)!
@@ -71,7 +70,7 @@ describe("traceparent", () => {
   })
   it("an incoming traceparent on the document is adopted: same trace id, the incoming span is the parent", async () => {
     const { spans, tracing } = recorder(); setTracing(tracing)
-    const res = await makeHandler(makeBlocks(origin))(new Request("http://x/instrument", { headers: { traceparent: TP } }))
+    const res = await makeHandler(makeBlocks(origin))(new Request("http://x/", { headers: { traceparent: TP } }))
     const m = TPRE.exec(metaOf(await res.text())!)!
     expect(m[1]).toBe(TID); expect(m[2]).not.toBe(SID); expect(res.headers.get("x-ephem-trace")).toBe(TID)
     expect(spans.find(s => s.name === "GET")!.attrs).toMatchObject({ "client.trace_id": TID, "client.span_id": SID, "client.trace_origin": "adopted", "effect.parent_id": SID })
@@ -90,9 +89,9 @@ describe("traceparent", () => {
     }
   })
   it("no cached HTML can carry a stale trace id: pages are private, no-store, never forwarded to the cached Api, and every response gets a new id", async () => {
-    expect(forwards("GET", new URL("http://x/"))).toBe(false); expect(forwards("GET", new URL("http://x/instrument"))).toBe(false)
+    expect(forwards("GET", new URL("http://x/"))).toBe(false);
     const h = makeHandler(makeBlocks(origin))
-    for (const path of ["/", "/instrument"]) {
+    for (const path of ["/"]) {
       const ids = new Set<string>()
       for (let i = 0; i < 5; i++) { const r = await h(new Request("http://x" + path)); expect(r.headers.get("cache-control")).toBe("private, no-store"); ids.add(metaOf(await r.text())!) }
       expect(ids.size, path).toBe(5)
@@ -101,7 +100,7 @@ describe("traceparent", () => {
   it("a synthetic document (x-ephem-load / x-ephem-smoke) says so to its RUM; a real one does not", async () => {
     const h = makeHandler(makeBlocks(origin))
     expect(await (await h(new Request("http://x/", { headers: { "x-ephem-load": "J1" } }))).text()).toContain('<meta name="ephem-synthetic" content="1">')
-    expect(await (await h(new Request("http://x/instrument", { headers: { "x-ephem-smoke": "s" } }))).text()).toContain('<meta name="ephem-synthetic" content="1">')
+    expect(await (await h(new Request("http://x/", { headers: { "x-ephem-smoke": "s" } }))).text()).toContain('<meta name="ephem-synthetic" content="1">')
     expect(await (await h(new Request("http://x/"))).text()).not.toContain(`<meta name="ephem-synthetic"`)
   })
   it("traceparentMeta renders only a valid hex traceparent", () => {
@@ -128,8 +127,8 @@ describe("traceparent", () => {
     expect(forwardHeaders({ "cf-ray": "r1-EWR", traceparent: TP })).toEqual({ "x-ephem-ray": "r1-EWR", traceparent: TP })
     expect(forwardHeaders({ "cf-ray": "r1-EWR", traceparent: "garbage" })).toEqual({ "x-ephem-ray": "r1-EWR" })
   })
-  it("both pages send it on every API fetch (no bare fetch) and expose window.__ephemTrace", () => {
-    for (const html of [homePage(V), instrumentPage(V)]) {
+  it("the page sends it on every API fetch (no bare fetch) and expose window.__ephemTrace", () => {
+    for (const html of [homePage(V)]) {
       expect(html).toContain(CLIENT_TRACE_JS)
       expect(html.replace(RUM_JS, "").match(/\bfetch\(/g)?.length).toBe(1)   // the one inside __tfetch (RUM_JS posts to /rum)
       expect(html).toContain(RUM_JS)

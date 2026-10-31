@@ -1,4 +1,4 @@
-// Client ↔ server trace correlation (W3C Trace Context). The pages (/, /instrument) send `traceparent` on every API fetch:
+// Client ↔ server trace correlation (W3C Trace Context). The page (/) sends `traceparent` on every API fetch:
 // one trace id per page load, one span id per fetch (CLIENT_TRACE_JS). The front door validates it, records the two ids on the
 // root Effect span (`client.trace_id`, `client.span_id`) and echoes the trace id as `x-ephem-trace`; forwards to the Api carry
 // the same header (responses.ts forwardHeaders), so the Api's root span has the ids too. Effect's HttpMiddleware.tracer also
@@ -18,7 +18,7 @@ export const TRACE_HEADER = "x-ephem-trace"
 const hex = (n: number) => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => b.toString(16).padStart(2, "0")).join("")
 const HEX16 = /^[0-9a-f]{16}$/
 
-/** The page routes (/, /instrument) carry trace context too (OTel document-load convention). The document's trace id is the
+/** The page route (/) carries trace context too (OTel document-load convention). The document's trace id is the
  *  incoming traceparent's (adopted: Effect's HttpMiddleware.tracer already parents the root span on it) or a fresh one; its
  *  span id is the root Effect request span's own id (`effect.span_id` on that Workers span), so the page's fetch spans are
  *  its children. Recorded on the root span: `client.trace_id`, `client.document_span_id`, `client.trace_origin`

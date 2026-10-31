@@ -4,7 +4,7 @@
 // ephem.rum), one row per span, keyed by trace_id + span_id. ephem.requests_v2 has the same trace_id, so SQL joins client spans
 // to server request rows (scripts/obs/trace-view.ts).
 // Privacy (hard rule; test/rum.test.ts): no IP, no user agent (family only), no URL or query: targets are route ids (ROUTES,
-// `/assets/<known file>`, "other", "external"), names and details from fixed patterns, ids hex only. DNT or GPC (header or
+// `/fonts/<known file>`, "other", "external"), names and details from fixed patterns, ids hex only. DNT or GPC (header or
 // navigator) → nothing is sent or stored. The traceparent's sampled flag 00 → nothing. Synthetic traffic (x-ephem-load,
 // x-ephem-smoke, navigator.webdriver, a document served with <meta name=ephem-synthetic>) is stored with synthetic = true.
 // Limits: body ≤ 64 KiB, ≤ 300 spans per batch, ≤ 30 batches per trace per minute and ≤ 600 batches per 10 s per isolate
@@ -15,7 +15,7 @@ import * as HttpRouter from "effect/http/HttpRouter"
 import * as HttpServerRequest from "effect/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/http/HttpServerResponse"
 import type { EphemRumRecord } from "./basin.generated.ts"
-import { ASSETS } from "./instrument-ds.ts"
+import { FONTS } from "./fonts.ts"
 import { uaFamily } from "./requestlog.ts"
 import { ROUTES } from "./routes.ts"
 import { parseTraceparent } from "./traceparent.ts"
@@ -32,17 +32,17 @@ void _assignable
 
 export const RUM_LIMITS = { maxBytes: 64 * 1024, maxSpans: 300, perTracePerMin: 30, perIsolatePer10s: 600 } as const
 export const KINDS = new Set(["navigation", "resource", "fetch", "paint", "lcp", "cls", "inp", "event", "loaf", "longtask", "app", "interaction"])
-const PAGES = new Set(["/", "/instrument"])
+const PAGES = new Set(["/"])
 const H16 = /^[0-9a-f]{16}$/, NAME = /^[a-z][a-z0-9:._-]{0,39}$/, DETAIL = /^[A-Za-z0-9 _.:-]{0,32}$/, RAY = /^[0-9a-f]{16}(-[A-Z]{3})?$/
 const PROTO = /^(h2|h3|http\/1\.1|http\/1\.0)$/, ST = /^[A-Za-z0-9 ;=,."_:/-]{0,400}$/
-const ASSET = /^\/assets\/[0-9a-f]{12}\/([A-Za-z0-9._-]{1,64})$/
+const ASSET = /^\/fonts\/[0-9a-f]{12}\/([A-Za-z0-9._-]{1,64})$/
 
 /** A URL path (or "external") → a route id; never the raw path. */
 export const targetOf = (p: unknown): string | undefined => {
   if (typeof p !== "string") return undefined
   if (p === "external") return "external"
   if (ROUTES.has(p)) return p
-  const a = ASSET.exec(p); if (a && ASSETS[a[1]!]) return `/assets/${a[1]}`
+  const a = ASSET.exec(p); if (a && FONTS[a[1]!]) return `/fonts/${a[1]}`
   return "other"
 }
 const num = (v: unknown, lo: number, hi: number) => typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, Math.round(v * 1000) / 1000)) : undefined

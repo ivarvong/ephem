@@ -1,4 +1,4 @@
-// Initial data in the page, streamed (shared by the pages: /instrument; the homepage may adopt it). A page's first data used
+// Initial data in the page, streamed (used by the homepage). A page's first data used
 // to cost a second network round trip (document → boot script → API fetch): ~570 ms of latency on Fast 3G for ~2 ms of
 // server CPU. Instead the page handler runs the API routes in-process (the same router, the same middleware: a live
 // /v1/position is computed here, /v1/day goes through Gateway to the cached Api, exactly as the browser's fetch would) and

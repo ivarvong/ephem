@@ -55,12 +55,12 @@ chk() {
   if [ -z "$why" ]; then echo "ok   $name $c ${v:0:8}${x:+ $x}${cv:+ compute ${cv:0:8}} $p"; else echo "FAIL $name: $why ($(tr -d '\r' < "$D/h" | awk -F': ' 'tolower($1)=="cf-ray"{print $2}')) $p"; FAILED+=("$name"); fi
 }
 chk home 200 "/"
-chk instrument 200 "/instrument?lat=40.7&lon=-74&tz=America/New_York" "/v1/position"   # the RPN view: its glue calls the live API
-IF=$(grep -o '"RPNDot-Regular.woff2":{"sha":"[0-9a-f]*"' "$(dirname "$0")/../packages/worker/src/instrument-ds.ts" | grep -o '[0-9a-f]\{12\}')
-chk instrument-font 200 "/assets/${IF:-missing}/RPNDot-Regular.woff2"   # this commit's immutable font path (src/instrument-ds.ts)
+chk instrument-gone 404 "/instrument"   # removed 2026-10-31 (ivar: "delete /instrument")
+IF=$(grep -o '"SofiaSansCondensed-Core.woff2":{"sha":"[0-9a-f]*"' "$(dirname "$0")/../packages/worker/src/fonts.ts" | grep -o '[0-9a-f]\{12\}')
+chk font 200 "/fonts/${IF:-missing}/SofiaSansCondensed-Core.woff2"   # this commit's immutable font path (src/fonts.ts; the homepage's legends)
 chk page-trace 200 "/?lat=40.7&lon=-74&tz=America/New_York" '<meta name="traceparent" content="00-'   # document trace context (src/clienttrace.ts)
 RT=$(openssl rand -hex 16); RS=$(openssl rand -hex 8)
-chk rum 204 "/rum" "" '{"v":1,"tp":"00-'"$RT"'-'"$RS"'-01","page":"/instrument","seq":0,"s":[{"k":"app","n":"smoke","sid":"'"$RS"'","t":0}]}'   # RUM ingest (src/rum.ts), stored synthetic
+chk rum 204 "/rum" "" '{"v":1,"tp":"00-'"$RT"'-'"$RS"'-01","page":"/","seq":0,"s":[{"k":"app","n":"smoke","sid":"'"$RS"'","t":0}]}'   # RUM ingest (src/rum.ts), stored synthetic
 chk docs 200 "/docs" 'href="/openapi.json"'                       # useful without JS: links the spec (round-2 #7)
 chk docs-interactive 200 "/docs/interactive"
 chk llms 200 "/llms.txt" "$B/mcp"                                 # names the MCP endpoint

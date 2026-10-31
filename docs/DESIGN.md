@@ -38,7 +38,7 @@ reference/oracle/crosscheck.py  diffs any two implementations field by field
 | --- | --- | --- |
 | `@ephem/core` | `block` (DE440 record evaluator) · `time` · `linalg` · `frames` · `ephemeris` · `observe` · `geodesic` · `position` · `day` · `alignment` | nothing |
 | `@ephem/api` | `EphemApi` (groups `sky`, `meta`), request/response schemas, tagged errors, `CONVENTIONS` | `effect` |
-| `@ephem/worker` | `handlers` (decode → block set → load → core → diagnostics) · `blocks` (cache tiers) · `router` (shared /v1 router, CORS, explained 400s) · `app` (front door: + home, `/instrument` (RPN view, `instrument.ts`), `/docs`, MCP) · `ingest` + `admin` (JPL → R2 RPC) · `index` (ephem entry) · `compute` (the Api + BlockStore entrypoints, §12.0) · `dev` (Node server) · `ops/` (local-only RPC caller) | core, api, effect |
+| `@ephem/worker` | `handlers` (decode → block set → load → core → diagnostics) · `blocks` (cache tiers) · `router` (shared /v1 router, CORS, explained 400s) · `app` (front door: + home, `/fonts`, `/docs`, MCP) · `ingest` + `admin` (JPL → R2 RPC) · `index` (ephem entry) · `compute` (the Api + BlockStore entrypoints, §12.0) · `dev` (Node server) · `ops/` (local-only RPC caller) | core, api, effect |
 
 The dependency rule is one-way and mechanical: core's `package.json` lists no dependencies; `tsc -p packages/core` fails
 if anything else is imported. Core is runtime-agnostic (Workers, Node, browsers, Bun, Deno) because it does no I/O: the
@@ -445,7 +445,7 @@ as R2; this is what the cross-check harness targets.
 
 ```
 eyeball ─▶ ephem default (cache OFF; always runs: traces, Basin row, request.cf)
-             ├─ /, /instrument, /docs, /llms.txt, /openapi.json, /mcp, /healthz, live position / magnetic, /v1/weather
+             ├─ /, /docs, /llms.txt, /openapi.json, /mcp, /healthz, live position / magnetic, /v1/weather
              ├─ POST /v1/alignment/search: validate, fan out the window GETs, merge (no astronomy)
              └─ deterministic GET /v1/* and every search window ─▶ ctx.exports.Api (cache ON: cf.cacheKey = /v<CACHE_VERSION><path?sorted query>)
                     └─ blocks / geoid ─▶ ctx.exports.BlockStore (cache ON) ─▶ R2
@@ -484,7 +484,7 @@ Api); src/geoid.ts now installs a source that reads every L1 (the E arm's first 
 
 One trace id per page view, from the browser through every server entrypoint, for real users as well as the lab harness:
 
-- **Documents** (`/`, `/instrument`; `src/clienttrace.ts`): the front door adopts a valid incoming `traceparent` (W3C, strict:
+- **Documents** (`/`; `src/clienttrace.ts`; `/instrument` removed 2026-10-31): the front door adopts a valid incoming `traceparent` (W3C, strict:
   version 00, lower-case hex, non-zero ids) or uses the root request span's own trace id, and returns it three ways:
   `<meta name="traceparent" content="00-<trace>-<root span>-01">` (the OpenTelemetry document-load convention),
   `Server-Timing: trace;desc="…"` (the navigation entry's `serverTiming`) and `x-ephem-trace`. The HTML is `private,

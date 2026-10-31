@@ -1,6 +1,6 @@
 // Unified client + server trace of one page journey on ephem, driven by our own CDP client (scripts/obs/cdp/).
 //   node --experimental-strip-types scripts/obs/journey.ts <url> [--device iphone|desktop] [--net fast3g|4g|none] [--cpu 4]
-//        [--cold|--warm] [--script instrument-sky|home-drag|none] [--duration 70] [--out dir] [--name base] [--headed]
+//        [--cold|--warm] [--script home-drag|none] [--duration 70] [--out dir] [--name base] [--headed]
 //        [--at lat,lon] [--wait 240]
 // Chrome side: Tracing (devtools.timeline: parse, script, style/layout, paint, long tasks) + every Network request with full
 // timing and headers. The document carries the harness's traceparent (adopted by the Worker; the page reuses it from <meta
@@ -35,8 +35,8 @@ const opt = (k: string, d: string) => { const i = argv.indexOf(`--${k}`); return
 const target = argv.find(a => /^https?:/.test(a)) ?? "https://ephem.ivar.workers.dev/"
 const deviceKey = opt("device", "iphone"), netKey = opt("net", deviceKey === "iphone" ? "fast3g" : "none")
 const cpu = Number(opt("cpu", deviceKey === "iphone" ? "4" : "1")), mode: "cold" | "warm" = flag("warm") ? "warm" : "cold"
-const pageKind = new URL(target).pathname.startsWith("/instrument") ? "instrument" : "home"
-const script = opt("script", pageKind === "instrument" ? "instrument-sky" : "home-drag")
+const pageKind = "home"
+const script = opt("script", "home-drag")
 const durationS = Number(opt("duration", "70")), waitS = Number(opt("wait", "240"))
 const [lat, lon] = opt("at", "40.7128,-74.0060").split(",").map(Number) as [number, number]
 const device = P.DEVICES[deviceKey]; if (!device) throw new Error(`--device ${deviceKey}?`)
@@ -100,13 +100,7 @@ try {
   await P.waitForFn(s, `performance.getEntriesByName("ephem:data").length`, 60_000)
   const mark = (n: string) => marks.push({ wall: Date.now(), name: n })
   await new Promise(r => setTimeout(r, 1500))
-  if (script === "instrument-sky") {
-    const touch = device.touch
-    mark("tap SKY"); await P.tap(s, 'button[data-key="SKY"]', touch); await new Promise(r => setTimeout(r, 600))
-    mark("tap AZ T (soft A)"); await P.tap(s, '.sk[data-key="SOFT0"]', touch); await new Promise(r => setTimeout(r, 600))
-    mark("tap ALT (soft C)"); await P.tap(s, '.sk[data-key="SOFT2"]', touch); await new Promise(r => setTimeout(r, 600))
-    mark("tap ENTER"); await P.tap(s, 'button[data-key="ENTER"]', touch); await new Promise(r => setTimeout(r, 600))
-  } else if (script === "home-drag") {
+  if (script === "home-drag") {
     const c = await P.center(s, "canvas")
     mark("drag sky ←"); await P.drag(s, c.x + 120, c.y, -240, 0, device.touch); await new Promise(r => setTimeout(r, 800))
     mark("drag sky →"); await P.drag(s, c.x - 120, c.y, 240, 0, device.touch); await new Promise(r => setTimeout(r, 800))
@@ -115,7 +109,7 @@ try {
   const left = durationS * 1000 - (Date.now() - tNav.wall)
   log(`dwell ${Math.max(0, left / 1000).toFixed(0)} s (polls)`)
   if (left > 0) await new Promise(r => setTimeout(r, left))
-  pageState = await P.evaluate(s, `JSON.parse(JSON.stringify({ trace: window.__ephemTrace, rum: window.__rum && window.__rum.off, instrument: window.__instrument && { calls: window.__instrument.calls, errors: window.__instrument.errors } }))`)
+  pageState = await P.evaluate(s, `JSON.parse(JSON.stringify({ trace: window.__ephemTrace, rum: window.__rum && window.__rum.off }))`)
   // Leave the page as a user would: pagehide → the RUM's final sendBeacon (LCP, CLS, INP, the last spans).
   await s.send("Page.navigate", { url: "about:blank" }); await new Promise(r => setTimeout(r, 1500))
   trace = await P.traceEnd(s)
@@ -215,7 +209,7 @@ const needApi = creqs.filter(r => r.ray && /^(MISS|EXPIRED|UPDATING|REVALIDATED)
 const server = await pullServer({ from: tNav.wall - 120_000, to: tEnd + 60_000, loadTag: run, clientTraceId: TRACE_ID, rays, needApi, waitS, log })
 const model = buildModel(client, server, { run, url: url.pathname + url.search, origin, page: pageKind, device: device.name, net: net?.name ?? "none", cpu, mode, script, chrome: b.version.product,
   started: new Date(tNav.wall).toISOString(), durationS, navSpan: NAV_SPAN, pageTraceId: pageState?.trace?.traceId ?? null, pageTraceFrom: pageState?.trace?.from ?? null,
-  documentSpan: pageState?.trace?.parentSpanId ?? null, instrument: pageState?.instrument ?? null, sntp })
+  documentSpan: pageState?.trace?.parentSpanId ?? null, sntp })
 
 // ---------- the RUM's test: production RUM rows (Basin ephem.rum) vs CDP ground truth ----------
 const ROOT = new URL("../..", import.meta.url).pathname

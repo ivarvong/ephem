@@ -17,7 +17,7 @@ const origin = direct(async (first: number, count: number) => {
 const TID = "4bf92f3577b34da6a3ce929d0e0e4736", SID = "00f067aa0ba902b7", TP = `00-${TID}-${SID}-01`
 const ctx = (h: Record<string, string> = {}) => ({ now: Date.parse("2026-10-30T12:00:00Z"), headers: { "user-agent": "Mozilla/5.0 (Macintosh) Chrome/156", ...h }, cf: { colo: "EWR", country: "US", city: "New York" }, version: "v1" })
 const span = (o: Record<string, unknown> = {}) => ({ k: "resource", n: "fetch", sid: "a1b2c3d4e5f60718", t: 12.3, d: 40, tg: "/v1/position", ph: [0, 0, 0, 30, 35, 5], b: 900, st: 200, pr: "h2", sv: 'api;desc="HIT";dur=3.1, total;dur=4', r: "a52e17c7ca334350-EWR", ...o })
-const batch = (s: unknown[], o: Record<string, unknown> = {}) => ({ v: 1, tp: TP, page: "/instrument", seq: 0, to: Date.parse("2026-10-30T11:59:50Z"), vw: 390, dpr: 3, s, ...o })
+const batch = (s: unknown[], o: Record<string, unknown> = {}) => ({ v: 1, tp: TP, page: "/", seq: 0, to: Date.parse("2026-10-30T11:59:50Z"), vw: 390, dpr: 3, s, ...o })
 const SCHEMA = JSON.parse(readFileSync(resolve(__dirname, "../ops/basin/rum.schema.json"), "utf8")) as Array<{ name: string; type: string; required: boolean }>
 const matches = (row: Record<string, unknown>) => {
   for (const f of SCHEMA) { if (f.required) expect(row, f.name).toHaveProperty(f.name) }
@@ -29,16 +29,16 @@ describe("/rum validation (pure)", () => {
     const r = validateRum(batch([span(), span({ k: "app", n: "data-ready", sid: "1111111111111111", tg: undefined, d: undefined })]), ctx())
     expect(r.ok).toBe(true); if (!r.ok) return
     expect(r.rows).toHaveLength(2); expect(r.dropped).toBe(0)
-    expect(r.rows[0]).toMatchObject({ trace_id: TID, span_id: "a1b2c3d4e5f60718", parent_id: SID, kind: "resource", name: "fetch", page: "/instrument", target: "/v1/position",
+    expect(r.rows[0]).toMatchObject({ trace_id: TID, span_id: "a1b2c3d4e5f60718", parent_id: SID, kind: "resource", name: "fetch", page: "/", target: "/v1/position",
       cache: "HIT", ray: "a52e17c7ca334350-EWR", ttfb_ms: 35, ua_family: "browser", colo: "EWR", country: "US", synthetic: false, schema: 1, time_origin: "2026-10-30T11:59:50.000Z" })
     expect(r.rows[1]).toMatchObject({ kind: "app", name: "data-ready" })
     for (const row of r.rows) matches(row as unknown as Record<string, unknown>)
   })
   it("privacy: no IP, no user agent, no city, no URL or query is ever stored", () => {
-    const r = validateRum(batch([span({ tg: "/v1/position?lat=40.71234&lon=-74.01", dt: "x" }), span({ tg: "https://evil.example/p?q=secret" }), span({ tg: "/assets/7c1a2e7bc735/RPNDot-Regular.woff2" }), span({ tg: "/assets/000000000000/secret.txt" })]),
+    const r = validateRum(batch([span({ tg: "/v1/position?lat=40.71234&lon=-74.01", dt: "x" }), span({ tg: "https://evil.example/p?q=secret" }), span({ tg: "/fonts/7c1a2e7bc735/RPNDot-Regular.woff2" }), span({ tg: "/assets/000000000000/secret.txt" })]),
       ctx({ "cf-connecting-ip": "203.0.113.9", "x-real-ip": "203.0.113.9" }))
     if (!r.ok) throw new Error(r.reason)
-    expect(r.rows.map(x => x.target)).toEqual(["other", "other", "/assets/RPNDot-Regular.woff2", "other"])
+    expect(r.rows.map(x => x.target)).toEqual(["other", "other", "/fonts/RPNDot-Regular.woff2", "other"])
     const all = JSON.stringify(r.rows)
     for (const bad of ["203.0.113", "Mozilla", "Macintosh", "New York", "lat=", "evil", "secret", "?"]) expect(all, bad).not.toContain(bad)
   })
@@ -111,13 +111,13 @@ describe("Server-Timing", () => {
     expect(r.headers.get("timing-allow-origin")).toBe("*")
   })
   it("the front door names its cf-ray first, so RUM resource rows (fonts, documents) join by ray", async () => {
-    const r = await makeHandler(makeBlocks(origin))(new Request("http://x/assets/7c1a2e7bc735/RPNDot-Regular.woff2", { headers: { "cf-ray": "a52e17c739d64350-EWR" } }))
+    const r = await makeHandler(makeBlocks(origin))(new Request("http://x/fonts/7c1a2e7bc735/RPNDot-Regular.woff2", { headers: { "cf-ray": "a52e17c739d64350-EWR" } }))
     expect(r.headers.get("server-timing")).toMatch(/^ray;desc="a52e17c739d64350-EWR", total;dur=/)
     const v = validateRum(batch([span({ k: "resource", n: "css", r: undefined, sv: 'ray;desc="a52e17c739d64350-EWR", total;dur=0.1' })]), ctx()); if (!v.ok) throw new Error(v.reason)
     expect(v.rows[0]!.ray).toBe("a52e17c739d64350-EWR")
   })
   it("documents: trace first, then total", async () => {
-    const r = await makeHandler(makeBlocks(origin))(new Request("http://x/instrument"))
+    const r = await makeHandler(makeBlocks(origin))(new Request("http://x/"))
     expect(r.headers.get("server-timing")).toMatch(/^trace;desc="00-[0-9a-f]{32}-[0-9a-f]{16}-01", total;dur=[0-9.]+$/)
   })
 })

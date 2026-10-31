@@ -1,4 +1,4 @@
-// Assemble the front door's HTTP app: the shared router (src/router.ts) plus the homepage, /instrument (+ its /assets), docs,
+// Assemble the front door's HTTP app: the shared router (src/router.ts) plus the homepage (+ its /fonts), docs,
 // /openapi.json and MCP.
 import * as Layer from "effect/Layer"
 import * as HttpRouter from "effect/http/HttpRouter"
@@ -12,7 +12,6 @@ import { TracerLive } from "./trace.ts"
 import { Gateway, type Role } from "./responses.ts"
 import { Home } from "./home.ts"
 import { Fonts } from "./fonts.ts"
-import { Instrument } from "./instrument.ts"
 import { WeatherNone, type Weather } from "./weather.ts"
 import { Mcp } from "./mcp.ts"
 import { SCALAR_HTML, docsHtml, llmsTxt } from "./docs.ts"
@@ -37,7 +36,6 @@ export const makeApp = (blocks: Layer.Layer<Blocks>, edge: Role = { role: "local
     HttpApiBuilder.layer(EphemApi, { openapiPath: "/openapi.json" }),
     Home,
     Fonts,   // /fonts/<sha>/<file>: the page's faces, immutable (src/fonts.ts)
-    Instrument,
     Rum,   // POST /rum: browser RUM batches → Basin ephem_rum (src/rum.ts)
     Docs,
     RequestLogging,   // first global middleware = outermost: it sees every request, including those Gateway forwards
