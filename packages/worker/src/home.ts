@@ -7,7 +7,6 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest"
 import { isValidZone } from "@ephem/core"
 import { RUM_JS } from "./rum.ts"
 import { ICON_LINK } from "./favicon.ts"
-import { FONTS, SOFIA_RANGES, fontUrl } from "./fonts.ts"
 import { READ_EMBED_JS, jsonScript, routeText, streamHtml } from "./embed.ts"
 import { CLIENT_TRACE_JS, documentTrace, documentTraceHeaders, traceparentMeta, type DocumentTrace } from "./clienttrace.ts"
 
@@ -76,13 +75,6 @@ export const Home = HttpRouter.use(router => router.add("GET", "/", req => Effec
   }).pipe(Effect.withSpan("home"))
 })))
 
-// Fonts (design system "RPN Instrument", src/fonts.ts): the two dot faces inline (2.6 + 1.7 KB: no request, no
-// swap); Sofia Sans Condensed by its immutable /fonts URLs with swap: the core subset (preloaded) and, for any other code
-// point (an accented place name), the full legend file, which a browser fetches only if the page shows one.
-const HOME_FONTS = ["RPN Dot", "RPN Dot Small"].map((f, i) => `@font-face{font-family:"${f}";src:url("data:font/woff2;base64,${FONTS[i ? "RPNDotSmall-Regular.woff2" : "RPNDot-Regular.woff2"]!.b64}") format("woff2");font-display:block}`).join("") +
-  `@font-face{font-family:"Sofia Sans Condensed";src:url("${fontUrl("SofiaSansCondensed-Core.woff2")}") format("woff2");font-weight:400 800;font-display:swap;unicode-range:${SOFIA_RANGES.core}}` +
-  `@font-face{font-family:"Sofia Sans Condensed";src:url("${fontUrl("SofiaSansCondensed-Legend.woff2")}") format("woff2");font-weight:400 800;font-display:swap;unicode-range:${SOFIA_RANGES.rest}}`
-const HOME_PRELOAD = `<link rel="preload" href="${fontUrl("SofiaSansCondensed-Core.woff2")}" as="font" type="font/woff2" crossorigin>`
 const json = (x: unknown) => JSON.stringify(x).replace(/</g, "\\u003c")
 
 /**
@@ -100,9 +92,9 @@ function countdown(ms) {
   var m = Math.round(s / 60), h = Math.floor(m / 60); m = m % 60;
   return "in " + (h ? h + " h" + (m ? " " + m + " min" : "") : m + " min");
 }
-// Mission-clock countdown: "T-01:05:23" (ASCII minus, as on the glass).
+// Mission-clock countdown: "T−01:05:23".
 function tminus(ms) { var s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60; s = s % 60;
-  return "T-" + (h < 10 ? "0" : "") + h + ":" + (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s; }
+  return "T\\u2212" + (h < 10 ? "0" : "") + h + ":" + (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s; }
 function ago(s) {
   s = Math.max(0, Math.round(s));
   if (s < 90) return s + " s ago";
@@ -299,6 +291,16 @@ function spotsAround(it) {
   });
   return out;
 }
+// A body's name: many more candidates, nearest first (beside, above, below, out to ~90 px), so a clear spot is found before any
+// fallback.
+function bodySpots(it) {
+  var out = spotsAround(it), R = it.r || 0;
+  for (var dy = -60; dy <= 60; dy += 4) for (var dx = 0; dx <= 90; dx += 6) {
+    out.push([it.x + R + 4 + dx, it.y - it.h / 2 + dy], [it.x - R - 4 - dx - it.w, it.y - it.h / 2 + dy]);
+    if (dx <= 40) out.push([it.x - it.w / 2 + (dy % 8 ? dx : -dx), it.y - R - 4 - it.h - Math.abs(dy)], [it.x - it.w / 2 + (dy % 8 ? dx : -dx), it.y + R + 4 + Math.abs(dy)]);
+  }
+  return out.map(function (s) { return [s, Math.hypot(s[0] + it.w / 2 - it.x, s[1] + it.h / 2 - it.y)]; }).sort(function (a, b) { return a[1] - b[1]; }).map(function (x) { return x[0]; });
+}
 // Spots along a horizontal line y (a ring or a band edge): from the left and right edges inward, above the line, then below.
 function spotsAlong(y, w, h, b, below) {
   var xs = [], step = 22, mid = (b.x0 + b.x1) / 2;
@@ -321,13 +323,13 @@ function layoutLabels(items, hard, segs, bounds, pad) {
   function clearOf(r, list) { for (var j = 0; j < list.length; j++) if (overlapArea(r, list[j]) > 0) return false; return true; }
   function crossed(r) { for (var j = 0; j < segs.length; j++) if (overlapArea(r, { x: sb[j].x - 0.5, y: sb[j].y - 0.5, w: sb[j].w + 1, h: sb[j].h + 1 }) > 0 && segHitsRect(segs[j], r)) return true; return false; }
   items.map(function (it, i) { return { it: it, i: i }; }).sort(function (a, b) { return a.it.prio - b.it.prio || a.i - b.i; }).forEach(function (o) {
-    var it = o.it, spots = it.spots || spotsAround(it), best = null, fall = null;
+    var it = o.it, spots = it.spots || (it.body ? bodySpots(it) : spotsAround(it)), best = null, fall = null;
     for (var k = 0; k < spots.length; k++) {
       var x = spots[k][0], y = spots[k][1];
       if (x < bounds.x0 || y < bounds.y0 || x + it.w > bounds.x1 || y + it.h > bounds.y1) continue;
       var pd = it.pad == null ? pad : it.pad, r = { x: x, y: y, w: it.w, h: it.h }, gr = { x: x - pd, y: y - pd, w: it.w + 2 * pd, h: it.h + 2 * pd };
       if (!clearOf(gr, hard) || !clearOf(gr, placed)) continue;
-      if (!crossed(gr)) { best = r; break; }
+      if (!crossed({ x: x - 3, y: y - 3, w: it.w + 6, h: it.h + 6 })) { best = r; break; }
       if ((it.body || it.must) && !fall) fall = r;
     }
     var r2 = best || fall;
@@ -353,6 +355,7 @@ function chartModel(st) {
   var g = chartGeom(st.W, st.H, st.insetL, st.insetR), c = st.center, LH = st.LH, m = { g: g, lines: {}, hard: [], items: [], marks: [], discs: [], bands: [], sunBand: -1, segs: [] };
   var minus = function (a, d) { return (a < 0 ? "\\u2212" : "") + Math.abs(a).toFixed(d) + "\\u00b0"; };
   m.hard.push({ id: "horizon", x: -1e4, y: g.hy - 2, w: 2e4, h: 4 });
+  var y18b = chY(-18, g); m.hard.push({ id: "break-l", x: g.x0, y: y18b - 6, w: 10, h: 12 }, { id: "break-r", x: g.x1 - 10, y: y18b - 6, w: 10, h: 12 });
   for (var az = 0; az < 360; az += 15) chXs(az, g, c).forEach(function (x) { m.hard.push({ id: "tick" + az, x: x - 1, y: g.hy, w: 2, h: az % 45 ? 3 : 6 }); });
   if (st.ctl) m.hard.push(st.ctl);
   if (st.pose) { var px = chX(st.pose.az, g, c), py = chY(st.pose.alt, g); m.pose = { x: px, y: py }; m.hard.push({ id: "pose", x: px - 21, y: py - 21, w: 42, h: 42 }); }
@@ -364,14 +367,11 @@ function chartModel(st) {
     var y0 = chY(b[0], g), y1 = chY(b[1], g), on = i === m.sunBand; m.bands.push({ y0: y0, y1: y1, on: on });
     // bottom-aligned in its band, between the horizon's compass ticks (pad 0: the band is barely taller than the text)
     var h = LH.band, w = st.meas(b[2], "band"), yy = Math.floor(y1 - h);
-    if (y1 - y0 >= h + 1) m.items.push({ id: "band" + i, t: b[2], font: "band", role: on ? "bandOn" : "band", w: w, h: h, prio: on ? 1 : 4, pad: 0, spots: spotsAlong(yy + h + 3, w, h, g).filter(function (s, k, a) { return k < a.length / 2; }) });
+    if (on && y1 - y0 >= h + 1) m.items.push({ id: "band" + i, t: b[2], font: "band", role: "bandOn", w: w, h: h, prio: 3, pad: 0, spots: spotsAlong(yy + h + 3, w, h, g).filter(function (s, k, a) { return k < a.length / 2; }) });
   });
-  // the scale: altitude rings, the break at -18°, the nadir
-  [30, 60].forEach(function (alt) { var w = st.meas(alt + "\\u00b0", "scale"); m.items.push({ id: "alt" + alt, t: alt + "\\u00b0", font: "scale", role: "scale", w: w, h: LH.scale, prio: 4, spots: spotsAlong(Math.round(chY(alt, g)) + 0.5, w, LH.scale, g) }); });
-  var y18 = chY(-18, g), sc = "\\u00d7\\u00bc BELOW \\u221218\\u00b0", scw = st.meas(sc, "scale");
-  if (g.bot - y18 >= LH.scale + 4) m.items.push({ id: "scale", t: sc, font: "scale", role: "scale", w: scw, h: LH.scale, prio: 0.5, must: true, spots: spotsAlong(Math.round(y18) + 0.5, scw, LH.scale, g, true).concat(spotsAlong(g.bot - 2, scw, LH.scale, g).slice(0, 40)) });
-  var nad = "\\u221290\\u00b0", nw = st.meas(nad, "scale");
-  m.items.push({ id: "nadir", t: nad, font: "scale", role: "scale", w: nw, h: LH.scale, prio: 6, spots: [[g.x1 - nw - 2, g.bot - LH.scale - 2], [g.x0 + 2, g.bot - LH.scale - 2]] });
+  // the scale: altitude rings above, depth rings below (the ground under -18° is at a quarter scale: a break mark, chartGeom)
+  [30, 60, -30, -60].forEach(function (alt) { var t = (alt < 0 ? "\u2212" : "") + Math.abs(alt) + "\u00b0", w = st.meas(t, "scale"), y = Math.round(chY(alt, g)) + 0.5;
+    m.items.push({ id: "alt" + alt, t: t, font: "scale", role: "scale", w: w, h: LH.scale, prio: 4, spots: spotsAlong(y, w, LH.scale, g).filter(function (s) { return s[0] < g.x0 + 60 || s[0] > g.x1 - 60 - w; }) }); });
   // tracks, their events, the bodies
   st.bodies.forEach(function (b) {
     if (b.pts && b.pts.length > 1) { var tl = trackLines(b.pts, g, c, st.now); m.lines[b.key] = tl; m.segs = m.segs.concat(tl.segs); }
@@ -380,18 +380,24 @@ function chartModel(st) {
       chXs(e.az, g, c).forEach(function (ex, n) {
         m.marks.push({ key: b.key, kind: e.kind, x: ex, y: ey, future: future });
         m.hard.push(cross ? { id: b.key + e.kind + "m", x: ex - 2, y: g.hy - 6, w: 4, h: 12 } : { id: b.key + e.kind + "m", x: ex - 3.5, y: ey - 3.5, w: 7, h: 7 });
-        if (n) return;   // one label per event
+        if (n || !future || e.kind === "antitransit") return;   // labels: the coming rise, set and transit only (markers for all)
         var isNext = st.next && st.next.body === b.key && st.next.kind === e.kind && Math.abs(st.next.t - e.t) < 40 * 60e3;
         var t = (e.kind === "rise" ? "\\u2191" : e.kind === "set" ? "\\u2193" : "") + st.hm(e.t) + " " + (cross ? Math.round(wrap360(e.az)) % 360 + "\\u00b0" : minus(e.alt, 0));
-        var prio = isNext ? 1 : future ? (cross ? 2 : e.kind === "transit" ? 3 : 5) : (cross ? 5 : 7);
+        var prio = isNext ? 1 : cross ? 2 : 3;
         m.items.push({ id: b.key + "-" + e.kind + "-" + Math.round(e.t / 60e3), t: t, font: "ev", role: future ? b.key : "dim", w: st.meas(t, "ev"), h: LH.ev, x: ex, y: ey, r: 4, prio: prio });
       });
     });
     var bx = chX(b.az, g, c), by = chY(b.alt, g), rr = b.r + 9, nx = (b.events || []).filter(function (e) { return e.t > st.now && (e.kind === "rise" || e.kind === "set"); })[0];
-    m.discs.push({ key: b.key, x: bx, y: by, r: b.r, below: b.alt < 0 });
-    m.hard.push({ id: b.key + "-disc", x: bx - rr, y: by - rr, w: 2 * rr, h: 2 * rr });
-    var t1 = b.name.toUpperCase() + " " + minus(b.labelAlt, 1), t2 = nx ? (nx.kind === "rise" ? "RISES " : "SETS ") + st.hm(nx.t) + " " + compass16(nx.az) : (b.labelAlt < 0 ? "STAYS DOWN" : "STAYS UP") + " NEXT 12 H";
-    m.items.push({ id: b.name, t: t1, t2: t2, font: "name", role: b.labelAlt < 0 ? b.key + "Below" : b.key, w: Math.max(st.meas(t1, "name"), st.meas(t2, "sub")), h: LH.name + LH.sub, x: bx, y: by, r: rr - 4, prio: 0, body: true });
+    // a body at the seam shows at both edges (its twin, 360° over), and either may carry its name
+    var span = 360 * g.kx, twin = bx < rr + 20 ? bx + span : bx > g.W - rr - 20 ? bx - span : null;
+    [bx].concat(twin == null ? [] : [twin]).forEach(function (x, n) {
+      m.discs.push({ key: b.key, x: x, y: by, r: b.r, below: b.alt < 0 });
+      m.hard.push({ id: b.key + "-disc" + (n ? "-twin" : ""), x: x - rr, y: by - rr, w: 2 * rr, h: 2 * rr });
+    });
+    var t1 = b.name.toUpperCase() + " " + minus(b.labelAlt, 1);
+    var it = { id: b.name, t: t1, font: "name", role: b.labelAlt < 0 ? b.key + "Below" : b.key, w: st.meas(t1, "name"), h: LH.name, x: bx, y: by, r: rr - 4, prio: 0, body: true };
+    if (twin != null) it.spots = bodySpots(it).concat(bodySpots(Object.assign({}, it, { x: twin })));
+    m.items.push(it);
   });
   m.bounds = { x0: g.x0, y0: 2, x1: g.x1, y1: g.bot - 1 };
   return m;
@@ -429,113 +435,95 @@ ${traceparentMeta(trace)}
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>ephem · the sky over ${v.city.replace(/[<>&"]/g, "")}</title>
 <meta name="description" content="Where the Sun and the Moon are right now, from JPL DE440, computed on Cloudflare's edge.">
-<meta name="theme-color" content="#05070b" media="(prefers-color-scheme: dark)"><meta name="theme-color" content="#f3f4f6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#07090c"><meta name="color-scheme" content="dark">
 ${ICON_LINK}
-${HOME_PRELOAD}
 <style>
-${HOME_FONTS}
-/* One system: mission-ops structure in the RPN Instrument language (design system "RPN Instrument": tokens, RPN Dot faces,
-   Sofia Sans Condensed legends, lavender = Sun side, teal = Moon side). Dark first: the page is the instrument's case and
-   the sky is a night instrument. Light is the same system in daylight: a bench-grey page and the chart as a reflective LCD
-   glass. The readout panels are glass in both themes (the hardware does not change with the room). */
-:root{--bg:#101214;--raised:#181b1e;--ink:#ecebe7;--muted:#a8abaf;--faint:#73777c;--line:rgba(236,235,231,.10);--line2:rgba(236,235,231,.22);
---bezel:#2a2e31;--rim:#202326;--lcd:#bec997;--lcd-margin:#cacc94;--lcd-ghost:#aebf93;--lcd-ink:#1a313e;
---sun:#cec8fb;--moon:#8fe6e2;--sun-pad:#a39bdc;--moon-pad:#6cd1d1;--glyph:#141a29;--accent:#8fe6e2;
---ok:#3ddc97;--caution:#ffb547;--alert:#ff6b5e;--maxw:1120px;
---legend:"Sofia Sans Condensed","Avenir Next Condensed","Arial Narrow",-apple-system,system-ui,sans-serif;
---sans:-apple-system,BlinkMacSystemFont,"Helvetica Neue","Segoe UI",Roboto,Arial,sans-serif;
---dot:"RPN Dot",ui-monospace,"SF Mono",Menlo,monospace;--dots:"RPN Dot Small","RPN Dot",ui-monospace,monospace;
---mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;color-scheme:dark}
-@media (prefers-color-scheme:light){:root{--bg:#eae9e6;--raised:#f7f7f4;--ink:#1d2022;--muted:#55585c;--faint:#6b6f73;--line:rgba(29,32,34,.12);--line2:rgba(29,32,34,.28);
---sun:#5a4fae;--moon:#0d6e6c;--accent:#0d6e6c;--ok:#0b7f55;--caution:#9a5600;--alert:#c02d1d;color-scheme:light}}
+/* One dark design, always (ivar 2026-10-31: "clean, modern NASA-style"): near-black page, system sans for words, system mono
+   with tabular numerals for every number, small tracked uppercase labels, hairlines at low alpha, no boxes. Colour means
+   something: the sky gradient is the real sky's state; the Sun is amber, the Moon silver; cyan is the one accent (controls,
+   LIVE); amber and red only for staleness. */
+:root{--bg:#07090c;--ink:#e8ebf0;--muted:#8b93a1;--faint:#5b6371;--line:rgba(232,235,240,.09);--line2:rgba(232,235,240,.18);
+--accent:#5cd6f0;--sun:#ffc56b;--moon:#d7deeb;--ok:#5cd6f0;--caution:#ffb547;--alert:#ff6b5e;--maxw:1120px;
+--sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",system-ui,"Segoe UI",Roboto,Arial,sans-serif;
+--mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;color-scheme:dark}
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--sans);-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 .num,.tn{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:0}
-.lbl{font:700 11px/1.2 var(--legend);letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+.lbl{font:600 11px/1.2 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .gut{padding-left:max(16px,env(safe-area-inset-left),calc((100% - var(--maxw)) / 2));padding-right:max(16px,env(safe-area-inset-right),calc((100% - var(--maxw)) / 2))}
-/* header: brand, live, place, the clock in dots */
-.hero{padding-top:max(12px,env(safe-area-inset-top));padding-bottom:10px}
-.top{display:flex;justify-content:space-between;align-items:flex-end;gap:12px}
-.brand{display:flex;align-items:center;gap:12px;font:800 12px/1 var(--legend);letter-spacing:.28em;color:var(--ink)}
-.live{display:inline-flex;align-items:center;gap:6px;font:700 10.5px/1 var(--legend);letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
-.live i{width:7px;height:7px;border-radius:50%;background:var(--faint)}
+/* slim header */
+.hero{padding-top:max(10px,env(safe-area-inset-top));padding-bottom:10px}
+.top{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.brand{display:flex;align-items:center;gap:10px;min-width:0;font:700 12px/1 var(--sans);letter-spacing:.16em;color:var(--ink)}
+.live{display:inline-flex;align-items:center;gap:6px;font:600 10.5px/1 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.live i{width:6px;height:6px;border-radius:50%;background:var(--faint)}
 .live.ok i{background:var(--ok);box-shadow:0 0 6px var(--ok)}.live.caution i{background:var(--caution)}.live.caution{color:var(--caution)}.live.alert i{background:var(--alert)}.live.alert{color:var(--alert)}
-h1{font:800 clamp(28px,4.4vw,52px)/1 var(--legend);letter-spacing:.01em;text-transform:uppercase;margin:8px 0 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-h1.coords{font:400 20px/1.2 var(--dot);text-transform:none;margin-top:12px}
-.now{text-align:right;flex:none}
-.now .lbl{display:block}
-.clock{font:400 20px/16px var(--dot);margin-top:8px;white-space:nowrap}
-/* the sky: full bleed, the page's hero */
-.sky{position:relative;height:clamp(232px,40svh,460px);touch-action:pan-y;cursor:grab;user-select:none;-webkit-user-select:none;background:#07090e;
+h1{font:600 15px/1.2 var(--sans);letter-spacing:0;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink);min-width:0}
+h1.coords{font:500 14px/1.2 var(--mono)}
+.clock{font:500 15px/1.2 var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--ink)}
+.place{display:flex;align-items:baseline;gap:10px;margin-top:6px;justify-content:space-between}
+/* the sky: full bleed */
+.sky{position:relative;height:clamp(300px,52svh,620px);touch-action:pan-y;cursor:grab;user-select:none;-webkit-user-select:none;background:#05070a;
 padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
-@media (prefers-color-scheme:light){.sky{background:var(--lcd)}}
 .sky:active{cursor:grabbing}
 .sky canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 .ctl{position:absolute;top:0;right:env(safe-area-inset-right);z-index:2;display:flex}
-.ctl button{min-height:44px;font:700 11px/1 var(--legend);letter-spacing:.14em;text-transform:uppercase;color:#f1f0eb;background:transparent;border:0;padding:0 10px;cursor:pointer}
-.ctl button span{display:inline-block;padding:6px 9px;background:#171a1c;border-radius:4px;box-shadow:inset 0 1px 0 rgba(255,255,255,.22),inset 0 -2px 0 #0d0f10,0 1px 0 #0d0f10,0 2px 4px rgba(0,0,0,.45)}
-.ctl button[aria-pressed=true] span{background:var(--moon-pad);color:var(--glyph)}
-.ctl button:active span{transform:translateY(1px);box-shadow:inset 0 1px 0 rgba(255,255,255,.1),inset 0 -1px 0 #0d0f10,0 1px 2px rgba(0,0,0,.45)}
-/* status line under the sky: the sentence, then NEXT with its countdown */
-.status{padding-top:12px;padding-bottom:4px}
-.guide{margin:0 0 10px;font:700 14px/1.4 var(--legend);letter-spacing:.04em;text-transform:uppercase;color:var(--accent);white-space:pre-line}
-.lede{font:500 clamp(17px,2.1vw,22px)/1.3 var(--sans);letter-spacing:-.01em;margin:0;text-wrap:pretty}
-.next{margin:10px 0 0;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.ctl button{min-height:44px;font:600 11px/1 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--accent);background:transparent;border:0;padding:0 12px;cursor:pointer}
+.ctl button span{display:inline-block;padding:6px 10px;border:1px solid rgba(92,214,240,.45);border-radius:999px;background:rgba(7,9,12,.55)}
+.ctl button[aria-pressed=true] span{background:var(--accent);color:#04161c}
+/* the sentence and NEXT */
+.status{padding-top:14px;padding-bottom:6px}
+.guide{margin:0 0 10px;font:500 13px/1.5 var(--mono);color:var(--accent);white-space:pre-line}
+.lede{font:500 clamp(18px,2.2vw,22px)/1.3 var(--sans);letter-spacing:-.01em;margin:0;text-wrap:pretty}
+.next{margin:8px 0 0;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
 .next .lbl{color:var(--accent)}
-#next{display:inline-flex;align-items:baseline;gap:10px;flex-wrap:wrap}
-.next b{font:800 14px/1 var(--legend);letter-spacing:.1em;text-transform:uppercase;color:var(--ink)}
-.next .t{font:400 20px/16px var(--dot);color:var(--ink)}
-.next .cd{font:400 20px/16px var(--dot);color:var(--muted)}
-/* the readout panels: LCD glass in a bezel, the same hardware in both themes */
-.panels{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;padding-top:12px;padding-bottom:20px}
-.bez{background:var(--bezel);border-radius:8px;padding:7px;box-shadow:inset 0 -1px 0 rgba(255,255,255,.16),inset 0 1px 0 rgba(0,0,0,.35),0 1px 0 rgba(255,255,255,.04)}
-.glass{background:var(--lcd);border-radius:3px;padding:8px 8px 9px;color:var(--lcd-ink);box-shadow:inset 0 2px 3px rgba(0,0,0,.30),inset 0 0 0 1px rgba(0,0,0,.25);
-background-image:linear-gradient(115deg,rgba(255,255,240,.20),rgba(255,255,240,0) 40%),radial-gradient(120% 140% at 50% 40%,rgba(46,58,24,0) 60%,rgba(46,58,24,.18));min-width:0}
-.glass p{margin:0;font:400 20px/16px var(--dot);white-space:pre;overflow:hidden;text-overflow:clip}
-.glass .hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
-.glass .tag{font:400 20px/16px var(--dots);background:var(--lcd-ink);color:var(--lcd);padding:0 4px;border-radius:1px}
-.glass .st{font:400 20px/16px var(--dots)}
-.bl{font:800 11px/1 var(--legend);letter-spacing:.2em;text-transform:uppercase;padding:2px 2px 7px}.bl.s{color:#cec8fb}.bl.m{color:#8fe6e2}
-.leg{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:8px;vertical-align:0}
-.leg.s{background:var(--sun-pad)}.leg.m{background:var(--moon-pad)}
+#next{display:inline-flex;align-items:baseline;gap:10px;flex-wrap:wrap;font:500 15px/1.4 var(--sans)}
+.next .t{font:500 15px/1.4 var(--mono);font-variant-numeric:tabular-nums}
+.next .cd{font:500 15px/1.4 var(--mono);font-variant-numeric:tabular-nums;color:var(--muted)}
+/* data lists, one per body */
+.panels{display:grid;grid-template-columns:minmax(0,1fr);gap:20px 40px;padding-top:14px;padding-bottom:24px}
+.dl h3{margin:0 0 4px;display:flex;align-items:baseline;justify-content:space-between;font:600 12px/1.6 var(--sans);letter-spacing:.08em;text-transform:uppercase}
+.dl h3 .s{color:var(--sun)}.dl h3 .m{color:var(--moon)}
+.dl h3 .st{color:var(--muted);font-weight:500}
+.dl dl{margin:0}
+.dl dl>div{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:7px 0;border-top:1px solid var(--line)}
+.dl dt{font:600 11px/1.3 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+.dl dd{margin:0;font:400 14.5px/1.3 var(--mono);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.dl dd .u{color:var(--muted)}
 main{counter-reset:sec;padding-bottom:40px}
 .blk{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;padding:24px 0 28px;border-top:1px solid var(--line)}
-.blk>h2,.hood>summary{margin:0;font:700 11px/1.3 var(--legend);letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
-.blk>h2::before,.hood>summary::before{counter-increment:sec;content:counter(sec,decimal-leading-zero);font:400 20px/16px var(--dot);letter-spacing:0;color:var(--faint);margin-right:12px;vertical-align:-3px}
-.big{font:800 22px/1.2 var(--legend);letter-spacing:.02em;text-transform:uppercase;margin:0}
+.blk>h2,.hood>summary{margin:0;font:600 11px/1.3 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.big{font:600 20px/1.2 var(--sans);margin:0}
 .sub{color:var(--muted);margin:6px 0 16px;font-size:13px}
 .strip svg{display:block;width:100%;height:auto}
 .strip text{font-family:var(--mono);fill:var(--muted)}
 .strip .nowl{stroke:var(--ink)}
-.strip line.es{stroke:var(--sun-pad)}.strip circle.es{fill:var(--sun-pad)}.strip line.em{stroke:var(--moon-pad)}.strip circle.em{fill:var(--moon-pad)}
-.evs{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:0 32px;margin-top:16px;font-size:14px}
-.evs>div{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--line)}
-.evs>div .tn{font:400 20px/16px var(--dot);font-variant-numeric:normal}
+.strip line.es{stroke:var(--sun)}.strip circle.es{fill:var(--sun)}.strip line.em{stroke:var(--moon)}.strip circle.em{fill:var(--moon)}
+.evs{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:0 40px;margin-top:16px;font-size:14px}
+.evs>div{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}
 .evs .past{color:var(--faint)}
 .evs details.more{grid-column:1/-1;margin-top:4px}.evs details.more .evs{margin-top:0}
-.evs .s::before,.evs .m::before{content:"";display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:10px;vertical-align:0}
-.evs .s::before{background:var(--sun-pad)}.evs .m::before{background:var(--moon-pad)}
+.evs .s::before,.evs .m::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:10px;vertical-align:1px}
+.evs .s::before{background:var(--sun)}.evs .m::before{background:var(--moon)}
 .row{display:flex;flex-wrap:wrap;gap:10px;margin-top:20px;align-items:center}
-.btn{min-height:44px;display:inline-flex;align-items:center;font:700 12px/1 var(--legend);letter-spacing:.14em;text-transform:uppercase;color:#f1f0eb;background:#171a1c;border:0;border-radius:6px;padding:0 16px;cursor:pointer;
-box-shadow:inset 0 1px 0 rgba(255,255,255,.22),inset 0 -3px 0 #0d0f10,0 2px 0 #0d0f10,0 3px 5px rgba(0,0,0,.35)}
-.btn:hover{text-decoration:none;color:#fff}.btn:active{transform:translateY(2px);box-shadow:inset 0 1px 0 rgba(255,255,255,.1),inset 0 -1px 0 #0d0f10,0 0 0 #0d0f10,0 1px 2px rgba(0,0,0,.45)}
+.btn{min-height:44px;display:inline-flex;align-items:center;font:600 11px/1 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--accent);background:transparent;border:1px solid rgba(92,214,240,.4);border-radius:999px;padding:0 16px;cursor:pointer}
+.btn:hover{text-decoration:none;border-color:var(--accent)}
 .note{font-size:13px;color:var(--muted)}
 .wxc{display:grid;gap:14px}
 .wxtop{display:flex;align-items:center;gap:8px 20px;flex-wrap:wrap}
-.temp{font:400 40px/32px var(--dot)}
-.wxtop .cond{font:800 16px/1.3 var(--legend);letter-spacing:.06em;text-transform:uppercase}
+.temp{font:300 40px/1 var(--mono);font-variant-numeric:tabular-nums}
+.wxtop .cond{font:600 16px/1.3 var(--sans)}
 .wxtop .wind{color:var(--muted);font:13px/1.4 var(--mono)}
-.wxc dl.cells{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin:0;border:1px solid var(--line);border-radius:3px}
-.wxc dl.cells>div{padding:10px 12px 12px;min-width:0;border-left:1px solid var(--line)}
-.wxc dl.cells>div:first-child{border-left:0}
-.wxc dl.cells dt{font:700 10.5px/1.3 var(--legend);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
-.wxc dl.cells dd{margin:6px 0 0;font-size:14px}
+.wxc dl.cells{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin:0;gap:0 24px}
+.wxc dl.cells>div{padding:8px 0;min-width:0;border-top:1px solid var(--line)}
+.wxc dl.cells dt{font:600 11px/1.3 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.wxc dl.cells dd{margin:4px 0 0;font:14px/1.4 var(--mono)}
 .station{margin:0;color:var(--muted);font:12.5px/1.6 var(--mono)}
 .age{white-space:nowrap}
 .age::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ok);margin-right:7px;vertical-align:1px}
 .age.warn{color:var(--caution)}.age.warn::before{background:var(--caution)}
-details>summary{cursor:pointer;list-style:none;min-height:44px;display:flex;align-items:center;gap:10px;color:var(--accent);font:700 11px/1.3 var(--legend);letter-spacing:.16em;text-transform:uppercase}
+details>summary{cursor:pointer;list-style:none;min-height:44px;display:flex;align-items:center;gap:10px;color:var(--accent);font:600 11px/1.3 var(--sans);letter-spacing:.08em;text-transform:uppercase}
 details>summary::-webkit-details-marker{display:none}
 details:not(.hood)>summary::before{content:"+";font:400 14px/1 var(--mono);width:10px}
 details:not(.hood)[open]>summary::before{content:"\\2212"}
@@ -546,29 +534,24 @@ pre .c{color:var(--faint)}
 .hood>summary::after{content:"+";margin-left:auto;font:400 16px/1 var(--mono);color:var(--muted)}
 .hood[open]>summary::after{content:"\\2212"}
 .hood .in{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:32px;margin-top:16px}
-.hood h3{font:700 11px/1.3 var(--legend);letter-spacing:.16em;text-transform:uppercase;margin:0 0 8px}
+.hood h3{font:600 11px/1.3 var(--sans);letter-spacing:.08em;text-transform:uppercase;margin:0 0 8px}
 .hood p{color:var(--muted);font-size:14px;margin:0 0 14px}
-.hood pre{margin:0;border:1px solid var(--line);border-radius:3px;padding:14px 16px;overflow-x:auto;font:12px/1.7 var(--mono);color:var(--ink)}
+.hood pre{margin:0;padding:12px 0;overflow-x:auto;font:12px/1.7 var(--mono);color:var(--ink);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
 footer.tel{border-top:1px solid var(--line);padding-top:14px;padding-bottom:max(14px,env(safe-area-inset-bottom));display:flex;flex-wrap:wrap;gap:6px 24px;font:11.5px/1.5 var(--mono);color:var(--muted)}
-footer.tel i{font:700 10px/1 var(--legend);font-style:normal;letter-spacing:.16em;text-transform:uppercase;color:var(--faint);margin-right:8px}
-:focus-visible{outline:0;box-shadow:0 0 0 2px #8fe6e2,0 0 0 4px #1a313e}
+footer.tel i{font:600 10px/1 var(--sans);font-style:normal;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin-right:8px}
+:focus-visible{outline:1px solid var(--accent);outline-offset:3px}
 .err{color:var(--alert)}
-@media (max-width:760px){.panels,.hood .in{grid-template-columns:minmax(0,1fr)}.wxc dl.cells{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
-.wxc dl.cells>div:nth-child(n+3){border-top:1px solid var(--line)}.wxc dl.cells>div:nth-child(3){border-left:0}}
-@media (min-width:900px){.blk{grid-template-columns:200px minmax(0,1fr);gap:32px}.blk>h2{padding-top:3px}.hero{padding-top:max(20px,env(safe-area-inset-top))}}
+@media (max-width:760px){.hood .in{grid-template-columns:minmax(0,1fr)}.wxc dl.cells{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+@media (min-width:760px){.panels{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+@media (min-width:900px){.blk{grid-template-columns:200px minmax(0,1fr);gap:32px}.blk>h2{padding-top:3px}}
 </style>
 </head><body>
 <header class="hero gut">
   <div class="top" id="top">
-    <div style="min-width:0">
-      <div class="brand">EPHEM<span class="live" id="live" role="status"><i></i><span id="liveT">Acquiring</span></span></div>
-      <h1 id="place"></h1>
-    </div>
-    <div class="now">
-      <span class="lbl">Local time</span>
-      <div class="clock" id="clock">--:--:--</div>
-    </div>
+    <div class="brand">EPHEM<span class="live" id="live" role="status"><i></i><span id="liveT">Acquiring</span></span></div>
+    <div class="clock" id="clock" aria-label="Local time">--:--:--</div>
   </div>
+  <div class="place"><h1 id="place"></h1><span class="lbl">Local time</span></div>
 </header>
 <section class="sky" id="sky" aria-label="The Sun and the Moon on a chart of the whole sky, above and below the horizon">
   <canvas id="cv" tabindex="0" aria-label="Sky chart"></canvas>
@@ -703,26 +686,18 @@ function resize() {
   cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); requestDraw();
 }
 function defaultCenter(p) { return S.pose ? S.pose.az : chartCenter(loc.lat, [p.sun.azimuth, p.moon.azimuth]); }
-var LEG = "'Sofia Sans Condensed', 'Avenir Next Condensed', 'Arial Narrow', -apple-system, system-ui, sans-serif";
-var FONTS = { name: "800 12px " + LEG, sub: "700 10.5px " + LEG, ev: "700 11px " + LEG, band: "800 9px " + LEG, scale: "700 10px " + LEG, axis: "800 10px " + LEG };
-var TRACK = { name: "1.2px", sub: "0.8px", ev: "0.4px", band: "1.6px", scale: "0.8px", axis: "1.4px" };
-var LHS = { name: 14, sub: 12, ev: 12, band: 10, scale: 12 };
+var SANS = "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', system-ui, sans-serif", MONO = "ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace";
+var FONTS = { name: "600 11.5px " + SANS, ev: "500 10.5px " + MONO, band: "600 9.5px " + SANS, scale: "500 10px " + MONO, axis: "600 10px " + SANS };
+var TRACK = { name: "0.9px", ev: "0px", band: "0.8px", scale: "0px", axis: "0.8px" };
+var LHS = { name: 14, ev: 13, band: 11, scale: 12 };
 var mw = {};
 function meas(t, f) { var k = f + "|" + t; if (mw[k] == null) { ctx.font = FONTS[f]; if ("letterSpacing" in ctx) ctx.letterSpacing = TRACK[f]; mw[k] = Math.ceil(ctx.measureText(t).width) + 2; } return mw[k]; }
-// Palettes. DARK: the night instrument. LCD: reflective glass (design system: lcd-panel, lcd-ghost, lcd-ink), no colour inside.
-var DARK = { lcd: false, ground: "#07090e", deep: "#04050a", axis: "#05070b", band: [0.20, 0.12, 0.065], bandRGB: "110,140,215", bandOn: 0.14,
-  grid: "rgba(255,255,255,.09)", gridV: "rgba(255,255,255,.05)", brk: "rgba(255,255,255,.24)", horizon: "rgba(255,255,255,.78)", tick: "rgba(255,255,255,.6)", tickMinor: "rgba(255,255,255,.3)",
-  cmp: "rgba(255,255,255,.82)", cmpMinor: "rgba(255,255,255,.5)", shadow: "rgba(4,6,13,.92)",
-  role: { sun: "#d9d3ff", moon: "#9cefe9", sunBelow: "rgba(217,211,255,.82)", moonBelow: "rgba(156,239,233,.82)", dim: "rgba(225,230,240,.6)", band: "rgba(190,205,240,.55)", bandOn: "rgba(235,240,255,.98)", scale: "rgba(255,255,255,.55)" },
-  sub: "rgba(236,235,231,.75)", line: { sun: "#cec8fb", moon: "#8fe6e2" }, ret: { sun: "#cec8fb", moon: "#8fe6e2" }, pose: "#8fe6e2" };
-var LCD = { lcd: true, sky: "#bec997", ground: "#b2bf8c", deep: "#a3b182", axis: "#cacc94", band: [0.07, 0.12, 0.17], bandRGB: "26,49,62", bandOn: 0.10,
-  grid: "rgba(26,49,62,.16)", gridV: "rgba(26,49,62,.09)", brk: "rgba(26,49,62,.4)", horizon: "#1a313e", tick: "rgba(26,49,62,.85)", tickMinor: "rgba(26,49,62,.45)",
-  cmp: "#1a313e", cmpMinor: "rgba(26,49,62,.7)", shadow: null,
-  role: { sun: "#1a313e", moon: "#1a313e", sunBelow: "rgba(26,49,62,.85)", moonBelow: "rgba(26,49,62,.85)", dim: "rgba(26,49,62,.62)", band: "rgba(26,49,62,.6)", bandOn: "#1a313e", scale: "rgba(26,49,62,.7)" },
-  sub: "rgba(26,49,62,.8)", line: { sun: "#1a313e", moon: "#1a313e" }, ret: { sun: "#1a313e", moon: "#1a313e" }, pose: "#1a313e" };
-var lightQ = matchMedia("(prefers-color-scheme: light)");
-function pal() { return lightQ.matches ? LCD : DARK; }
-if (lightQ.addEventListener) lightQ.addEventListener("change", requestDraw);
+// One palette (the page is dark, always). The sky above the horizon is the real sky's colour (skyAt); below it, darker.
+var P = { ground: "#0a0d13", deep: "#06080c", axis: "#05070a", band: [0.18, 0.11, 0.06], bandRGB: "96,120,200", bandOn: 0.12,
+  grid: "rgba(255,255,255,.08)", gridV: "rgba(255,255,255,.045)", brk: "rgba(255,255,255,.28)", horizon: "rgba(255,255,255,.7)", tick: "rgba(255,255,255,.55)", tickMinor: "rgba(255,255,255,.28)",
+  cmp: "rgba(232,235,240,.8)", cmpMinor: "rgba(232,235,240,.45)", halo: "rgba(5,7,10,.82)",
+  role: { sun: "#ffd28a", moon: "#e3e9f4", sunBelow: "rgba(255,210,138,.8)", moonBelow: "rgba(227,233,244,.8)", dim: "rgba(220,226,236,.6)", band: "rgba(190,205,240,.6)", bandOn: "rgba(225,232,255,.95)", scale: "rgba(232,235,240,.5)" },
+  line: { sun: "#ffc56b", moon: "#d7deeb" }, ret: { sun: "#ffc56b", moon: "#d7deeb" }, pose: "#5cd6f0" };
 // The live position: the last answer moved on by its own rates (deg/min) to now; the readouts keep the answer's numbers.
 function livePos(now) {
   var p = S.to; if (!p) return null;
@@ -730,27 +705,20 @@ function livePos(now) {
   function mv(b) { return { az: wrap360(b.azimuth + (b.azimuthRate || 0) * dt), alt: Math.max(-90, Math.min(90, altOf(b) + (b.altitudeRate || 0) * dt)) }; }
   return { sun: mv(p.sun), moon: mv(p.moon) };
 }
-function drawMoon(x, y, r, m, P) {
+function drawMoon(x, y, r, m) {
   var k = m.phase.illuminatedFraction;
   var chi = (m.phase.brightLimbAngle - parallactic(altOf(m), m.azimuth, m.declination, loc.lat)) * D2R; // bright limb from the zenith, toward east
   var rot = Math.atan2(-Math.cos(chi), -Math.sin(chi));
   ctx.save(); ctx.translate(x, y);
-  if (!P.lcd) { var gl = ctx.createRadialGradient(0, 0, r, 0, 0, r * 3); gl.addColorStop(0, "rgba(217,227,255," + (0.05 + 0.12 * k) + ")"); gl.addColorStop(1, "rgba(217,227,255,0)"); ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(0, 0, r * 3, 0, 2 * Math.PI); ctx.fill(); }
+  var gl = ctx.createRadialGradient(0, 0, r, 0, 0, r * 3.2); gl.addColorStop(0, "rgba(220,228,245," + (0.08 + 0.16 * k) + ")"); gl.addColorStop(1, "rgba(220,228,245,0)"); ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(0, 0, r * 3.2, 0, 2 * Math.PI); ctx.fill();
   ctx.rotate(rot);
-  ctx.beginPath(); ctx.arc(0, 0, r, 0, 2 * Math.PI); ctx.fillStyle = P.lcd ? "#aebf93" : "rgba(60,70,100,.75)"; ctx.fill();
-  if (P.lcd) { ctx.strokeStyle = "#1a313e"; ctx.lineWidth = 1; ctx.stroke(); }
+  ctx.beginPath(); ctx.arc(0, 0, r, 0, 2 * Math.PI); ctx.fillStyle = "rgba(60,70,100,.75)"; ctx.fill();
   ctx.beginPath(); ctx.arc(0, 0, r, -Math.PI / 2, Math.PI / 2, false);
   ctx.ellipse(0, 0, Math.max(0.01, r * Math.abs(1 - 2 * k)), r, 0, Math.PI / 2, -Math.PI / 2, k < 0.5);
-  ctx.fillStyle = P.lcd ? "#1a313e" : "#e9eeff"; ctx.fill();
+  ctx.fillStyle = "#eef2fb"; ctx.fill();
   ctx.restore();
 }
-function drawSun(x, y, r, alt, P) {
-  if (P.lcd) {
-    ctx.save(); ctx.fillStyle = "#1a313e"; ctx.strokeStyle = "#1a313e"; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(x, y, r * 0.62, 0, 2 * Math.PI); ctx.fill();
-    for (var i = 0; i < 8; i++) { var a = i * Math.PI / 4; ctx.beginPath(); ctx.moveTo(x + Math.cos(a) * r * 0.85, y + Math.sin(a) * r * 0.85); ctx.lineTo(x + Math.cos(a) * r * 1.25, y + Math.sin(a) * r * 1.25); ctx.stroke(); }
-    ctx.restore(); return;
-  }
+function drawSun(x, y, r, alt) {
   var g = ctx.createRadialGradient(x, y, r * 0.6, x, y, r * 4);
   g.addColorStop(0, "rgba(255,214,140,.38)"); g.addColorStop(1, "rgba(255,214,140,0)");
   ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 4, 0, 2 * Math.PI); ctx.fill();
@@ -763,20 +731,24 @@ function reticle(x, y, r, color, below) {
   [[0, -1], [1, 0], [0, 1], [-1, 0]].forEach(function (d) { ctx.beginPath(); ctx.moveTo(x + d[0] * R, y + d[1] * R); ctx.lineTo(x + d[0] * (R + 4), y + d[1] * (R + 4)); ctx.stroke(); });
   ctx.restore();
 }
+// Text with a dark halo (a knockout stroke under the fill), so it reads on any sky.
 function text(t, x, y, font, color, P, align) {
   ctx.font = FONTS[font]; if ("letterSpacing" in ctx) ctx.letterSpacing = TRACK[font];
-  ctx.textAlign = align || "left"; ctx.textBaseline = "middle"; ctx.fillStyle = color;
-  if (P.shadow) { ctx.shadowColor = P.shadow; ctx.shadowBlur = 4; } else if (P.lcd) { ctx.shadowColor = "rgba(26,49,62,.16)"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0.6; ctx.shadowOffsetY = 0.6; }
-  ctx.fillText(t, x, y); ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+  ctx.textAlign = align || "left"; ctx.textBaseline = "middle";
+  ctx.lineJoin = "round"; ctx.lineWidth = 3; ctx.strokeStyle = P.halo; ctx.strokeText(t, x, y);
+  ctx.fillStyle = color; ctx.fillText(t, x, y);
 }
 // The tracks and their events, recomputed only when the track, today's events or the minute change (not per drag frame).
 var TI = { key: "" };
 function trackInfo(nowMs) {
   var key = S.track.length + ":" + (S.track[0] && S.track[0].t) + ":" + (S.day && S.day.date) + ":" + (S.day && S.day.events.length) + ":" + Math.floor(nowMs / 60e3);
   if (TI.key === key) return TI;
-  var win = S.track.filter(function (x) { return Math.abs(x.t - nowMs) <= 12 * 3600e3 + 1; }), out = { key: key, win: win };
+  // One full cycle per body around now (a solar day; a lunar day, 24 h 50 min), plus a sample each side: the track closes on
+  // itself instead of ending mid-sky.
+  var HALF = { sun: 12 * 3600e3 + 20 * 60e3, moon: 12 * 3600e3 + 45 * 60e3 }, out = { key: key, win: {} };
   var dayEv = [].concat(S.day ? S.day.events : [], S.tomorrow ? S.tomorrow.events : []);
   ["sun", "moon"].forEach(function (body) {
+    var win = out.win[body] = S.track.filter(function (x) { return Math.abs(x.t - nowMs) <= HALF[body]; });
     var s = win.map(function (x) { return { t: x.t, alt: x[body].altitude, az: x[body].azimuth }; });
     out[body] = trackEvents(s, -0.833).map(function (e) {   // the exact /v1/day time when it has this event
       var k = e.kind === "antitransit" ? null : e.kind, m = k && dayEv.find(function (d) { return d.body === body && d.kind === k && Math.abs(Date.parse(d.time) - e.t) < 40 * 60e3; });
@@ -788,10 +760,10 @@ function trackInfo(nowMs) {
 function nextEvent(now) { var up = upcoming(now); return up.length ? { body: up[0].body, kind: up[0].kind, t: Date.parse(up[0].time) } : null; }
 function draw() {
   if (!W) return;
-  var P = pal(), p = S.to, nowMs = tNow(), live = livePos(nowMs), info = S.track.length ? trackInfo(nowMs) : null, r = Math.max(6, Math.min(10, W / 70));
+  var p = S.to, nowMs = tNow(), live = livePos(nowMs), info = S.track.length ? trackInfo(nowMs) : null, r = Math.max(6, Math.min(10, W / 70));
   var ce = $("ctl"), ctlR = !$("point").hidden || !$("recenter").hidden ? { id: "ctl", x: W - ce.offsetWidth, y: 0, w: ce.offsetWidth, h: ce.offsetHeight } : null;
   var bodies = live ? [["sun", "Sun", p.sun], ["moon", "Moon", p.moon]].map(function (o) {
-    var L = live[o[0]], pts = info ? info.win.map(function (x) { return { t: x.t, az: x[o[0]].azimuth, alt: altOf(x[o[0]]) }; }) : [];
+    var L = live[o[0]], pts = info ? info.win[o[0]].map(function (x) { return { t: x.t, az: x[o[0]].azimuth, alt: altOf(x[o[0]]) }; }) : [];
     if (pts.length) { var at = pts.findIndex(function (x) { return x.t > nowMs; }); pts.splice(at < 0 ? pts.length : at, 0, { t: nowMs, az: L.az, alt: L.alt }); }
     return { key: o[0], name: o[1], az: L.az, alt: L.alt, labelAlt: altOf(o[2]), r: r, pts: pts, events: info ? info[o[0]] : [] };
   }) : [];
@@ -801,8 +773,7 @@ function draw() {
   var g = m.g, hy = g.hy, c = S.center == null ? (loc.lat >= 0 ? 180 : 0) : S.center;
   drawnAt = nowMs; drawnPx = bodies.map(function (b) { return [chX(b.az, g, c), chY(b.alt, g)]; });
   // sky
-  if (P.lcd) { ctx.fillStyle = P.sky; ctx.fillRect(0, 0, W, hy); }
-  else {
+  {
     var sc = skyAt(sunAlt), grad = ctx.createLinearGradient(0, 0, 0, hy); grad.addColorStop(0, sc[0]); grad.addColorStop(1, sc[1]);
     ctx.fillStyle = grad; ctx.fillRect(0, 0, W, hy);
     if (live && sunAlt > -18) { var a = Math.max(0, 1 - Math.abs(sunAlt - 2) / 20) * 0.55;
@@ -813,13 +784,15 @@ function draw() {
   m.bands.forEach(function (b, i) { ctx.fillStyle = "rgba(" + P.bandRGB + "," + (P.band[i] + (b.on ? P.bandOn : 0)) + ")"; ctx.fillRect(0, b.y0, W, b.y1 - b.y0); });
   var y18 = chY(-18, g); ctx.fillStyle = P.deep; ctx.fillRect(0, y18, W, g.bot - y18);
   ctx.fillStyle = P.axis; ctx.fillRect(0, g.bot, W, H - g.bot);
-  if (P.lcd) { var vg = ctx.createRadialGradient(W / 2, H * 0.45, Math.min(W, H) * 0.3, W / 2, H * 0.45, Math.max(W, H) * 0.75); vg.addColorStop(0, "rgba(46,58,24,0)"); vg.addColorStop(1, "rgba(46,58,24,.16)"); ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H); }
   // grid
   ctx.lineWidth = 1; ctx.strokeStyle = P.grid;
-  [30, 60, -45].forEach(function (alt) { var y = Math.round(chY(alt, g)) + 0.5; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); });
+  [30, 60, -30, -60].forEach(function (alt) { var y = Math.round(chY(alt, g)) + 0.5; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); });
   ctx.strokeStyle = P.gridV;
   for (var vz = 0; vz < 360; vz += 45) chXs(vz, g, c).forEach(function (vx) { vx = Math.round(vx) + 0.5; if (vx < 0 || vx > W) return; ctx.beginPath(); ctx.moveTo(vx, 0); ctx.lineTo(vx, g.bot); ctx.stroke(); });
-  ctx.strokeStyle = P.brk; ctx.setLineDash([2, 3]); ctx.beginPath(); ctx.moveTo(0, Math.round(y18) + 0.5); ctx.lineTo(W, Math.round(y18) + 0.5); ctx.stroke(); ctx.setLineDash([]);
+  // the scale break at -18° (true scale above, a quarter below): a faint line and a break mark at each edge
+  ctx.strokeStyle = P.gridV; ctx.beginPath(); ctx.moveTo(0, Math.round(y18) + 0.5); ctx.lineTo(W, Math.round(y18) + 0.5); ctx.stroke();
+  ctx.strokeStyle = P.brk; ctx.lineWidth = 1;
+  [g.x0 + 1, g.x1 - 9].forEach(function (bx) { [-2, 2].forEach(function (o) { ctx.beginPath(); ctx.moveTo(bx, y18 + o + 3); ctx.lineTo(bx + 4, y18 + o - 3); ctx.lineTo(bx + 8, y18 + o + 3); ctx.stroke(); }); });
   ctx.strokeStyle = P.horizon; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(0, hy); ctx.lineTo(W, hy); ctx.stroke(); ctx.lineWidth = 1;
   for (var az = 0; az < 360; az += 15) chXs(az, g, c).forEach(function (x) {
     if (x < -2 || x > W + 2) return;
@@ -837,7 +810,7 @@ function draw() {
           var a0 = pass ? Math.max(0, tl.split - 1) : 0, a1 = pass ? tl.xs.length : tl.split;
           for (var j = a0; j < a1; j++) { if (j === a0) ctx.moveTo(tl.xs[j] + dx, tl.ys[j]); else ctx.lineTo(tl.xs[j] + dx, tl.ys[j]); }
         });
-        ctx.strokeStyle = P.line[key]; ctx.globalAlpha = (pass ? 0.9 : 0.6) * clip[2]; ctx.lineWidth = (key === "sun" ? 1.6 : 1.2) * (P.lcd ? 1.15 : 1); ctx.setLineDash(pass ? [4, 3] : []); ctx.stroke(); ctx.setLineDash([]);
+        ctx.strokeStyle = P.line[key]; ctx.globalAlpha = (pass ? 0.75 : 1) * clip[2]; ctx.lineWidth = 1.5; ctx.setLineDash(pass ? [4, 4] : []); ctx.stroke(); ctx.setLineDash([]);
       }
       ctx.restore();
     });
@@ -846,14 +819,14 @@ function draw() {
   m.marks.forEach(function (k) {
     ctx.save(); ctx.globalAlpha = k.future ? 1 : 0.55; ctx.strokeStyle = P.line[k.key]; ctx.lineWidth = 1.5;
     if (k.kind === "rise" || k.kind === "set") { ctx.beginPath(); ctx.moveTo(k.x, hy - 6); ctx.lineTo(k.x, hy + 6); ctx.stroke(); }
-    else { ctx.beginPath(); ctx.arc(k.x, k.y, 2.75, 0, 2 * Math.PI); ctx.fillStyle = P.lcd ? P.sky : "#05070b"; ctx.fill(); ctx.stroke(); }
+    else { ctx.beginPath(); ctx.arc(k.x, k.y, 2.75, 0, 2 * Math.PI); ctx.fillStyle = "#05070a"; ctx.fill(); ctx.stroke(); }
     ctx.restore();
   });
   // the bodies: always where they are; dimmed under the horizon
   m.discs.forEach(function (d) {
     var b = d.key === "sun" ? p.sun : p.moon;
-    ctx.save(); if (d.below && !P.lcd) ctx.globalAlpha = 0.6;
-    if (d.key === "sun") drawSun(d.x, d.y, d.r, altOf(b), P); else drawMoon(d.x, d.y, d.r, b, P);
+    ctx.save(); if (d.below) ctx.globalAlpha = 0.6;
+    if (d.key === "sun") drawSun(d.x, d.y, d.r, altOf(b)); else drawMoon(d.x, d.y, d.r, b);
     ctx.restore(); reticle(d.x, d.y, d.r, P.ret[d.key], d.below);
   });
   if (m.pose) { ctx.save(); ctx.strokeStyle = P.pose; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(m.pose.x, m.pose.y, 14, 0, 2 * Math.PI); ctx.stroke();
@@ -864,7 +837,6 @@ function draw() {
   placed.forEach(function (pl) {
     if (pl.dropped) return; var it = byId[pl.id], col = P.role[it.role] || P.role.dim;
     text(it.t, pl.x + 1, pl.y + LHS[it.font] / 2, it.font, col, P);
-    if (it.t2) text(it.t2, pl.x + 1, pl.y + LHS.name + LHS.sub / 2, "sub", P.sub, P);
   });
   window.__sky = { labels: placed, hard: m.hard, segs: m.segs.length, draws: (window.__sky ? window.__sky.draws : 0) + 1, W: W, H: H,
     overlaps: overlaps(placed.filter(function (x) { return !x.dropped; }).map(function (x) { return Object.assign({ text: true }, x); }).concat(m.hard.filter(function (h) { return /disc|m$|pose|ctl/.test(h.id); }))) };
@@ -916,31 +888,27 @@ $("point").addEventListener("click", function () {
   else pointStart();
 });
 
-// ---------- readouts: LCD glass in a bezel, the legend printed on the bezel above (lavender Sun, teal Moon) ----------
-// Inside the glass: ink only, the dot face, the calculator's tags ("AZ:"), ASCII minus, STD numbers (no leading zero).
-function std(x, d) { var s = x.toFixed(d); return s.replace(/^(-?)0[.]/, "$1."); }
-function deg(x, d) { return std(x, d) + "\u00b0"; }
+// ---------- readouts: per body, a data list (label left, value right in mono, hairlines) ----------
 function dayTimes(key) {
-  var ev = S.day ? S.day.events.filter(function (e) { return e.body === key; }) : [], f = function (k) { var e = ev.find(function (x) { return x.kind === k; }); return e ? hm(Date.parse(e.time)) : "--:--"; };
+  var ev = S.day ? S.day.events.filter(function (e) { return e.body === key; }) : [], f = function (k) { var e = ev.find(function (x) { return x.kind === k; }); return e ? hm(Date.parse(e.time)) : "\u2014"; };
   var ti = S.track.length ? trackInfo(tNow()) : {}, tr = ev.find(function (x) { return x.kind === "transit"; }), info = ti[key] && tr ? ti[key].find(function (e) { return e.kind === "transit" && Math.abs(e.t - Date.parse(tr.time)) < 40 * 60e3; }) : null;
-  return { rise: f("rise"), set: f("set"), transit: f("transit"), transitAlt: info ? Math.round(info.alt) + "\u00b0" : "" };
+  return { rise: f("rise"), set: f("set"), transit: f("transit"), transitAlt: info ? d2(info.alt) : "" };
 }
 function cardsHtml(p) {
-  function state(b) { var a = altOf(b), e = wrap360(b.azimuth) < 180; return (a >= 0 ? (e ? "RISING " : "SETTING ") : (e ? "DOWN " : "SET ")) + compass(b.azimuth); }
-  function line(t) { return "<p>" + esc(t) + "</p>"; }
-  function panel(key, name, b, extra) {
-    var dt = dayTimes(key), m = azM(b.azimuth).replace(" M", "M");
-    return '<div class="bez"><div class="bl ' + key.charAt(0) + '">' + name + '</div><div class="glass" role="group" aria-label="' + name + ' readout">' +
-      '<div class="hd"><span class="tag">' + name.toUpperCase() + '</span><span class="st">' + state(b) + '</span></div>' +
-      line("AZ:  " + azT(b.azimuth).replace(" T", "T") + (m ? " " + m : "")) +
-      line("ALT: " + deg(b.altitude, 2)) +
-      line("APP: " + (b.apparentAltitude == null ? "below horizon" : deg(b.apparentAltitude, 2))) +
-      line("RISE " + dt.rise + "  SET " + dt.set) +
-      line("TRANSIT " + dt.transit + (dt.transitAlt ? " " + dt.transitAlt : "")) + extra + '</div></div>';
+  function state(b) { var a = altOf(b), e = wrap360(b.azimuth) < 180; return (a >= 0 ? (e ? "Rising" : "Setting") : (e ? "Below the horizon" : "Set")) + ", " + dirWord(b.azimuth); }
+  function row(k, v) { return "<div><dt>" + k + "</dt><dd>" + v + "</dd></div>"; }
+  function list(key, name, b, extra) {
+    var dt = dayTimes(key), m = azM(b.azimuth);
+    return '<section class="dl" aria-label="' + name + '"><h3><span class="' + key.charAt(0) + '">' + name + '</span><span class="st">' + state(b) + '</span></h3><dl>' +
+      row("Azimuth", azT(b.azimuth) + (m ? ' <span class="u">\u00b7</span> ' + m : "")) +
+      row("Altitude", d2(b.altitude)) +
+      row("Apparent", b.apparentAltitude == null ? "below horizon" : d2(b.apparentAltitude)) +
+      row("Rise \u00b7 Set", dt.rise + ' <span class="u">\u00b7</span> ' + dt.set) +
+      row("Transit", dt.transit + (dt.transitAlt ? ' <span class="u">\u00b7</span> ' + dt.transitAlt : "")) + extra + "</dl></section>";
   }
   var s = p.sun, mo = p.moon, ph = mo.phase;
-  return panel("sun", "Sun", s, line("DIST: " + std(s.distanceKm / AU, 5) + " AU")) +
-    panel("moon", "Moon", mo, line("DIST: " + Math.round(mo.distanceKm) + " KM") + line(ph.name.toUpperCase() + " " + (ph.illuminatedFraction * 100).toFixed(1) + "%"));
+  return list("sun", "Sun", s, row("Distance", (s.distanceKm / AU).toFixed(5) + ' <span class="u">au</span>')) +
+    list("moon", "Moon", mo, row("Distance", Math.round(mo.distanceKm).toLocaleString("en-US") + ' <span class="u">km</span>') + row("Phase", esc(ph.name) + ' <span class="u">\u00b7</span> ' + (ph.illuminatedFraction * 100).toFixed(1) + "%"));
 }
 function setPos(p) {
   if (!S.to) __rum.mark("data-ready");
@@ -978,7 +946,7 @@ function tick() {
   var up = upcoming(now), html = lastNext;
   if (up.length) {
     var e = up[0], t = Date.parse(e.time), ti = S.track.length ? trackInfo(now) : {}, ex = ti[e.body] && ti[e.body].find(function (x) { return x.kind === e.kind && Math.abs(x.t - t) < 40 * 60e3; });
-    html = '<b>' + evName(e) + '</b><span class="t">' + (localDate(t) !== localDate(now) ? "TMRW " : "") + hm(t) + (ex && (e.kind === "rise" || e.kind === "set") ? " " + compass(ex.az) : "") + '</span><span class="cd" aria-label="' + countdown(t - now) + '">' + tminus(t - now) + '</span>';
+    html = '<b>' + evName(e) + '</b><span class="t">' + (localDate(t) !== localDate(now) ? "tomorrow " : "") + hm(t) + (ex && (e.kind === "rise" || e.kind === "set") ? " " + compass(ex.az) : "") + '</span><span class="cd" aria-label="' + countdown(t - now) + '">' + tminus(t - now) + '</span>';
   } else if (S.day && !S.day.loading && S.tomorrowFor === S.day.date) {
     if (S.tomorrow) html = "No rise, set or twilight in the next two days.";
   } else if (S.day && !S.day.loading) loadTomorrow();   // today has nothing left: only now is tomorrow's /v1/day needed

@@ -15,7 +15,6 @@ import * as HttpRouter from "effect/http/HttpRouter"
 import * as HttpServerRequest from "effect/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/http/HttpServerResponse"
 import type { EphemRumRecord } from "./basin.generated.ts"
-import { FONTS } from "./fonts.ts"
 import { uaFamily } from "./requestlog.ts"
 import { ROUTES } from "./routes.ts"
 import { parseTraceparent } from "./traceparent.ts"
@@ -35,14 +34,12 @@ export const KINDS = new Set(["navigation", "resource", "fetch", "paint", "lcp",
 const PAGES = new Set(["/"])
 const H16 = /^[0-9a-f]{16}$/, NAME = /^[a-z][a-z0-9:._-]{0,39}$/, DETAIL = /^[A-Za-z0-9 _.:-]{0,32}$/, RAY = /^[0-9a-f]{16}(-[A-Z]{3})?$/
 const PROTO = /^(h2|h3|http\/1\.1|http\/1\.0)$/, ST = /^[A-Za-z0-9 ;=,."_:/-]{0,400}$/
-const ASSET = /^\/fonts\/[0-9a-f]{12}\/([A-Za-z0-9._-]{1,64})$/
 
 /** A URL path (or "external") → a route id; never the raw path. */
 export const targetOf = (p: unknown): string | undefined => {
   if (typeof p !== "string") return undefined
   if (p === "external") return "external"
   if (ROUTES.has(p)) return p
-  const a = ASSET.exec(p); if (a && FONTS[a[1]!]) return `/fonts/${a[1]}`
   return "other"
 }
 const num = (v: unknown, lo: number, hi: number) => typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, Math.round(v * 1000) / 1000)) : undefined

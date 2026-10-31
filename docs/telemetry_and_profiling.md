@@ -660,9 +660,9 @@ CPU; window wait p99 (~180 ms) did not move. That is the next lever, not the sea
 
 The RPN-calculator view (src/instrument.ts, instrument-engine.ts, instrument-ds.ts, their tests, scripts/instrument-ds.mjs,
 the journey's `instrument-sky` script) was deleted (ivar: "delete /instrument, focus!!!!!!"); `/instrument` and the old
-`/assets/<sha>/<file>` paths are 404 (smoke `instrument-gone`). Kept, because `/` uses them: the fonts (src/fonts.ts, served at
-`/fonts/<sha12>/<file>`), their builders (scripts/instrument-fonts/: rpn_dot.py, rpn_dot_small.py, sofia_core.py) and
-src/embed.ts (first data streamed into the page). Last code: git 4ec0651 (deployed 02980cf0). Its measured results stay in
+`/assets/<sha>/<file>` paths are 404 (smoke `instrument-gone`). The fonts it left for `/` (src/fonts.ts at
+`/fonts/<sha12>/<file>`, scripts/instrument-fonts/) went too when `/` moved to system fonts only (2026-10-31; smoke
+`fonts-gone`). Kept: src/embed.ts (first data streamed into the page). Last code: git 4ec0651 (deployed 02980cf0). Its measured results stay in
 "Unified client+server traces" and "Findings" as history.
 
 ## MCP (`/mcp`, src/mcp.ts)

@@ -38,7 +38,7 @@ reference/oracle/crosscheck.py  diffs any two implementations field by field
 | --- | --- | --- |
 | `@ephem/core` | `block` (DE440 record evaluator) · `time` · `linalg` · `frames` · `ephemeris` · `observe` · `geodesic` · `position` · `day` · `alignment` | nothing |
 | `@ephem/api` | `EphemApi` (groups `sky`, `meta`), request/response schemas, tagged errors, `CONVENTIONS` | `effect` |
-| `@ephem/worker` | `handlers` (decode → block set → load → core → diagnostics) · `blocks` (cache tiers) · `router` (shared /v1 router, CORS, explained 400s) · `app` (front door: + home, `/fonts`, `/docs`, MCP) · `ingest` + `admin` (JPL → R2 RPC) · `index` (ephem entry) · `compute` (the Api + BlockStore entrypoints, §12.0) · `dev` (Node server) · `ops/` (local-only RPC caller) | core, api, effect |
+| `@ephem/worker` | `handlers` (decode → block set → load → core → diagnostics) · `blocks` (cache tiers) · `router` (shared /v1 router, CORS, explained 400s) · `app` (front door: + home, `/docs`, MCP) · `ingest` + `admin` (JPL → R2 RPC) · `index` (ephem entry) · `compute` (the Api + BlockStore entrypoints, §12.0) · `dev` (Node server) · `ops/` (local-only RPC caller) | core, api, effect |
 
 The dependency rule is one-way and mechanical: core's `package.json` lists no dependencies; `tsc -p packages/core` fails
 if anything else is imported. Core is runtime-agnostic (Workers, Node, browsers, Bun, Deno) because it does no I/O: the

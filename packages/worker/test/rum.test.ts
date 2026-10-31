@@ -38,7 +38,7 @@ describe("/rum validation (pure)", () => {
     const r = validateRum(batch([span({ tg: "/v1/position?lat=40.71234&lon=-74.01", dt: "x" }), span({ tg: "https://evil.example/p?q=secret" }), span({ tg: "/fonts/7c1a2e7bc735/RPNDot-Regular.woff2" }), span({ tg: "/assets/000000000000/secret.txt" })]),
       ctx({ "cf-connecting-ip": "203.0.113.9", "x-real-ip": "203.0.113.9" }))
     if (!r.ok) throw new Error(r.reason)
-    expect(r.rows.map(x => x.target)).toEqual(["other", "other", "/fonts/RPNDot-Regular.woff2", "other"])
+    expect(r.rows.map(x => x.target)).toEqual(["other", "other", "other", "other"])
     const all = JSON.stringify(r.rows)
     for (const bad of ["203.0.113", "Mozilla", "Macintosh", "New York", "lat=", "evil", "secret", "?"]) expect(all, bad).not.toContain(bad)
   })
@@ -110,8 +110,8 @@ describe("Server-Timing", () => {
     expect(st).not.toMatch(/cpu/)
     expect(r.headers.get("timing-allow-origin")).toBe("*")
   })
-  it("the front door names its cf-ray first, so RUM resource rows (fonts, documents) join by ray", async () => {
-    const r = await makeHandler(makeBlocks(origin))(new Request("http://x/fonts/7c1a2e7bc735/RPNDot-Regular.woff2", { headers: { "cf-ray": "a52e17c739d64350-EWR" } }))
+  it("the front door names its cf-ray first, so RUM resource rows (documents, pages) join by ray", async () => {
+    const r = await makeHandler(makeBlocks(origin))(new Request("http://x/llms.txt", { headers: { "cf-ray": "a52e17c739d64350-EWR" } }))
     expect(r.headers.get("server-timing")).toMatch(/^ray;desc="a52e17c739d64350-EWR", total;dur=/)
     const v = validateRum(batch([span({ k: "resource", n: "css", r: undefined, sv: 'ray;desc="a52e17c739d64350-EWR", total;dur=0.1' })]), ctx()); if (!v.ok) throw new Error(v.reason)
     expect(v.rows[0]!.ray).toBe("a52e17c739d64350-EWR")
