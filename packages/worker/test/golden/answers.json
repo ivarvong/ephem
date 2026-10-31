@@ -1,6 +1,6 @@
 {
   "cacheVersion": 16,
-  "recorded": "2026-10-31T11:27:45.425Z",
+  "recorded": "2026-10-31T16:32:49.752Z",
   "requests": {
     "day.nyc": "/v1/day?date=2026-10-28&tz=America/New_York&lat=40.7127&lon=-74.0059&height=10",
     "day.tromso": "/v1/day?date=2026-11-15&tz=Europe/Oslo&lat=69.6492&lon=18.9553",
@@ -16,14 +16,14 @@
     "search.window.liberty": "/internal/alignment-search-window?body=moon&dut1=0&heightRef=msl&height=5&pressure=1010&region=r1.AQEE3-fawQWAz5KEA8CpBwAAwKkHv6kHAA&start=2026-11-03T00:00:00.000Z&targetHeight=70&targetHeightRef=msl&targetLat=40.68925&targetLon=-74.0445&temperature=10"
   },
   "answers": {
-    "day.nyc": "18be8fd440dbe561d8bb8113767c7975",
+    "day.nyc": "eb57427a02a2a64053b00bc7c9817199",
     "day.tromso": "5798d0d480599ddadf30f14c59ee79c8",
-    "position.nyc": "b30564b460720956dbe8946870737760",
+    "position.nyc": "aa0d0b1a854991b967b3111ae5845e5f",
     "position.sydney.refraction": "d3a9bc59ab4e4d1b47390fcc4efac877",
     "alignment.moon.liberty": "75e9799a3619ea7c84e368dff7ff42f4",
     "crossing.sun.civil": "11620e37f29748472f535d0f447d742f",
     "crossing.moon.apparent": "72c32ba0ae3f362642f8963f261934c9",
-    "track.nyc": "7f9acae6c726ff78ec44b87d189f662d",
+    "track.nyc": "0fd25efbb7ffedb0798bf65b2fb4ed46",
     "track.tromso.step": "996e668c5aaebd830a030f3aca6da6b3",
     "sightline.pier6": "2a809545201074a834072b50d072c538",
     "magnetic.nyc": "e2be31408f700b77d8342470605e7f2c",

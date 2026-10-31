@@ -125,9 +125,9 @@ describe("worker handler", () => {
     // height −22.6 m above the ellipsoid is ≈ +10 m above sea level here (EGM96 N ≈ −32.6 m): the sea horizon dips ≈ 5.7′, so the Sun
     // rises ≈ 39 s before the sea-level answer, which is the pre-2026-10-29 value (height was ignored for rise/set) and is still what
     // heightRef=msl&height=0 gives.
-    expect(d.body.events.find((e: any) => e.kind === "rise" && e.body === "sun").time).toBe("2026-10-28T11:21:04.962Z")
+    expect(d.body.events.find((e: any) => e.kind === "rise" && e.body === "sun").time).toBe("2026-10-28T11:21:10.113Z")
     const sea = await get("/v1/day?lat=40.7127&lon=-74.0059&height=0&heightRef=msl&date=2026-10-28&tz=America/New_York")
-    expect(sea.body.events.find((e: any) => e.kind === "rise" && e.body === "sun").time).toBe("2026-10-28T11:21:43.461Z")
+    expect(sea.body.events.find((e: any) => e.kind === "rise" && e.body === "sun").time).toBe("2026-10-28T11:21:48.635Z")
     expect(d.headers.get("server-timing")).toMatch(/total;dur=/); expect(d.headers.get("access-control-allow-origin")).toBe("*")
     const a = await get("/v1/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&height=-30.9&start=2026-10-28T23:45:00Z&end=2026-10-29T02:00:00Z&stepSeconds=1800&maxDistanceKm=20&lat=40.6892&lon=-74.0760")
     expect(a.status).toBe(200); expect(a.body.track.length).toBe(5); expect(a.body.track[0]).not.toHaveProperty("iterations")

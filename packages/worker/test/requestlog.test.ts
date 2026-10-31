@@ -65,7 +65,7 @@ describe("request rows (pure)", () => {
     const url = new URL("http://x/v1/position?lat=40.712749&lon=-74.005949&time=2026-10-28T11:51:00Z&token=s3cret")
     const row = buildRow({ now: 0, method: "GET", url, headers: { "user-agent": UA, "cf-connecting-ip": "203.0.113.9", "cf-ray": "abc-EWR" },
       cf: { colo: "EWR", country: "US", city: "Brooklyn" }, status: 200, wallMs: 1.23456, spans: [new Map([["http.route", "/v1/position"]])] })
-    expect(row).toMatchObject({ lat_r: 40.7, lon_r: -73.99, route: "/v1/position", ua_family: "browser", colo: "EWR", ray: "abc-EWR", ts: "1970-01-01T00:00:00.000Z", wall_ms: 1.235 })
+    expect(row).toMatchObject({ lat_r: 40.71, lon_r: -74.01, route: "/v1/position", ua_family: "browser", colo: "EWR", ray: "abc-EWR", ts: "1970-01-01T00:00:00.000Z", wall_ms: 1.235 })
     const json = JSON.stringify(row)
     for (const leak of ["s3cret", "token", "203.0.113.9", "Macintosh", "40.712749", "2026-10-28T11:51"]) expect(json).not.toContain(leak)
     matchesSchema(row); expect(typed(row)).toBe(row)
@@ -94,7 +94,7 @@ describe("request rows (through the app)", () => {
     const { res, rows } = await run("/v1/day?lat=40.7127&lon=-74.0059&height=-22.6&date=2026-10-28&tz=America/New_York")
     expect(res.status).toBe(200); expect(rows).toHaveLength(1)
     const r = rows[0]!
-    expect(r).toMatchObject({ method: "GET", route: "/v1/day", status: 200, ok: true, version: "v-test", lat_r: 40.7, lon_r: -73.99, ua_family: "browser", ray: "8d00000000000000-EWR" })
+    expect(r).toMatchObject({ method: "GET", route: "/v1/day", status: 200, ok: true, version: "v-test", lat_r: 40.71, lon_r: -74.01, ua_family: "browser", ray: "8d00000000000000-EWR" })
     expect(r.blocks).toBeGreaterThan(0); expect(r.block_reads).toBeGreaterThan(0); expect(r.origin_reads).toBeGreaterThanOrEqual(1); expect(r.origin_bytes).toBe(REC * ((r.blocks ?? 0) - (r.blocks_mem ?? 0)))   // fresh isolate: every block came from R2
     expect(r).not.toHaveProperty("error_tag"); expect(r).toMatchObject({ role: "front", blocks_cache: expect.stringMatching(/^ORIGIN/) })
     matchesSchema(r)
@@ -108,7 +108,7 @@ describe("request rows (through the app)", () => {
     const rows: RequestRow[] = []
     const res = await front(new Request("http://x/v1/day?lat=40.7127&lon=-74.0059&date=2026-10-28&tz=America/New_York", { headers: { "user-agent": "curl/8", "cf-ray": "8d1-EWR" } }), { role: "front", emit: row => { rows.push(row) } })
     expect(res.status).toBe(200); expect(rows).toHaveLength(1); expect(apiRows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ role: "front", route: "/v1/day", api_cache: "HIT", status: 200, ua_family: "curl", lat_r: 40.7 })
+    expect(rows[0]).toMatchObject({ role: "front", route: "/v1/day", api_cache: "HIT", status: 200, ua_family: "curl", lat_r: 40.71 })
     expect(rows[0]).not.toHaveProperty("blocks")                       // the work happened in the Api invocation
     expect(apiRows[0]).toMatchObject({ role: "api", route: "/v1/day", status: 200 }); expect(apiRows[0]!.ray).toBe(rows[0]!.ray); expect(apiRows[0]!.blocks).toBeGreaterThan(0)
     matchesSchema(rows[0]!); matchesSchema(apiRows[0]!)
@@ -151,7 +151,7 @@ describe("request rows (through the app)", () => {
     const { res, rows } = await run("/mcp", { method: "POST", body: JSON.stringify(body),
       headers: { "content-type": "application/json", "mcp-protocol-version": LATEST, "mcp-method": "tools/call", "mcp-name": "position" } })
     expect(res.status).toBe(200); expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ method: "POST", route: "/mcp", mcp_method: "tools/call", mcp_tool: "position", ua_family: "mcp:vitest", lat_r: 40.7, lon_r: -73.99, status: 200 })
+    expect(rows[0]).toMatchObject({ method: "POST", route: "/mcp", mcp_method: "tools/call", mcp_tool: "position", ua_family: "mcp:vitest", lat_r: 40.71, lon_r: -74.01, status: 200 })
     expect(rows[0]!.blocks).toBeGreaterThan(0); matchesSchema(rows[0]!)
   })
   it("an MCP JSON-RPC error is tagged", async () => {

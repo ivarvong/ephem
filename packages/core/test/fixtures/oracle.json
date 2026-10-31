@@ -3029,16 +3029,16 @@
 "point": "upper"
 },
 "horizon": {
-"altitude": -0.09560626574338546,
-"dip": 0.09560626574338546,
+"altitude": -0.09564793522259316,
+"dip": 0.09564793522259316,
 "kind": "sea"
 },
 "refraction": {
-"atHorizon": 0.5874350322832153,
+"atHorizon": 0.5874442846216473,
 "pressureHpa": 1010.0,
 "temperatureC": 10.0
 },
-"trueLimbAltitude": -0.6830412980266007
+"trueLimbAltitude": -0.6830922198442405
 },
 "twilight": {
 "astronomical": -18,
@@ -3052,109 +3052,109 @@
 {
 "body": "moon",
 "kind": "transit",
-"time": "2026-10-28T06:30:32.113Z"
+"time": "2026-10-28T06:30:36.571Z"
 },
 {
 "body": "sun",
 "kind": "astronomicalDawn",
-"time": "2026-10-28T09:49:35.555Z"
+"time": "2026-10-28T09:49:39.940Z"
 },
 {
 "body": "sun",
 "kind": "nauticalDawn",
-"time": "2026-10-28T10:21:23.344Z"
+"time": "2026-10-28T10:21:27.995Z"
 },
 {
 "body": "sun",
 "kind": "blueHourStart",
-"time": "2026-10-28T10:53:32.584Z"
+"time": "2026-10-28T10:53:37.506Z"
 },
 {
 "body": "sun",
 "kind": "civilDawn",
-"time": "2026-10-28T10:53:32.584Z"
+"time": "2026-10-28T10:53:37.506Z"
 },
 {
 "body": "sun",
 "kind": "blueHourEnd",
-"time": "2026-10-28T11:04:23.274Z"
+"time": "2026-10-28T11:04:28.291Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourStart",
-"time": "2026-10-28T11:04:23.274Z"
+"time": "2026-10-28T11:04:28.291Z"
 },
 {
 "body": "sun",
 "kind": "rise",
-"time": "2026-10-28T11:21:04.958Z"
+"time": "2026-10-28T11:21:10.110Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourEnd",
-"time": "2026-10-28T12:00:08.662Z"
+"time": "2026-10-28T12:00:14.214Z"
 },
 {
 "body": "moon",
 "kind": "set",
-"time": "2026-10-28T14:32:23.182Z"
+"time": "2026-10-28T14:32:29.981Z"
 },
 {
 "body": "sun",
 "kind": "transit",
-"time": "2026-10-28T16:39:43.364Z"
+"time": "2026-10-28T16:39:47.635Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourStart",
-"time": "2026-10-28T21:18:46.968Z"
+"time": "2026-10-28T21:18:49.951Z"
 },
 {
 "body": "sun",
 "kind": "set",
-"time": "2026-10-28T21:57:49.347Z"
+"time": "2026-10-28T21:57:52.730Z"
 },
 {
 "body": "sun",
 "kind": "blueHourStart",
-"time": "2026-10-28T22:14:30.320Z"
+"time": "2026-10-28T22:14:33.836Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourEnd",
-"time": "2026-10-28T22:14:30.320Z"
+"time": "2026-10-28T22:14:33.836Z"
 },
 {
 "body": "sun",
 "kind": "blueHourEnd",
-"time": "2026-10-28T22:25:20.505Z"
+"time": "2026-10-28T22:25:24.115Z"
 },
 {
 "body": "sun",
 "kind": "civilDusk",
-"time": "2026-10-28T22:25:20.505Z"
+"time": "2026-10-28T22:25:24.115Z"
 },
 {
 "body": "sun",
 "kind": "nauticalDusk",
-"time": "2026-10-28T22:57:27.969Z"
+"time": "2026-10-28T22:57:31.851Z"
 },
 {
 "body": "moon",
 "kind": "rise",
-"time": "2026-10-28T23:28:43.888Z"
+"time": "2026-10-28T23:28:45.967Z"
 },
 {
 "body": "sun",
 "kind": "astronomicalDusk",
-"time": "2026-10-28T23:29:13.489Z"
+"time": "2026-10-28T23:29:17.634Z"
 }
 ],
 "observer": {
-"geoidUndulation": -32.794994177773404,
+"geoidUndulation": -32.80388299295974,
 "height": -22.6,
 "heightEllipsoid": -22.6,
-"heightMsl": 10.194994177773403,
+"heightMsl": 10.203882992959741,
 "heightRef": "ellipsoid",
 "lat": 40.7127,
 "lon": -74.0059
@@ -3193,16 +3193,16 @@
 "point": "upper"
 },
 "horizon": {
-"altitude": -0.09560626574338546,
-"dip": 0.09560626574338546,
+"altitude": -0.09564793522259316,
+"dip": 0.09564793522259316,
 "kind": "sea"
 },
 "refraction": {
-"atHorizon": 0.5874350322832153,
+"atHorizon": 0.5874442846216473,
 "pressureHpa": 1010.0,
 "temperatureC": 10.0
 },
-"trueLimbAltitude": -0.6830412980266007
+"trueLimbAltitude": -0.6830922198442405
 },
 "twilight": {
 "astronomical": -18,
@@ -3216,109 +3216,109 @@
 {
 "body": "moon",
 "kind": "set",
-"time": "2026-06-21T04:29:56.404Z"
+"time": "2026-06-21T04:30:00.893Z"
 },
 {
 "body": "sun",
 "kind": "astronomicalDawn",
-"time": "2026-06-21T07:18:31.299Z"
+"time": "2026-06-21T07:18:31.121Z"
 },
 {
 "body": "sun",
 "kind": "nauticalDawn",
-"time": "2026-06-21T08:08:54.706Z"
+"time": "2026-06-21T08:08:55.897Z"
 },
 {
 "body": "sun",
 "kind": "blueHourStart",
-"time": "2026-06-21T08:51:33.851Z"
+"time": "2026-06-21T08:51:35.784Z"
 },
 {
 "body": "sun",
 "kind": "civilDawn",
-"time": "2026-06-21T08:51:33.851Z"
+"time": "2026-06-21T08:51:35.784Z"
 },
 {
 "body": "sun",
 "kind": "blueHourEnd",
-"time": "2026-06-21T09:04:47.018Z"
+"time": "2026-06-21T09:04:49.137Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourStart",
-"time": "2026-06-21T09:04:47.018Z"
+"time": "2026-06-21T09:04:49.137Z"
 },
 {
 "body": "sun",
 "kind": "rise",
-"time": "2026-06-21T09:24:17.061Z"
+"time": "2026-06-21T09:24:19.410Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourEnd",
-"time": "2026-06-21T10:06:18.439Z"
+"time": "2026-06-21T10:06:21.264Z"
 },
 {
 "body": "moon",
 "kind": "rise",
-"time": "2026-06-21T16:48:48.014Z"
+"time": "2026-06-21T16:48:52.547Z"
 },
 {
 "body": "sun",
 "kind": "transit",
-"time": "2026-06-21T16:57:48.905Z"
+"time": "2026-06-21T16:57:53.178Z"
 },
 {
 "body": "moon",
 "kind": "transit",
-"time": "2026-06-21T22:55:19.452Z"
+"time": "2026-06-21T22:55:23.850Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourStart",
-"time": "2026-06-21T23:49:19.001Z"
+"time": "2026-06-21T23:49:24.720Z"
 },
 {
 "body": "sun",
 "kind": "set",
-"time": "2026-06-22T00:31:20.281Z"
+"time": "2026-06-22T00:31:26.477Z"
 },
 {
 "body": "sun",
 "kind": "blueHourStart",
-"time": "2026-06-22T00:50:50.273Z"
+"time": "2026-06-22T00:50:56.698Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourEnd",
-"time": "2026-06-22T00:50:50.273Z"
+"time": "2026-06-22T00:50:56.698Z"
 },
 {
 "body": "sun",
 "kind": "blueHourEnd",
-"time": "2026-06-22T01:04:03.398Z"
+"time": "2026-06-22T01:04:10.010Z"
 },
 {
 "body": "sun",
 "kind": "civilDusk",
-"time": "2026-06-22T01:04:03.398Z"
+"time": "2026-06-22T01:04:10.010Z"
 },
 {
 "body": "sun",
 "kind": "nauticalDusk",
-"time": "2026-06-22T01:46:42.369Z"
+"time": "2026-06-22T01:46:49.723Z"
 },
 {
 "body": "sun",
 "kind": "astronomicalDusk",
-"time": "2026-06-22T02:37:05.440Z"
+"time": "2026-06-22T02:37:14.162Z"
 }
 ],
 "observer": {
-"geoidUndulation": -32.794994177773404,
+"geoidUndulation": -32.80388299295974,
 "height": -22.6,
 "heightEllipsoid": -22.6,
-"heightMsl": 10.194994177773403,
+"heightMsl": 10.203882992959741,
 "heightRef": "ellipsoid",
 "lat": 40.7127,
 "lon": -74.0059
@@ -3357,16 +3357,16 @@
 "point": "upper"
 },
 "horizon": {
-"altitude": -0.09560626574338546,
-"dip": 0.09560626574338546,
+"altitude": -0.09564793522259316,
+"dip": 0.09564793522259316,
 "kind": "sea"
 },
 "refraction": {
-"atHorizon": 0.5874350322832153,
+"atHorizon": 0.5874442846216473,
 "pressureHpa": 1010.0,
 "temperatureC": 10.0
 },
-"trueLimbAltitude": -0.6830412980266007
+"trueLimbAltitude": -0.6830922198442405
 },
 "twilight": {
 "astronomical": -18,
@@ -3380,109 +3380,109 @@
 {
 "body": "moon",
 "kind": "set",
-"time": "2026-12-21T09:35:22.165Z"
+"time": "2026-12-21T09:35:28.596Z"
 },
 {
 "body": "sun",
 "kind": "astronomicalDawn",
-"time": "2026-12-21T10:37:37.945Z"
+"time": "2026-12-21T10:37:43.060Z"
 },
 {
 "body": "sun",
 "kind": "nauticalDawn",
-"time": "2026-12-21T11:10:59.298Z"
+"time": "2026-12-21T11:11:04.696Z"
 },
 {
 "body": "sun",
 "kind": "blueHourStart",
-"time": "2026-12-21T11:45:28.887Z"
+"time": "2026-12-21T11:45:34.608Z"
 },
 {
 "body": "sun",
 "kind": "civilDawn",
-"time": "2026-12-21T11:45:28.887Z"
+"time": "2026-12-21T11:45:34.608Z"
 },
 {
 "body": "sun",
 "kind": "blueHourEnd",
-"time": "2026-12-21T11:57:18.785Z"
+"time": "2026-12-21T11:57:24.626Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourStart",
-"time": "2026-12-21T11:57:18.785Z"
+"time": "2026-12-21T11:57:24.626Z"
 },
 {
 "body": "sun",
 "kind": "rise",
-"time": "2026-12-21T12:15:44.215Z"
+"time": "2026-12-21T12:15:50.237Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourEnd",
-"time": "2026-12-21T13:00:14.546Z"
+"time": "2026-12-21T13:00:21.160Z"
 },
 {
 "body": "sun",
 "kind": "transit",
-"time": "2026-12-21T16:54:07.108Z"
+"time": "2026-12-21T16:54:11.381Z"
 },
 {
 "body": "moon",
 "kind": "rise",
-"time": "2026-12-21T18:59:15.699Z"
+"time": "2026-12-21T18:59:18.070Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourStart",
-"time": "2026-12-21T20:47:59.512Z"
+"time": "2026-12-21T20:48:01.445Z"
 },
 {
 "body": "sun",
 "kind": "set",
-"time": "2026-12-21T21:32:29.840Z"
+"time": "2026-12-21T21:32:32.365Z"
 },
 {
 "body": "sun",
 "kind": "blueHourStart",
-"time": "2026-12-21T21:50:55.265Z"
+"time": "2026-12-21T21:50:57.971Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourEnd",
-"time": "2026-12-21T21:50:55.265Z"
+"time": "2026-12-21T21:50:57.971Z"
 },
 {
 "body": "sun",
 "kind": "blueHourEnd",
-"time": "2026-12-21T22:02:45.161Z"
+"time": "2026-12-21T22:02:47.987Z"
 },
 {
 "body": "sun",
 "kind": "civilDusk",
-"time": "2026-12-21T22:02:45.161Z"
+"time": "2026-12-21T22:02:47.987Z"
 },
 {
 "body": "sun",
 "kind": "nauticalDusk",
-"time": "2026-12-21T22:37:14.744Z"
+"time": "2026-12-21T22:37:17.893Z"
 },
 {
 "body": "sun",
 "kind": "astronomicalDusk",
-"time": "2026-12-21T23:10:36.091Z"
+"time": "2026-12-21T23:10:39.522Z"
 },
 {
 "body": "moon",
 "kind": "transit",
-"time": "2026-12-22T02:51:36.005Z"
+"time": "2026-12-22T02:51:40.466Z"
 }
 ],
 "observer": {
-"geoidUndulation": -32.794994177773404,
+"geoidUndulation": -32.80388299295974,
 "height": -22.6,
 "heightEllipsoid": -22.6,
-"heightMsl": 10.194994177773403,
+"heightMsl": 10.203882992959741,
 "heightRef": "ellipsoid",
 "lat": 40.7127,
 "lon": -74.0059
@@ -3521,16 +3521,16 @@
 "point": "upper"
 },
 "horizon": {
-"altitude": -0.09560626574338546,
-"dip": 0.09560626574338546,
+"altitude": -0.09564793522259316,
+"dip": 0.09564793522259316,
 "kind": "sea"
 },
 "refraction": {
-"atHorizon": 0.5874350322832153,
+"atHorizon": 0.5874442846216473,
 "pressureHpa": 1010.0,
 "temperatureC": 10.0
 },
-"trueLimbAltitude": -0.6830412980266007
+"trueLimbAltitude": -0.6830922198442405
 },
 "twilight": {
 "astronomical": -18,
@@ -3544,109 +3544,109 @@
 {
 "body": "sun",
 "kind": "astronomicalDawn",
-"time": "2024-04-08T08:51:26.090Z"
+"time": "2024-04-08T08:51:28.819Z"
 },
 {
 "body": "sun",
 "kind": "nauticalDawn",
-"time": "2024-04-08T09:26:05.577Z"
+"time": "2024-04-08T09:26:08.704Z"
 },
 {
 "body": "sun",
 "kind": "blueHourStart",
-"time": "2024-04-08T09:59:22.110Z"
+"time": "2024-04-08T09:59:25.568Z"
 },
 {
 "body": "sun",
 "kind": "civilDawn",
-"time": "2024-04-08T09:59:22.110Z"
+"time": "2024-04-08T09:59:25.568Z"
 },
 {
 "body": "sun",
 "kind": "blueHourEnd",
-"time": "2024-04-08T10:10:14.858Z"
+"time": "2024-04-08T10:10:18.416Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourStart",
-"time": "2024-04-08T10:10:14.858Z"
+"time": "2024-04-08T10:10:18.416Z"
 },
 {
 "body": "moon",
 "kind": "rise",
-"time": "2024-04-08T10:21:30.739Z"
+"time": "2024-04-08T10:21:34.681Z"
 },
 {
 "body": "sun",
 "kind": "rise",
-"time": "2024-04-08T10:26:41.445Z"
+"time": "2024-04-08T10:26:45.134Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourEnd",
-"time": "2024-04-08T11:03:40.068Z"
+"time": "2024-04-08T11:03:44.090Z"
 },
 {
 "body": "moon",
 "kind": "transit",
-"time": "2024-04-08T16:54:02.320Z"
+"time": "2024-04-08T16:54:06.746Z"
 },
 {
 "body": "sun",
 "kind": "transit",
-"time": "2024-04-08T16:57:35.962Z"
+"time": "2024-04-08T16:57:40.233Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourStart",
-"time": "2024-04-08T22:52:09.511Z"
+"time": "2024-04-08T22:52:14.044Z"
 },
 {
 "body": "sun",
 "kind": "set",
-"time": "2024-04-08T23:29:13.485Z"
+"time": "2024-04-08T23:29:18.354Z"
 },
 {
 "body": "moon",
 "kind": "set",
-"time": "2024-04-08T23:40:49.451Z"
+"time": "2024-04-08T23:40:54.669Z"
 },
 {
 "body": "sun",
 "kind": "blueHourStart",
-"time": "2024-04-08T23:45:42.947Z"
+"time": "2024-04-08T23:45:47.948Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourEnd",
-"time": "2024-04-08T23:45:42.947Z"
+"time": "2024-04-08T23:45:47.948Z"
 },
 {
 "body": "sun",
 "kind": "blueHourEnd",
-"time": "2024-04-08T23:56:37.785Z"
+"time": "2024-04-08T23:56:42.887Z"
 },
 {
 "body": "sun",
 "kind": "civilDusk",
-"time": "2024-04-08T23:56:37.785Z"
+"time": "2024-04-08T23:56:42.887Z"
 },
 {
 "body": "sun",
 "kind": "nauticalDusk",
-"time": "2024-04-09T00:30:01.896Z"
+"time": "2024-04-09T00:30:07.333Z"
 },
 {
 "body": "sun",
 "kind": "astronomicalDusk",
-"time": "2024-04-09T01:04:51.819Z"
+"time": "2024-04-09T01:04:57.661Z"
 }
 ],
 "observer": {
-"geoidUndulation": -32.794994177773404,
+"geoidUndulation": -32.80388299295974,
 "height": -22.6,
 "heightEllipsoid": -22.6,
-"heightMsl": 10.194994177773403,
+"heightMsl": 10.203882992959741,
 "heightRef": "ellipsoid",
 "lat": 40.7127,
 "lon": -74.0059
@@ -3685,16 +3685,16 @@
 "point": "upper"
 },
 "horizon": {
-"altitude": -0.09560626574338546,
-"dip": 0.09560626574338546,
+"altitude": -0.09564793522259316,
+"dip": 0.09564793522259316,
 "kind": "sea"
 },
 "refraction": {
-"atHorizon": 0.5874350322832153,
+"atHorizon": 0.5874442846216473,
 "pressureHpa": 1010.0,
 "temperatureC": 10.0
 },
-"trueLimbAltitude": -0.6830412980266007
+"trueLimbAltitude": -0.6830922198442405
 },
 "twilight": {
 "astronomical": -18,
@@ -3708,109 +3708,109 @@
 {
 "body": "moon",
 "kind": "set",
-"time": "2035-03-20T09:01:59.366Z"
+"time": "2035-03-20T09:02:04.787Z"
 },
 {
 "body": "sun",
 "kind": "astronomicalDawn",
-"time": "2035-03-20T09:27:52.438Z"
+"time": "2035-03-20T09:27:55.852Z"
 },
 {
 "body": "sun",
 "kind": "nauticalDawn",
-"time": "2035-03-20T10:00:21.454Z"
+"time": "2035-03-20T10:00:25.180Z"
 },
 {
 "body": "sun",
 "kind": "blueHourStart",
-"time": "2035-03-20T10:32:16.469Z"
+"time": "2035-03-20T10:32:20.476Z"
 },
 {
 "body": "sun",
 "kind": "civilDawn",
-"time": "2035-03-20T10:32:16.469Z"
+"time": "2035-03-20T10:32:20.476Z"
 },
 {
 "body": "sun",
 "kind": "blueHourEnd",
-"time": "2035-03-20T10:42:50.577Z"
+"time": "2035-03-20T10:42:54.675Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourStart",
-"time": "2035-03-20T10:42:50.577Z"
+"time": "2035-03-20T10:42:54.675Z"
 },
 {
 "body": "sun",
 "kind": "rise",
-"time": "2035-03-20T10:58:55.449Z"
+"time": "2035-03-20T10:58:59.667Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourEnd",
-"time": "2035-03-20T11:35:36.256Z"
+"time": "2035-03-20T11:35:40.802Z"
 },
 {
 "body": "sun",
 "kind": "transit",
-"time": "2035-03-20T17:03:23.773Z"
+"time": "2035-03-20T17:03:28.044Z"
 },
 {
 "body": "moon",
 "kind": "rise",
-"time": "2035-03-20T19:53:19.082Z"
+"time": "2035-03-20T19:53:22.617Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourStart",
-"time": "2035-03-20T22:31:48.788Z"
+"time": "2035-03-20T22:31:52.796Z"
 },
 {
 "body": "sun",
 "kind": "set",
-"time": "2035-03-20T23:08:33.379Z"
+"time": "2035-03-20T23:08:37.717Z"
 },
 {
 "body": "sun",
 "kind": "blueHourStart",
-"time": "2035-03-20T23:24:40.254Z"
+"time": "2035-03-20T23:24:44.713Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourEnd",
-"time": "2035-03-20T23:24:40.254Z"
+"time": "2035-03-20T23:24:44.713Z"
 },
 {
 "body": "sun",
 "kind": "blueHourEnd",
-"time": "2035-03-20T23:35:15.800Z"
+"time": "2035-03-20T23:35:20.350Z"
 },
 {
 "body": "sun",
 "kind": "civilDusk",
-"time": "2035-03-20T23:35:15.800Z"
+"time": "2035-03-20T23:35:20.350Z"
 },
 {
 "body": "sun",
 "kind": "nauticalDusk",
-"time": "2035-03-21T00:07:15.904Z"
+"time": "2035-03-21T00:07:20.739Z"
 },
 {
 "body": "sun",
 "kind": "astronomicalDusk",
-"time": "2035-03-21T00:39:51.588Z"
+"time": "2035-03-21T00:39:56.738Z"
 },
 {
 "body": "moon",
 "kind": "transit",
-"time": "2035-03-21T02:51:07.338Z"
+"time": "2035-03-21T02:51:11.763Z"
 }
 ],
 "observer": {
-"geoidUndulation": -32.794994177773404,
+"geoidUndulation": -32.80388299295974,
 "height": -22.6,
 "heightEllipsoid": -22.6,
-"heightMsl": 10.194994177773403,
+"heightMsl": 10.203882992959741,
 "heightRef": "ellipsoid",
 "lat": 40.7127,
 "lon": -74.0059
@@ -3849,16 +3849,16 @@
 "point": "upper"
 },
 "horizon": {
-"altitude": -0.09560626574338546,
-"dip": 0.09560626574338546,
+"altitude": -0.09564793522259316,
+"dip": 0.09564793522259316,
 "kind": "sea"
 },
 "refraction": {
-"atHorizon": 0.5874350322832153,
+"atHorizon": 0.5874442846216473,
 "pressureHpa": 1010.0,
 "temperatureC": 10.0
 },
-"trueLimbAltitude": -0.6830412980266007
+"trueLimbAltitude": -0.6830922198442405
 },
 "twilight": {
 "astronomical": -18,
@@ -3872,109 +3872,109 @@
 {
 "body": "moon",
 "kind": "transit",
-"time": "2100-09-23T08:07:18.422Z"
+"time": "2100-09-23T08:07:22.833Z"
 },
 {
 "body": "sun",
 "kind": "astronomicalDawn",
-"time": "2100-09-23T09:12:50.119Z"
+"time": "2100-09-23T09:12:53.542Z"
 },
 {
 "body": "sun",
 "kind": "nauticalDawn",
-"time": "2100-09-23T09:45:22.593Z"
+"time": "2100-09-23T09:45:26.328Z"
 },
 {
 "body": "sun",
 "kind": "blueHourStart",
-"time": "2100-09-23T10:17:20.905Z"
+"time": "2100-09-23T10:17:24.924Z"
 },
 {
 "body": "sun",
 "kind": "civilDawn",
-"time": "2100-09-23T10:17:20.905Z"
+"time": "2100-09-23T10:17:24.924Z"
 },
 {
 "body": "sun",
 "kind": "blueHourEnd",
-"time": "2100-09-23T10:27:56.120Z"
+"time": "2100-09-23T10:28:00.230Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourStart",
-"time": "2100-09-23T10:27:56.120Z"
+"time": "2100-09-23T10:28:00.230Z"
 },
 {
 "body": "sun",
 "kind": "rise",
-"time": "2100-09-23T10:44:03.397Z"
+"time": "2100-09-23T10:44:07.628Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourEnd",
-"time": "2100-09-23T11:20:47.758Z"
+"time": "2100-09-23T11:20:52.319Z"
 },
 {
 "body": "moon",
 "kind": "set",
-"time": "2100-09-23T15:55:27.194Z"
+"time": "2100-09-23T15:55:33.720Z"
 },
 {
 "body": "sun",
 "kind": "transit",
-"time": "2100-09-23T16:48:15.186Z"
+"time": "2100-09-23T16:48:19.457Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourStart",
-"time": "2100-09-23T22:15:05.717Z"
+"time": "2100-09-23T22:15:09.687Z"
 },
 {
 "body": "sun",
 "kind": "set",
-"time": "2100-09-23T22:51:46.401Z"
+"time": "2100-09-23T22:51:50.699Z"
 },
 {
 "body": "sun",
 "kind": "blueHourStart",
-"time": "2100-09-23T23:07:51.732Z"
+"time": "2100-09-23T23:07:56.150Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourEnd",
-"time": "2100-09-23T23:07:51.732Z"
+"time": "2100-09-23T23:07:56.150Z"
 },
 {
 "body": "sun",
 "kind": "blueHourEnd",
-"time": "2100-09-23T23:18:25.551Z"
+"time": "2100-09-23T23:18:30.059Z"
 },
 {
 "body": "sun",
 "kind": "civilDusk",
-"time": "2100-09-23T23:18:25.551Z"
+"time": "2100-09-23T23:18:30.059Z"
 },
 {
 "body": "sun",
 "kind": "nauticalDusk",
-"time": "2100-09-23T23:50:18.927Z"
+"time": "2100-09-23T23:50:23.716Z"
 },
 {
 "body": "sun",
 "kind": "astronomicalDusk",
-"time": "2100-09-24T00:22:44.945Z"
+"time": "2100-09-24T00:22:50.043Z"
 },
 {
 "body": "moon",
 "kind": "rise",
-"time": "2100-09-24T01:02:06.005Z"
+"time": "2100-09-24T01:02:08.235Z"
 }
 ],
 "observer": {
-"geoidUndulation": -32.794994177773404,
+"geoidUndulation": -32.80388299295974,
 "height": -22.6,
 "heightEllipsoid": -22.6,
-"heightMsl": 10.194994177773403,
+"heightMsl": 10.203882992959741,
 "heightRef": "ellipsoid",
 "lat": 40.7127,
 "lon": -74.0059
@@ -4013,16 +4013,16 @@
 "point": "upper"
 },
 "horizon": {
-"altitude": -0.09560626574338546,
-"dip": 0.09560626574338546,
+"altitude": -0.09564793522259316,
+"dip": 0.09564793522259316,
 "kind": "sea"
 },
 "refraction": {
-"atHorizon": 0.5874350322832153,
+"atHorizon": 0.5874442846216473,
 "pressureHpa": 1010.0,
 "temperatureC": 10.0
 },
-"trueLimbAltitude": -0.6830412980266007
+"trueLimbAltitude": -0.6830922198442405
 },
 "twilight": {
 "astronomical": -18,
@@ -4036,109 +4036,109 @@
 {
 "body": "moon",
 "kind": "rise",
-"time": "1985-01-15T06:48:11.026Z"
+"time": "1985-01-15T06:48:16.578Z"
 },
 {
 "body": "sun",
 "kind": "astronomicalDawn",
-"time": "1985-01-15T10:41:17.476Z"
+"time": "1985-01-15T10:41:22.417Z"
 },
 {
 "body": "sun",
 "kind": "nauticalDawn",
-"time": "1985-01-15T11:14:05.530Z"
+"time": "1985-01-15T11:14:10.745Z"
 },
 {
 "body": "sun",
 "kind": "blueHourStart",
-"time": "1985-01-15T11:47:49.290Z"
+"time": "1985-01-15T11:47:54.809Z"
 },
 {
 "body": "sun",
 "kind": "civilDawn",
-"time": "1985-01-15T11:47:49.290Z"
+"time": "1985-01-15T11:47:54.809Z"
 },
 {
 "body": "sun",
 "kind": "blueHourEnd",
-"time": "1985-01-15T11:59:20.366Z"
+"time": "1985-01-15T11:59:25.996Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourStart",
-"time": "1985-01-15T11:59:20.366Z"
+"time": "1985-01-15T11:59:25.996Z"
 },
 {
 "body": "moon",
 "kind": "transit",
-"time": "1985-01-15T12:08:20.647Z"
+"time": "1985-01-15T12:08:25.072Z"
 },
 {
 "body": "sun",
 "kind": "rise",
-"time": "1985-01-15T12:17:12.795Z"
+"time": "1985-01-15T12:17:18.590Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourEnd",
-"time": "1985-01-15T13:00:00.347Z"
+"time": "1985-01-15T13:00:06.667Z"
 },
 {
 "body": "sun",
 "kind": "transit",
-"time": "1985-01-15T17:05:30.178Z"
+"time": "1985-01-15T17:05:34.451Z"
 },
 {
 "body": "moon",
 "kind": "set",
-"time": "1985-01-15T17:19:34.376Z"
+"time": "1985-01-15T17:19:37.521Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourStart",
-"time": "1985-01-15T21:11:18.175Z"
+"time": "1985-01-15T21:11:20.406Z"
 },
 {
 "body": "sun",
 "kind": "set",
-"time": "1985-01-15T21:54:05.985Z"
+"time": "1985-01-15T21:54:08.742Z"
 },
 {
 "body": "sun",
 "kind": "blueHourStart",
-"time": "1985-01-15T22:11:58.566Z"
+"time": "1985-01-15T22:12:01.487Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourEnd",
-"time": "1985-01-15T22:11:58.566Z"
+"time": "1985-01-15T22:12:01.487Z"
 },
 {
 "body": "sun",
 "kind": "blueHourEnd",
-"time": "1985-01-15T22:23:29.752Z"
+"time": "1985-01-15T22:23:32.785Z"
 },
 {
 "body": "sun",
 "kind": "civilDusk",
-"time": "1985-01-15T22:23:29.752Z"
+"time": "1985-01-15T22:23:32.785Z"
 },
 {
 "body": "sun",
 "kind": "nauticalDusk",
-"time": "1985-01-15T22:57:13.921Z"
+"time": "1985-01-15T22:57:17.258Z"
 },
 {
 "body": "sun",
 "kind": "astronomicalDusk",
-"time": "1985-01-15T23:30:02.532Z"
+"time": "1985-01-15T23:30:06.143Z"
 }
 ],
 "observer": {
-"geoidUndulation": -32.794994177773404,
+"geoidUndulation": -32.80388299295974,
 "height": -22.6,
 "heightEllipsoid": -22.6,
-"heightMsl": 10.194994177773403,
+"heightMsl": 10.203882992959741,
 "heightRef": "ellipsoid",
 "lat": 40.7127,
 "lon": -74.0059
@@ -4177,16 +4177,16 @@
 "point": "upper"
 },
 "horizon": {
-"altitude": -0.09560626574338546,
-"dip": 0.09560626574338546,
+"altitude": -0.09564793522259316,
+"dip": 0.09564793522259316,
 "kind": "sea"
 },
 "refraction": {
-"atHorizon": 0.5874350322832153,
+"atHorizon": 0.5874442846216473,
 "pressureHpa": 1010.0,
 "temperatureC": 10.0
 },
-"trueLimbAltitude": -0.6830412980266007
+"trueLimbAltitude": -0.6830922198442405
 },
 "twilight": {
 "astronomical": -18,
@@ -4200,109 +4200,109 @@
 {
 "body": "sun",
 "kind": "astronomicalDawn",
-"time": "2026-07-15T07:38:01.403Z"
+"time": "2026-07-15T07:38:01.868Z"
 },
 {
 "body": "sun",
 "kind": "nauticalDawn",
-"time": "2026-07-15T08:24:43.068Z"
+"time": "2026-07-15T08:24:44.603Z"
 },
 {
 "body": "sun",
 "kind": "blueHourStart",
-"time": "2026-07-15T09:05:25.263Z"
+"time": "2026-07-15T09:05:27.437Z"
 },
 {
 "body": "sun",
 "kind": "civilDawn",
-"time": "2026-07-15T09:05:25.263Z"
+"time": "2026-07-15T09:05:27.437Z"
 },
 {
 "body": "sun",
 "kind": "blueHourEnd",
-"time": "2026-07-15T09:18:10.289Z"
+"time": "2026-07-15T09:18:12.630Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourStart",
-"time": "2026-07-15T09:18:10.289Z"
+"time": "2026-07-15T09:18:12.630Z"
 },
 {
 "body": "sun",
 "kind": "rise",
-"time": "2026-07-15T09:37:04.093Z"
+"time": "2026-07-15T09:37:06.641Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourEnd",
-"time": "2026-07-15T10:18:04.130Z"
+"time": "2026-07-15T10:18:07.123Z"
 },
 {
 "body": "moon",
 "kind": "rise",
-"time": "2026-07-15T10:50:49.289Z"
+"time": "2026-07-15T10:50:52.164Z"
 },
 {
 "body": "sun",
 "kind": "transit",
-"time": "2026-07-15T17:01:59.224Z"
+"time": "2026-07-15T17:02:03.497Z"
 },
 {
 "body": "moon",
 "kind": "transit",
-"time": "2026-07-15T18:21:53.938Z"
+"time": "2026-07-15T18:21:58.376Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourStart",
-"time": "2026-07-15T23:45:33.634Z"
+"time": "2026-07-15T23:45:39.178Z"
 },
 {
 "body": "sun",
 "kind": "set",
-"time": "2026-07-16T00:26:28.646Z"
+"time": "2026-07-16T00:26:34.631Z"
 },
 {
 "body": "sun",
 "kind": "blueHourStart",
-"time": "2026-07-16T00:45:19.558Z"
+"time": "2026-07-16T00:45:25.748Z"
 },
 {
 "body": "sun",
 "kind": "goldenHourEnd",
-"time": "2026-07-16T00:45:19.558Z"
+"time": "2026-07-16T00:45:25.748Z"
 },
 {
 "body": "sun",
 "kind": "blueHourEnd",
-"time": "2026-07-16T00:58:02.373Z"
+"time": "2026-07-16T00:58:08.728Z"
 },
 {
 "body": "sun",
 "kind": "civilDusk",
-"time": "2026-07-16T00:58:02.373Z"
+"time": "2026-07-16T00:58:08.728Z"
 },
 {
 "body": "sun",
 "kind": "nauticalDusk",
-"time": "2026-07-16T01:38:35.598Z"
+"time": "2026-07-16T01:38:42.585Z"
 },
 {
 "body": "moon",
 "kind": "set",
-"time": "2026-07-16T01:38:51.900Z"
+"time": "2026-07-16T01:38:57.553Z"
 },
 {
 "body": "sun",
 "kind": "astronomicalDusk",
-"time": "2026-07-16T02:25:01.145Z"
+"time": "2026-07-16T02:25:09.183Z"
 }
 ],
 "observer": {
-"geoidUndulation": -32.794994177773404,
+"geoidUndulation": -32.80388299295974,
 "height": -22.6,
 "heightEllipsoid": -22.6,
-"heightMsl": 10.194994177773403,
+"heightMsl": 10.203882992959741,
 "heightRef": "ellipsoid",
 "lat": 40.7127,
 "lon": -74.0059
@@ -21207,25 +21207,25 @@
 "expect": {
 "conventions": {
 "horizon": {
-"altitude": -0.09560626574338546,
-"dip": 0.09560626574338546,
+"altitude": -0.09564793522259316,
+"dip": 0.09564793522259316,
 "kind": "sea"
 },
 "refraction": {
 "pressureHpa": 1010.0,
 "temperatureC": 10.0,
-"validFrom": -0.09560626574338546
+"validFrom": -0.09564793522259316
 }
 },
 "moon": {
-"altitude": 25.50029642516292,
-"altitudeRate": -0.1772603525847384,
-"angularRadius": 0.2752553112247285,
-"apparentAltitude": 25.534328099021316,
-"azimuth": 283.04834877386145,
-"azimuthRate": 0.1373345257467189,
-"declination": 25.80067392150962,
-"distanceKm": 361649.95252844616,
+"altitude": 25.515678741371612,
+"altitudeRate": -0.17724634545738238,
+"angularRadius": 0.27525647965478406,
+"apparentAltitude": 25.549687322395606,
+"azimuth": 283.0337038722958,
+"azimuthRate": 0.1373761018798072,
+"declination": 25.80065224987048,
+"distanceKm": 361648.417380486,
 "eclipticLatitude": 4.971563879498221,
 "eclipticLongitude": 66.63304994146975,
 "phase": {
@@ -21235,13 +21235,13 @@
 "name": "waning gibbous",
 "phaseAngle": 31.82342072618985
 },
-"rightAscension": 4.201051886687515
+"rightAscension": 4.201063482382786
 },
 "observer": {
-"geoidUndulation": -32.794994177773404,
+"geoidUndulation": -32.80388299295974,
 "height": -22.6,
 "heightEllipsoid": -22.6,
-"heightMsl": 10.194994177773403,
+"heightMsl": 10.203882992959741,
 "heightRef": "ellipsoid",
 "lat": 40.7127,
 "lon": -74.0059
@@ -21254,17 +21254,17 @@
 "version": "skyfield 1.55"
 },
 "sun": {
-"altitude": 4.399421381009665,
-"altitudeRate": 0.17602928099422566,
-"angularRadius": 0.26828512195513343,
-"apparentAltitude": 4.573674681245048,
-"azimuth": 111.62970171804393,
-"azimuthRate": 0.16859065310497923,
-"declination": -13.214125982131277,
-"distanceKm": 148638097.75466433,
+"altitude": 4.383413759658339,
+"altitudeRate": 0.17601819721352013,
+"angularRadius": 0.268285118746349,
+"apparentAltitude": 4.5581280206763335,
+"azimuth": 111.61838187099185,
+"azimuthRate": 0.1685986720320102,
+"declination": -13.214126135093785,
+"distanceKm": 148638099.53242826,
 "eclipticLatitude": 0.0001884873229053763,
 "eclipticLongitude": 215.07431468228557,
-"rightAscension": 14.186128774529958
+"rightAscension": 14.186128767990272
 },
 "time": {
 "deltaT": 69.0958267,
@@ -21364,25 +21364,25 @@
 "expect": {
 "conventions": {
 "horizon": {
-"altitude": -0.09560626574338546,
-"dip": 0.09560626574338546,
+"altitude": -0.09564793522259316,
+"dip": 0.09564793522259316,
 "kind": "sea"
 },
 "refraction": {
 "pressureHpa": 950.0,
 "temperatureC": -20.0,
-"validFrom": -0.09560626574338546
+"validFrom": -0.09564793522259316
 }
 },
 "moon": {
-"altitude": 13.30463898273239,
-"altitudeRate": 0.18133826614118387,
-"angularRadius": 0.2503771814805462,
-"apparentAltitude": 13.375114134443262,
-"azimuth": 103.97788245959633,
-"azimuthRate": 0.16721324630594706,
-"declination": -1.6116536696423627,
-"distanceKm": 397584.17105010565,
+"altitude": 13.289218611268716,
+"altitudeRate": 0.18132032762075576,
+"angularRadius": 0.2503761324015421,
+"apparentAltitude": 13.359773491247708,
+"azimuth": 103.96775526598472,
+"azimuthRate": 0.1672215800455497,
+"declination": -1.6117609960957038,
+"distanceKm": 397585.83692195715,
 "eclipticLatitude": 4.77279307890019,
 "eclipticLongitude": 346.2837321279525,
 "phase": {
@@ -21392,13 +21392,13 @@
 "name": "waxing crescent",
 "phaseAngle": 156.80627144970725
 },
-"rightAscension": 23.078902690537415
+"rightAscension": 23.078901245118917
 },
 "observer": {
-"geoidUndulation": -32.794994177773404,
+"geoidUndulation": -32.80388299295974,
 "height": -22.6,
 "heightEllipsoid": -22.6,
-"heightMsl": 10.194994177773403,
+"heightMsl": 10.203882992959741,
 "heightRef": "ellipsoid",
 "lat": 40.7127,
 "lon": -74.0059
@@ -21411,17 +21411,17 @@
 "version": "skyfield 1.55"
 },
 "sun": {
-"altitude": 18.27017007716325,
-"altitudeRate": 0.15010668547460873,
-"angularRadius": 0.2699978613753298,
-"apparentAltitude": 18.32142619631518,
-"azimuth": 127.71715973120479,
-"azimuthRate": 0.20116991863637537,
-"declination": -13.647716092172523,
-"distanceKm": 147695207.5848288,
+"altitude": 18.25374556141853,
+"altitudeRate": 0.15010955265208747,
+"angularRadius": 0.2699978582010442,
+"apparentAltitude": 18.30504940262039,
+"azimuth": 127.7052808284473,
+"azimuthRate": 0.20114851400743325,
+"declination": -13.647716243103952,
+"distanceKm": 147695209.321238,
 "eclipticLatitude": 0.00014291644616584335,
 "eclipticLongitude": 323.621666275231,
-"rightAscension": 21.729799693242747
+"rightAscension": 21.729799703097868
 },
 "time": {
 "deltaT": 59.366899999999994,
@@ -21918,25 +21918,25 @@
 "expect": {
 "conventions": {
 "horizon": {
-"altitude": -0.09560626574338546,
-"dip": 0.09560626574338546,
+"altitude": -0.09564793522259316,
+"dip": 0.09564793522259316,
 "kind": "sea"
 },
 "refraction": {
 "pressureHpa": 1010.0,
 "temperatureC": 10.0,
-"validFrom": -0.09560626574338546
+"validFrom": -0.09564793522259316
 }
 },
 "moon": {
-"altitude": -3.888107969961615,
-"altitudeRate": 0.17747792428566636,
-"angularRadius": 0.26880065432115624,
+"altitude": -3.903722201929707,
+"altitudeRate": 0.17746358334770215,
+"angularRadius": 0.26879939331875546,
 "apparentAltitude": null,
-"azimuth": 106.78772657053628,
-"azimuthRate": 0.1518252346956796,
-"declination": -15.228860530615115,
-"distanceKm": 370334.1152245596,
+"azimuth": 106.77585739515798,
+"azimuthRate": 0.15184320921946645,
+"declination": -15.228914224453012,
+"distanceKm": 370335.85253793857,
 "eclipticLatitude": 0.6694140736119298,
 "eclipticLongitude": 318.674174214141,
 "phase": {
@@ -21946,13 +21946,13 @@
 "name": "last quarter",
 "phaseAngle": 105.72741347018497
 },
-"rightAscension": 21.443622539982563
+"rightAscension": 21.443617606917947
 },
 "observer": {
-"geoidUndulation": -32.794994177773404,
+"geoidUndulation": -32.80388299295974,
 "height": -22.6,
 "heightEllipsoid": -22.6,
-"heightMsl": 10.194994177773403,
+"heightMsl": 10.203882992959741,
 "heightRef": "ellipsoid",
 "lat": 40.7127,
 "lon": -74.0059
@@ -21965,17 +21965,17 @@
 "version": "skyfield 1.55"
 },
 "sun": {
-"altitude": -30.39145667240517,
-"altitudeRate": 0.10484304518072561,
-"angularRadius": 0.2652918967216212,
+"altitude": -30.39106423202806,
+"altitudeRate": 0.10476969307158542,
+"angularRadius": 0.2652918967834125,
 "apparentAltitude": null,
-"azimuth": 33.50610844869359,
-"azimuthRate": 0.25562952011194373,
-"declination": 12.435424043495773,
-"distanceKm": 150315145.98100865,
+"azimuth": 33.48485813615293,
+"azimuthRate": 0.255668908539674,
+"declination": 12.435423742500861,
+"distanceKm": 150315145.94599754,
 "eclipticLatitude": 6.539092725701359e-06,
 "eclipticLongitude": 32.80588197116041,
-"rightAscension": 2.0402981015091237
+"rightAscension": 2.040298058564921
 },
 "time": {
 "deltaT": 69.184,
@@ -22470,25 +22470,25 @@
 "expect": {
 "conventions": {
 "horizon": {
-"altitude": -0.09560626574338546,
-"dip": 0.09560626574338546,
+"altitude": -0.09564793522259316,
+"dip": 0.09564793522259316,
 "kind": "sea"
 },
 "refraction": {
 "pressureHpa": 1010.0,
 "temperatureC": 10.0,
-"validFrom": -0.09560626574338546
+"validFrom": -0.09564793522259316
 }
 },
 "moon": {
-"altitude": 28.856948763000553,
-"altitudeRate": 0.01547223343219538,
-"angularRadius": 0.28148676973158027,
-"apparentAltitude": 28.886470738110127,
-"azimuth": 176.25053700282857,
-"azimuthRate": 0.2601143072812272,
-"declination": -20.35287658324589,
-"distanceKm": 353643.93099608424,
+"altitude": 28.846595253455554,
+"altitudeRate": 0.015531021805761228,
+"angularRadius": 0.2814859747090476,
+"apparentAltitude": 28.87612968691326,
+"azimuth": 176.23158448110635,
+"azimuthRate": 0.2600831073489605,
+"declination": -20.35295329174372,
+"distanceKm": 353644.9298118581,
 "eclipticLatitude": -5.0005388247768,
 "eclipticLongitude": 320.2830039011333,
 "phase": {
@@ -22498,13 +22498,13 @@
 "name": "new",
 "phaseAngle": 171.33878115924873
 },
-"rightAscension": 21.627457304896318
+"rightAscension": 21.62747412008963
 },
 "observer": {
-"geoidUndulation": -32.794994177773404,
+"geoidUndulation": -32.80388299295974,
 "height": -22.6,
 "heightEllipsoid": -22.6,
-"heightMsl": 10.194994177773403,
+"heightMsl": 10.203882992959741,
 "heightRef": "ellipsoid",
 "lat": 40.7127,
 "lon": -74.0059
@@ -22517,17 +22517,17 @@
 "version": "skyfield 1.55"
 },
 "sun": {
-"altitude": 32.244974865568075,
-"altitudeRate": -0.019299512932141858,
-"angularRadius": 0.2704997204253862,
-"apparentAltitude": 32.270803631089166,
-"azimuth": 185.90579667452795,
-"azimuthRate": 0.28196308243848306,
-"declination": -16.847886323470068,
-"distanceKm": 147421188.16455048,
+"altitude": 32.237010337281895,
+"altitudeRate": -0.019228710869749373,
+"angularRadius": 0.27049971905347836,
+"apparentAltitude": 32.26284698057543,
+"azimuth": 185.88511215513927,
+"azimuthRate": 0.28194512216912054,
+"declination": -16.847886550513767,
+"distanceKm": 147421188.9122344,
 "eclipticLatitude": -0.00025481480674483816,
 "eclipticLongitude": 313.2274916224164,
-"rightAscension": 21.046178173793965
+"rightAscension": 21.046178215492233
 },
 "time": {
 "deltaT": 69.184,
@@ -23022,25 +23022,25 @@
 "expect": {
 "conventions": {
 "horizon": {
-"altitude": -0.09560626574338546,
-"dip": 0.09560626574338546,
+"altitude": -0.09564793522259316,
+"dip": 0.09564793522259316,
 "kind": "sea"
 },
 "refraction": {
 "pressureHpa": 1030.0,
 "temperatureC": 25.0,
-"validFrom": -0.09560626574338546
+"validFrom": -0.09564793522259316
 }
 },
 "moon": {
-"altitude": -49.34387037215824,
-"altitudeRate": -0.11723574019228446,
-"angularRadius": 0.24323023773386968,
+"altitude": -49.32809869125356,
+"altitudeRate": -0.11725785728705987,
+"angularRadius": 0.243230925645947,
 "apparentAltitude": null,
-"azimuth": 318.81093671079975,
-"azimuthRate": 0.318994698315728,
-"declination": -7.067974880644483,
-"distanceKm": 409266.49271545396,
+"azimuth": 318.7948112922417,
+"azimuthRate": 0.3188745355945327,
+"declination": -7.068106610789105,
+"distanceKm": 409265.3352241885,
 "eclipticLatitude": -5.089445136924294,
 "eclipticLongitude": 355.23769134570625,
 "phase": {
@@ -23050,13 +23050,13 @@
 "name": "first quarter",
 "phaseAngle": 77.62713994593648
 },
-"rightAscension": 23.823982834664783
+"rightAscension": 23.823972849024557
 },
 "observer": {
-"geoidUndulation": -32.794994177773404,
+"geoidUndulation": -32.80388299295974,
 "height": -22.6,
 "heightEllipsoid": -22.6,
-"heightMsl": 10.194994177773403,
+"heightMsl": 10.203882992959741,
 "heightRef": "ellipsoid",
 "lat": 40.7127,
 "lon": -74.0059
@@ -23069,17 +23069,17 @@
 "version": "skyfield 1.55"
 },
 "sun": {
-"altitude": -21.54378878087574,
-"altitudeRate": 0.18559743822708213,
-"angularRadius": 0.27048989627384423,
+"altitude": -21.558886340134897,
+"altitudeRate": 0.1855805835407639,
+"angularRadius": 0.2704898934032657,
 "apparentAltitude": null,
-"azimuth": 101.51994264539698,
-"azimuthRate": 0.14812887397219127,
-"declination": -22.352026868333347,
-"distanceKm": 147426542.47949156,
+"azimuth": 101.50575954957002,
+"azimuthRate": 0.14816869489287873,
+"declination": -22.35202695570444,
+"distanceKm": 147426544.0440582,
 "eclipticLatitude": -0.0001684939621153482,
 "eclipticLongitude": 252.9622860617016,
-"rightAscension": 16.768827079242282
+"rightAscension": 16.76882705190064
 },
 "time": {
 "deltaT": 69.184,
@@ -23575,25 +23575,25 @@
 "expect": {
 "conventions": {
 "horizon": {
-"altitude": -0.09560626574338546,
-"dip": 0.09560626574338546,
+"altitude": -0.09564793522259316,
+"dip": 0.09564793522259316,
 "kind": "sea"
 },
 "refraction": {
 "pressureHpa": 1010.0,
 "temperatureC": 10.0,
-"validFrom": -0.09560626574338546
+"validFrom": -0.09564793522259316
 }
 },
 "moon": {
-"altitude": 55.28895977643207,
-"altitudeRate": -0.17001610043392612,
-"angularRadius": 0.27871777052320457,
-"apparentAltitude": 55.30028846960525,
-"azimuth": 245.75704855875264,
-"azimuthRate": 0.2633097361372456,
-"declination": 21.028283351359537,
-"distanceKm": 357157.2768565448,
+"altitude": 55.29752361733477,
+"altitudeRate": -0.16995052312423503,
+"angularRadius": 0.27871818944405563,
+"apparentAltitude": 55.308848696103695,
+"azimuth": 245.72461923451252,
+"azimuthRate": 0.263498044273437,
+"declination": 21.02818043835866,
+"distanceKm": 357156.7400438937,
 "eclipticLatitude": 4.399075465474379,
 "eclipticLongitude": 131.97506704005184,
 "phase": {
@@ -23603,13 +23603,13 @@
 "name": "full",
 "phaseAngle": 18.14922390259582
 },
-"rightAscension": 9.019305520863135
+"rightAscension": 9.019324183548235
 },
 "observer": {
-"geoidUndulation": -32.794994177773404,
+"geoidUndulation": -32.80388299295974,
 "height": -22.6,
 "heightEllipsoid": -22.6,
-"heightMsl": 10.194994177773403,
+"heightMsl": 10.203882992959741,
 "heightRef": "ellipsoid",
 "lat": 40.7127,
 "lon": -74.0059
@@ -23622,17 +23622,17 @@
 "version": "skyfield 1.55"
 },
 "sun": {
-"altitude": -57.12959044760318,
-"altitudeRate": 0.10223466495448028,
-"angularRadius": 0.2697996642580968,
+"altitude": -57.128925482499874,
+"altitudeRate": 0.10211706499876273,
+"angularRadius": 0.2697996643285023,
 "apparentAltitude": null,
-"azimuth": 32.56388757628895,
-"azimuthRate": 0.41004194057518656,
-"declination": -11.593547307882849,
-"distanceKm": 147803705.73456866,
+"azimuth": 32.526852458800825,
+"azimuthRate": 0.4101340440648684,
+"declination": -11.593547628652402,
+"distanceKm": 147803705.6959986,
 "eclipticLatitude": 0.00020473819216869515,
 "eclipticLongitude": 329.6343823212873,
-"rightAscension": 22.115833403475673
+"rightAscension": 22.115833360434614
 },
 "time": {
 "deltaT": 68.30969999999999,
@@ -24127,25 +24127,25 @@
 "expect": {
 "conventions": {
 "horizon": {
-"altitude": -0.09560626574338546,
-"dip": 0.09560626574338546,
+"altitude": -0.09564793522259316,
+"dip": 0.09564793522259316,
 "kind": "sea"
 },
 "refraction": {
 "pressureHpa": 1010.0,
 "temperatureC": 10.0,
-"validFrom": -0.09560626574338546
+"validFrom": -0.09564793522259316
 }
 },
 "moon": {
-"altitude": -51.96322406524183,
-"altitudeRate": 0.1477337307531164,
-"angularRadius": 0.27089971597063567,
+"altitude": -51.96912266586534,
+"altitudeRate": 0.14765823350989593,
+"angularRadius": 0.270899412213458,
 "apparentAltitude": null,
-"azimuth": 56.20533183843451,
-"azimuthRate": 0.28560671704457824,
-"declination": -14.70365351775017,
-"distanceKm": 367464.6090289805,
+"azimuth": 56.17457095238347,
+"azimuthRate": 0.2857466093353156,
+"declination": -14.703764206876933,
+"distanceKm": 367465.02106081136,
 "eclipticLatitude": 4.56281369538531,
 "eclipticLongitude": 233.60043560240698,
 "phase": {
@@ -24155,13 +24155,13 @@
 "name": "waning crescent",
 "phaseAngle": 135.39237278088234
 },
-"rightAscension": 15.520587047577017
+"rightAscension": 15.520569460855782
 },
 "observer": {
-"geoidUndulation": -32.794994177773404,
+"geoidUndulation": -32.80388299295974,
 "height": -22.6,
 "heightEllipsoid": -22.6,
-"heightMsl": 10.194994177773403,
+"heightMsl": 10.203882992959741,
 "heightRef": "ellipsoid",
 "lat": 40.7127,
 "lon": -74.0059
@@ -24174,17 +24174,17 @@
 "version": "skyfield 1.55"
 },
 "sun": {
-"altitude": -68.9645461756105,
-"altitudeRate": -0.1160958839186942,
-"angularRadius": 0.27103623070124727,
+"altitude": -68.94884774961781,
+"altitudeRate": -0.11614304835773787,
+"angularRadius": 0.27103623185703224,
 "apparentAltitude": null,
-"azimuth": 322.19411164964924,
-"azimuthRate": 0.5522606007134556,
-"declination": -23.184052897841756,
-"distanceKm": 147129371.15497473,
+"azimuth": 322.1697787030384,
+"azimuthRate": 0.5517905274909396,
+"declination": -23.184053344788992,
+"distanceKm": 147129370.52756813,
 "eclipticLatitude": 2.7604879421892196e-05,
 "eclipticLongitude": 277.92164848272233,
-"rightAscension": 18.574802014004355
+"rightAscension": 18.574801978398202
 },
 "time": {
 "deltaT": 69.184,
@@ -24679,25 +24679,25 @@
 "expect": {
 "conventions": {
 "horizon": {
-"altitude": -0.09560626574338546,
-"dip": 0.09560626574338546,
+"altitude": -0.09564793522259316,
+"dip": 0.09564793522259316,
 "kind": "sea"
 },
 "refraction": {
 "pressureHpa": 950.0,
 "temperatureC": 35.0,
-"validFrom": -0.09560626574338546
+"validFrom": -0.09564793522259316
 }
 },
 "moon": {
-"altitude": 51.899793296906324,
-"altitudeRate": 0.06020513267655463,
-"angularRadius": 0.2769821059949571,
-"apparentAltitude": 51.91087492097746,
-"azimuth": 162.59665043222716,
-"azimuthRate": 0.3837614545311989,
-"declination": 3.831952039094771,
-"distanceKm": 359395.32880459394,
+"altitude": 51.88660424527896,
+"altitudeRate": 0.06027330073982997,
+"angularRadius": 0.27698141818573535,
+"apparentAltitude": 51.89769111593745,
+"azimuth": 162.57192279140133,
+"azimuthRate": 0.3836197204558576,
+"declination": 3.8318160698871675,
+"distanceKm": 359396.2212597534,
 "eclipticLatitude": -1.8591100232542164,
 "eclipticLongitude": 15.618669829309692,
 "phase": {
@@ -24707,13 +24707,13 @@
 "name": "waxing gibbous",
 "phaseAngle": 28.418759182586548
 },
-"rightAscension": 1.0163659995184633
+"rightAscension": 1.0163804024997636
 },
 "observer": {
-"geoidUndulation": -32.794994177773404,
+"geoidUndulation": -32.80388299295974,
 "height": -22.6,
 "heightEllipsoid": -22.6,
-"heightMsl": 10.194994177773403,
+"heightMsl": 10.203882992959741,
 "heightRef": "ellipsoid",
 "lat": 40.7127,
 "lon": -74.0059
@@ -24726,17 +24726,17 @@
 "version": "skyfield 1.55"
 },
 "sun": {
-"altitude": -49.65963166586233,
-"altitudeRate": -0.1694358292159183,
-"angularRadius": 0.26889181934904416,
+"altitude": -49.643353912883285,
+"altitudeRate": -0.1694251186249477,
+"angularRadius": 0.26889182147719587,
 "apparentAltitude": null,
-"azimuth": 296.7109068853707,
-"azimuthRate": 0.26310506517264015,
-"declination": -16.050835119723732,
-"distanceKm": 148302727.39359528,
+"azimuth": 296.7020438670751,
+"azimuthRate": 0.2630335489514934,
+"declination": -16.050835571356135,
+"distanceKm": 148302726.21984926,
 "eclipticLatitude": 4.640138722981606e-05,
 "eclipticLongitude": 224.03803774790865,
-"rightAscension": 14.771887015169066
+"rightAscension": 14.77188699535845
 },
 "time": {
 "deltaT": 69.184,
@@ -25233,25 +25233,25 @@
 "expect": {
 "conventions": {
 "horizon": {
-"altitude": -0.09560626574338546,
-"dip": 0.09560626574338546,
+"altitude": -0.09564793522259316,
+"dip": 0.09564793522259316,
 "kind": "sea"
 },
 "refraction": {
 "pressureHpa": 1010.0,
 "temperatureC": 10.0,
-"validFrom": -0.09560626574338546
+"validFrom": -0.09564793522259316
 }
 },
 "moon": {
-"altitude": 32.37812616773655,
-"altitudeRate": -0.09742126291792448,
-"angularRadius": 0.24820511728366104,
-"apparentAltitude": 32.403823733523765,
-"azimuth": 212.39609576622345,
-"azimuthRate": 0.2606781983594303,
-"declination": -11.032668281492322,
-"distanceKm": 401063.44206388213,
+"altitude": 32.377409368248564,
+"altitudeRate": -0.09734585716254968,
+"angularRadius": 0.24820507762011307,
+"apparentAltitude": 32.40310763780809,
+"azimuth": 212.3737597375982,
+"azimuthRate": 0.26071558090024527,
+"declination": -11.032781653609826,
+"distanceKm": 401063.5061540277,
 "eclipticLatitude": 2.9558876891490575,
 "eclipticLongitude": 325.158399667234,
 "phase": {
@@ -25261,13 +25261,13 @@
 "name": "last quarter",
 "phaseAngle": 111.0417051455878
 },
-"rightAscension": 21.740337867253434
+"rightAscension": 21.740353863570412
 },
 "observer": {
-"geoidUndulation": -32.794994177773404,
+"geoidUndulation": -32.80388299295974,
 "height": -22.6,
 "heightEllipsoid": -22.6,
-"heightMsl": 10.194994177773403,
+"heightMsl": 10.203882992959741,
 "heightRef": "ellipsoid",
 "lat": 40.7127,
 "lon": -74.0059
@@ -25280,17 +25280,17 @@
 "version": "skyfield 1.55"
 },
 "sun": {
-"altitude": 46.56099027732578,
-"altitudeRate": 0.16618080602971128,
-"angularRadius": 0.26516227743434784,
-"apparentAltitude": 46.57646785746398,
-"azimuth": 118.85883718799661,
-"azimuthRate": 0.25944603850112025,
-"declination": 12.82299783236462,
-"distanceKm": 150388624.54016486,
+"altitude": 46.544635518016534,
+"altitudeRate": 0.16617301010229174,
+"angularRadius": 0.2651622752260719,
+"apparentAltitude": 46.56012192277156,
+"azimuth": 118.84904551774802,
+"azimuthRate": 0.25937842031854175,
+"declination": 12.822997412216203,
+"distanceKm": 150388625.79260388,
 "eclipticLatitude": 6.933553603143624e-05,
 "eclipticLongitude": 33.93974325922271,
-"rightAscension": 2.1131385473150246
+"rightAscension": 2.1131385657741726
 },
 "time": {
 "deltaT": 69.184,
@@ -25784,25 +25784,25 @@
 "expect": {
 "conventions": {
 "horizon": {
-"altitude": -0.09560626574338546,
-"dip": 0.09560626574338546,
+"altitude": -0.09564793522259316,
+"dip": 0.09564793522259316,
 "kind": "sea"
 },
 "refraction": {
 "pressureHpa": 1010.0,
 "temperatureC": 10.0,
-"validFrom": -0.09560626574338546
+"validFrom": -0.09564793522259316
 }
 },
 "moon": {
-"altitude": -20.741138754965128,
-"altitudeRate": -0.09580157491538739,
-"angularRadius": 0.270055021531398,
+"altitude": -20.72609749863702,
+"altitudeRate": -0.09582563491717519,
+"angularRadius": 0.2700561752873163,
 "apparentAltitude": null,
-"azimuth": 327.90070265076133,
-"azimuthRate": 0.21197483195129865,
-"declination": 21.692814722138724,
-"distanceKm": 368613.97851953324,
+"azimuth": 327.88677760874987,
+"azimuthRate": 0.2119424457595947,
+"declination": 21.692779719266486,
+"distanceKm": 368612.40370862785,
 "eclipticLatitude": -0.6334000700188734,
 "eclipticLongitude": 98.59594688297011,
 "phase": {
@@ -25812,13 +25812,13 @@
 "name": "waxing crescent",
 "phaseAngle": 118.95151802494082
 },
-"rightAscension": 6.591544224569143
+"rightAscension": 6.591534113873677
 },
 "observer": {
-"geoidUndulation": -32.794994177773404,
+"geoidUndulation": -32.80388299295974,
 "height": -22.6,
 "heightEllipsoid": -22.6,
-"heightMsl": 10.194994177773403,
+"heightMsl": 10.203882992959741,
 "heightRef": "ellipsoid",
 "lat": 40.7127,
 "lon": -74.0059
@@ -25831,17 +25831,17 @@
 "version": "skyfield 1.55"
 },
 "sun": {
-"altitude": -28.053215238969223,
-"altitudeRate": 0.10821287096187127,
-"angularRadius": 0.2647439682446756,
+"altitude": -28.053177708543167,
+"altitudeRate": 0.10814228031041952,
+"angularRadius": 0.2647439682463287,
 "apparentAltitude": null,
-"azimuth": 34.7423934065563,
-"azimuthRate": 0.24593511599769124,
-"declination": 14.067175038584645,
-"distanceKm": 150626246.36053878,
+"azimuth": 34.72202162694749,
+"azimuthRate": 0.24597489480867984,
+"declination": 14.067174733913154,
+"distanceKm": 150626246.35959825,
 "eclipticLatitude": -8.612693729965203e-05,
 "eclipticLongitude": 37.66838341948757,
-"rightAscension": 2.354044232107001
+"rightAscension": 2.3540441890635977
 },
 "time": {
 "deltaT": 52.845099999999995,
