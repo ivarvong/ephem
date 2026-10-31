@@ -12,9 +12,14 @@ def query(view: str, minutes: float, filters: list | None = None, limit: int = 1
     params = {"filters": [{"key": "$metadata.service", "operation": "eq", "type": "string", "value": service or SERVICE}, *(filters or [])]}
     params.update(extra or {})
     body = {"queryId": "adhoc", "timeframe": {"from": window[0], "to": window[1]} if window else {"from": now - int(minutes * 60_000), "to": now}, "view": view, "limit": limit, "parameters": params}
-    out = subprocess.run(["cf", "o11y", "telemetry", "query", "--body", json.dumps(body)], capture_output=True, text=True)
+    # 3 attempts: a transient API 500 ("[10500] Internal authentication error") failed a live gate and rolled back a good
+    # version (53b208a8, 2026-10-31). Still fails closed after the last attempt.
+    for attempt in range(3):
+        out = subprocess.run(["cf", "o11y", "telemetry", "query", "--body", json.dumps(body)], capture_output=True, text=True)
+        if out.returncode == 0: break
+        time.sleep(1 + 2 * attempt)
     if out.returncode != 0:
-        raise SystemExit(f"cf o11y telemetry query failed:\n{out.stderr or out.stdout}")
+        raise SystemExit(f"cf o11y telemetry query failed (3 attempts):\n{out.stderr or out.stdout}")
     return json.loads(out.stdout)
 
 

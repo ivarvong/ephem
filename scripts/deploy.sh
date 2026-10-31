@@ -185,6 +185,7 @@ if [ "${EPHEM_DEPLOY_LIVE:-}" = 1 ]; then
     R="ok"; echo "== live verdict: ok for $SHA ($NEW) after ${W}s"
   else
     why=$( { grep -h '^   FAIL' "$WT/.w-live" "$WT/.w-canary" 2>/dev/null || true; } | head -1 | sed 's/^ *FAIL *//' | cut -c1-140)
+    [ -n "$why" ] || why=$( { grep -hE 'failed|Error|exit [1-9]' "$WT/.w-live" "$WT/.w-canary" 2>/dev/null || true; } | head -1 | cut -c1-140)
     cur=$(active ephem || true)
     if [ "$cur" = "$NEW" ]; then
       rollback_ephem "live gate failed"
