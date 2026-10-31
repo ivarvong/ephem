@@ -880,6 +880,24 @@ scratchpad `journey/`):
 - `cloudflare.config.ts` pipeline bindings for new streams: a version upload once failed with `[10021] Pipeline binding error`
   (transient; the retry deployed).
 
+## Homepage (`/`, src/home.ts, 2026-10-31)
+
+- **One round trip.** GET / flushes the head (CSS, inline dot fonts, markup, boot script) at once, then streams
+  `<script type="application/json" id="ephem-position|ephem-track|ephem-day">` with the API's own response bodies, run
+  through the router in-process (src/embed.ts, shared with /instrument), then `</body>`. The page boots on DOMContentLoaded
+  from the embed and fetches only what is missing (and weather). Span `home.embed` (attribute `home.embedded`: how many of
+  the three made it). Mark `ephem:embedded` (all three used) or `ephem:fetched`.
+- **Debug states:** `/?lat=&lon=&tz=&place=&at=<ISO>[&pose=<az>,<alt>]` freezes the page clock at `at` and asks
+  `/v1/position?time=` (the embed is ignored). Real visitors never send it; `/` stays `private, no-store`.
+  `node --experimental-strip-types scripts/obs/home-states.ts <base> <outDir> [filter]` shoots every sky state of the UI
+  acceptance list (AGENTS.md) at 390×844, 375×667 and 1440×900 in both schemes and prints `window.__sky`'s layout per shot.
+- **The chart draws only on change** (requestDraw: data, resize, theme, drag, pointing, fonts; once a second the tick checks
+  whether a live marker, moved on by the answer's own rates, has moved half a pixel; at most once a minute otherwise). No
+  rAF loop. `window.__sky.draws` counts frames. Idle cost from a journey: `python3 -I scripts/obs/journey-idle.py <name>.model.json`
+  (top-level main-thread task time after data drawn + 6 s).
+- **Labels:** one layout (`chartModel` + `layoutLabels` in CORE_JS) over bodies, events, bands and the scale;
+  test/home.test.ts runs it over every sky state from the API's own answers (fixture blocks) at both phone sizes.
+
 ## Request logs (Basin)
 
 One row per request in an Iceberg table, queryable with SQL: **Basin Pipelines** (stream) → **Basin Catalog** (Iceberg on

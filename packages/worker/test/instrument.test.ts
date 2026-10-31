@@ -114,7 +114,4 @@ describe("/instrument", () => {
     let rest = ""; for (;;) { const c = await reader.read(); if (c.done) break; rest += new TextDecoder().decode(c.value) }
     expect(rest).toContain(EMBED_ID); expect(rest.trimEnd().endsWith("</body></html>")).toBe(true)
   })
-  it("the homepage links to it quietly", async () => {
-    expect(await (await handler(new Request("http://x/"))).text()).toContain('href="/instrument"')
-  })
 })

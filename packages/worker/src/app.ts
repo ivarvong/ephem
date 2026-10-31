@@ -11,6 +11,7 @@ import { GeoidInstalled, type Geoid } from "./geoid.ts"
 import { TracerLive } from "./trace.ts"
 import { Gateway, type Role } from "./responses.ts"
 import { Home } from "./home.ts"
+import { Fonts } from "./fonts.ts"
 import { Instrument } from "./instrument.ts"
 import { WeatherNone, type Weather } from "./weather.ts"
 import { Mcp } from "./mcp.ts"
@@ -35,6 +36,7 @@ export const makeApp = (blocks: Layer.Layer<Blocks>, edge: Role = { role: "local
   provideApp(Layer.mergeAll(
     HttpApiBuilder.layer(EphemApi, { openapiPath: "/openapi.json" }),
     Home,
+    Fonts,   // /fonts/<sha>/<file>: the page's faces, immutable (src/fonts.ts)
     Instrument,
     Rum,   // POST /rum: browser RUM batches → Basin ephem_rum (src/rum.ts)
     Docs,

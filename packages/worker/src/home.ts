@@ -7,6 +7,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest"
 import { isValidZone } from "@ephem/core"
 import { RUM_JS } from "./rum.ts"
 import { ICON_LINK } from "./favicon.ts"
+import { FONTS, SOFIA_RANGES, fontUrl } from "./fonts.ts"
 import { READ_EMBED_JS, jsonScript, routeText, streamHtml } from "./embed.ts"
 import { CLIENT_TRACE_JS, documentTrace, documentTraceHeaders, traceparentMeta, type DocumentTrace } from "./clienttrace.ts"
 
@@ -53,6 +54,8 @@ export const initialQueries = (v: Visitor, now: number) => {
   } as const satisfies Record<string, readonly [string, Record<string, string>]>
 }
 
+/** An answer slower than this is left out and the page fetches it (a cold Api isolate's /v1/day or /v1/track MISS is ~200–350 ms). */
+const EMBED_TIMEOUT_MS = 1500
 // GET /: the head (CSS, markup, boot script) is flushed at once; the three first-load answers follow, computed in-process
 // through the router (src/embed.ts), then </body>. An answer that is not a 200 is left out and the page fetches it.
 export const Home = HttpRouter.use(router => router.add("GET", "/", req => Effect.gen(function* () {
@@ -62,7 +65,8 @@ export const Home = HttpRouter.use(router => router.add("GET", "/", req => Effec
     const v = visitor(url, (req.source as { cf?: CfLocation }).cf)
     yield* Effect.annotateCurrentSpan({ "home.source": v.source, "home.colo": v.colo ?? "", "home.tz": v.tz })
     const embeds = Effect.forEach(Object.entries(initialQueries(v, Date.now())), ([id, [path, query]]) =>
-      routeText(router, req, path, query, tid.traceparent).pipe(Effect.map(r => (r.status === 200 ? jsonScript(id, r.text) : ""))), { concurrency: "unbounded" })
+      routeText(router, req, path, query, tid.traceparent).pipe(Effect.timeoutOption(EMBED_TIMEOUT_MS),
+        Effect.map(o => (o._tag === "Some" && o.value.status === 200 ? jsonScript(id, o.value.text) : ""))), { concurrency: "unbounded" })
     const tail = embeds.pipe(
       Effect.tap(parts => Effect.annotateCurrentSpan({ "home.embedded": parts.filter(Boolean).length })),
       Effect.withSpan("home.embed"),
@@ -72,6 +76,13 @@ export const Home = HttpRouter.use(router => router.add("GET", "/", req => Effec
   }).pipe(Effect.withSpan("home"))
 })))
 
+// Fonts (design system "RPN Instrument", src/fonts.ts): the two dot faces inline (2.6 + 1.7 KB: no request, no
+// swap); Sofia Sans Condensed by its immutable /fonts URLs with swap: the core subset (preloaded) and, for any other code
+// point (an accented place name), the full legend file, which a browser fetches only if the page shows one.
+const HOME_FONTS = ["RPN Dot", "RPN Dot Small"].map((f, i) => `@font-face{font-family:"${f}";src:url("data:font/woff2;base64,${FONTS[i ? "RPNDotSmall-Regular.woff2" : "RPNDot-Regular.woff2"]!.b64}") format("woff2");font-display:block}`).join("") +
+  `@font-face{font-family:"Sofia Sans Condensed";src:url("${fontUrl("SofiaSansCondensed-Core.woff2")}") format("woff2");font-weight:400 800;font-display:swap;unicode-range:${SOFIA_RANGES.core}}` +
+  `@font-face{font-family:"Sofia Sans Condensed";src:url("${fontUrl("SofiaSansCondensed-Legend.woff2")}") format("woff2");font-weight:400 800;font-display:swap;unicode-range:${SOFIA_RANGES.rest}}`
+const HOME_PRELOAD = `<link rel="preload" href="${fontUrl("SofiaSansCondensed-Core.woff2")}" as="font" type="font/woff2" crossorigin>`
 const json = (x: unknown) => JSON.stringify(x).replace(/</g, "\\u003c")
 
 /**
@@ -89,6 +100,9 @@ function countdown(ms) {
   var m = Math.round(s / 60), h = Math.floor(m / 60); m = m % 60;
   return "in " + (h ? h + " h" + (m ? " " + m + " min" : "") : m + " min");
 }
+// Mission-clock countdown: "T-01:05:23" (ASCII minus, as on the glass).
+function tminus(ms) { var s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60; s = s % 60;
+  return "T-" + (h < 10 ? "0" : "") + h + ":" + (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s; }
 function ago(s) {
   s = Math.max(0, Math.round(s));
   if (s < 90) return s + " s ago";
@@ -251,6 +265,132 @@ function trackEvents(s, h0) {
   }
   return out.sort(function (x, y) { return x.t - y.t; });
 }
+// ---- the chart model and its label layout: pure (no canvas), so test/home.test.ts runs them over every sky state ----
+var CH_TOP = 14, CH_AXIS = 20;
+function chartGeom(W, H, insetL, insetR) {
+  var ky = (H - CH_TOP - CH_AXIS) / (U_TOP - U_BOT);
+  return { W: W, H: H, kx: W / 360, ky: ky, top: CH_TOP, hy: Math.round(CH_TOP + U_TOP * ky) + 0.5, bot: H - CH_AXIS, x0: 4 + (insetL || 0), x1: W - 4 - (insetR || 0) };
+}
+function chX(az, g, c) { return g.W / 2 + wrap180(az - c) * g.kx; }
+function chY(alt, g) { return g.top + (U_TOP - altU(alt)) * g.ky; }
+function chXs(az, g, c) { var x = chX(az, g, c), r = [x], s = 360 * g.kx; if (x - s >= -40) r.push(x - s); if (x + s <= g.W + 40) r.push(x + s); return r; }
+// One track as screen points: unwrapped so it crosses the seam as one line, at every 360° offset that lands on the chart.
+// pts [{t, az, alt}] in time order. split: index of the first point after now (past = before it, future = from split - 1).
+function trackLines(pts, g, c, now) {
+  var az = unwrapAz(pts.map(function (p) { return p.az; })), xs = [], ys = [], lo = Infinity, hi = -Infinity, split = pts.length;
+  for (var i = 0; i < pts.length; i++) {
+    var x = g.W / 2 + (az[i] - c) * g.kx; xs.push(x); ys.push(chY(pts[i].alt, g)); lo = Math.min(lo, x); hi = Math.max(hi, x);
+    if (split === pts.length && pts[i].t > now) split = i;
+  }
+  var span = 360 * g.kx, offs = [];
+  for (var o = Math.floor(-hi / span) - 1; o <= Math.ceil((g.W - lo) / span) + 1; o++) if (hi + o * span >= 0 && lo + o * span <= g.W) offs.push(o * span);
+  var segs = [];
+  offs.forEach(function (dx) { for (var j = 1; j < xs.length; j++) segs.push([xs[j - 1] + dx, ys[j - 1], xs[j] + dx, ys[j]]); });
+  return { xs: xs, ys: ys, offs: offs, split: split, segs: segs };
+}
+// Candidate spots for a label around an anchor, nearest first: above, beside, below, then the diagonals, at growing distances.
+function spotsAround(it) {
+  var out = [], w = it.w, h = it.h;
+  (it.body ? [1, 1.7, 2.6, 3.8, 5.4, 7.5, 10] : [1, 1.7, 2.6, 3.8]).forEach(function (m) {   // an event label stays by its marker, or goes
+    var d = (it.r || 0) + 5 * m, e = d * 0.72;
+    out.push([it.x - w / 2, it.y - d - h], [it.x + d, it.y - h / 2], [it.x - d - w, it.y - h / 2], [it.x - w / 2, it.y + d],
+      [it.x + e, it.y - e - h], [it.x - e - w, it.y - e - h], [it.x + e, it.y + e], [it.x - e - w, it.y + e]);
+  });
+  return out;
+}
+// Spots along a horizontal line y (a ring or a band edge): from the left and right edges inward, above the line, then below.
+function spotsAlong(y, w, h, b, below) {
+  var xs = [], step = 22, mid = (b.x0 + b.x1) / 2;
+  for (var k = 0; ; k++) {
+    var l = b.x0 + 2 + k * step, r = b.x1 - 2 - w - k * step, any = false;
+    if (l + w <= mid + step) { xs.push(l); any = true; } if (r >= mid - step) { xs.push(r); any = true; } if (!any) break;
+  }
+  var out = []; (below ? [1] : [0, 1]).forEach(function (side) { xs.forEach(function (x) { out.push([x, side ? y + 3 : y - h - 3]); }); });
+  return out;
+}
+function segBox(s) { return { x: Math.min(s[0], s[2]), y: Math.min(s[1], s[3]), w: Math.abs(s[2] - s[0]), h: Math.abs(s[3] - s[1]) }; }
+// Every label goes through one layout, highest priority first. A label takes the first candidate spot (nearest first) inside the
+// bounds that touches, with pad px to spare, no hard rect (discs, markers, the horizon band, buttons), no label already placed,
+// and no path segment. A body's own label (and the scale-break note, must: true), when every spot is crossed by a path, takes the
+// nearest spot clear of everything else (crossed: true). Anything else without a clear spot is dropped: a label never lands on a higher-priority one.
+// items: {id, w, h, prio, x, y, r?, spots?, body?}. Returns [{id, x, y, w, h, dropped?, crossed?}] in priority order.
+function layoutLabels(items, hard, segs, bounds, pad) {
+  pad = pad == null ? 2 : pad;
+  var placed = [], out = [], sb = segs.map(segBox);
+  function clearOf(r, list) { for (var j = 0; j < list.length; j++) if (overlapArea(r, list[j]) > 0) return false; return true; }
+  function crossed(r) { for (var j = 0; j < segs.length; j++) if (overlapArea(r, { x: sb[j].x - 0.5, y: sb[j].y - 0.5, w: sb[j].w + 1, h: sb[j].h + 1 }) > 0 && segHitsRect(segs[j], r)) return true; return false; }
+  items.map(function (it, i) { return { it: it, i: i }; }).sort(function (a, b) { return a.it.prio - b.it.prio || a.i - b.i; }).forEach(function (o) {
+    var it = o.it, spots = it.spots || spotsAround(it), best = null, fall = null;
+    for (var k = 0; k < spots.length; k++) {
+      var x = spots[k][0], y = spots[k][1];
+      if (x < bounds.x0 || y < bounds.y0 || x + it.w > bounds.x1 || y + it.h > bounds.y1) continue;
+      var pd = it.pad == null ? pad : it.pad, r = { x: x, y: y, w: it.w, h: it.h }, gr = { x: x - pd, y: y - pd, w: it.w + 2 * pd, h: it.h + 2 * pd };
+      if (!clearOf(gr, hard) || !clearOf(gr, placed)) continue;
+      if (!crossed(gr)) { best = r; break; }
+      if ((it.body || it.must) && !fall) fall = r;
+    }
+    var r2 = best || fall;
+    if (!r2 && it.body) for (k = 0; k < spots.length && !r2; k++) {   // a body is always named: the nearest spot in bounds clear of the other labels
+      var q = { x: spots[k][0], y: spots[k][1], w: it.w, h: it.h };
+      if (q.x >= bounds.x0 && q.y >= bounds.y0 && q.x + q.w <= bounds.x1 && q.y + q.h <= bounds.y1 && clearOf(q, placed)) { r2 = q; fall = q; }
+    }
+    if (!r2) { out.push({ id: it.id, dropped: true, prio: it.prio }); return; }
+    r2.id = it.id; r2.prio = it.prio; if (!best) r2.crossed = true;
+    placed.push(r2); out.push(r2);
+  });
+  return out;
+}
+// The whole chart as geometry and labels, from plain data. st: {W, H, insetL, insetR, center, now, sunAlt, ctl (rect|null),
+// pose ({az, alt}|null), next ({body, kind, t}|null: the NEXT line's event), hm (ms → "HH:MM"), meas (text, fontKey → px),
+// LH ({fontKey: line height}), bodies: [{key, name, az, alt, labelAlt, r, pts: [{t, az, alt}], events: [{kind, t, az, alt}]}]}.
+function chartModel(st) {
+  var g = chartGeom(st.W, st.H, st.insetL, st.insetR), c = st.center, LH = st.LH, m = { g: g, lines: {}, hard: [], items: [], marks: [], discs: [], bands: [], sunBand: -1, segs: [] };
+  var minus = function (a, d) { return (a < 0 ? "\\u2212" : "") + Math.abs(a).toFixed(d) + "\\u00b0"; };
+  m.hard.push({ id: "horizon", x: -1e4, y: g.hy - 2, w: 2e4, h: 4 });
+  for (var az = 0; az < 360; az += 15) chXs(az, g, c).forEach(function (x) { m.hard.push({ id: "tick" + az, x: x - 1, y: g.hy, w: 2, h: az % 45 ? 3 : 6 }); });
+  if (st.ctl) m.hard.push(st.ctl);
+  if (st.pose) { var px = chX(st.pose.az, g, c), py = chY(st.pose.alt, g); m.pose = { x: px, y: py }; m.hard.push({ id: "pose", x: px - 21, y: py - 21, w: 42, h: 42 }); }
+  // twilight bands, each named inside itself; the Sun's band first in line for its label
+  [[0, -6, "CIVIL"], [-6, -12, "NAUTICAL"], [-12, -18, "ASTRONOMICAL"]].forEach(function (b, i) {
+    if (st.sunAlt <= b[0] && st.sunAlt > b[1]) m.sunBand = i;
+  });
+  [[0, -6, "CIVIL"], [-6, -12, "NAUTICAL"], [-12, -18, "ASTRONOMICAL"]].forEach(function (b, i) {
+    var y0 = chY(b[0], g), y1 = chY(b[1], g), on = i === m.sunBand; m.bands.push({ y0: y0, y1: y1, on: on });
+    // bottom-aligned in its band, between the horizon's compass ticks (pad 0: the band is barely taller than the text)
+    var h = LH.band, w = st.meas(b[2], "band"), yy = Math.floor(y1 - h);
+    if (y1 - y0 >= h + 1) m.items.push({ id: "band" + i, t: b[2], font: "band", role: on ? "bandOn" : "band", w: w, h: h, prio: on ? 1 : 4, pad: 0, spots: spotsAlong(yy + h + 3, w, h, g).filter(function (s, k, a) { return k < a.length / 2; }) });
+  });
+  // the scale: altitude rings, the break at -18°, the nadir
+  [30, 60].forEach(function (alt) { var w = st.meas(alt + "\\u00b0", "scale"); m.items.push({ id: "alt" + alt, t: alt + "\\u00b0", font: "scale", role: "scale", w: w, h: LH.scale, prio: 4, spots: spotsAlong(Math.round(chY(alt, g)) + 0.5, w, LH.scale, g) }); });
+  var y18 = chY(-18, g), sc = "\\u00d7\\u00bc BELOW \\u221218\\u00b0", scw = st.meas(sc, "scale");
+  if (g.bot - y18 >= LH.scale + 4) m.items.push({ id: "scale", t: sc, font: "scale", role: "scale", w: scw, h: LH.scale, prio: 0.5, must: true, spots: spotsAlong(Math.round(y18) + 0.5, scw, LH.scale, g, true).concat(spotsAlong(g.bot - 2, scw, LH.scale, g).slice(0, 40)) });
+  var nad = "\\u221290\\u00b0", nw = st.meas(nad, "scale");
+  m.items.push({ id: "nadir", t: nad, font: "scale", role: "scale", w: nw, h: LH.scale, prio: 6, spots: [[g.x1 - nw - 2, g.bot - LH.scale - 2], [g.x0 + 2, g.bot - LH.scale - 2]] });
+  // tracks, their events, the bodies
+  st.bodies.forEach(function (b) {
+    if (b.pts && b.pts.length > 1) { var tl = trackLines(b.pts, g, c, st.now); m.lines[b.key] = tl; m.segs = m.segs.concat(tl.segs); }
+    (b.events || []).forEach(function (e) {
+      var future = e.t > st.now, cross = e.kind === "rise" || e.kind === "set", ey = cross ? g.hy : chY(e.alt, g);
+      chXs(e.az, g, c).forEach(function (ex, n) {
+        m.marks.push({ key: b.key, kind: e.kind, x: ex, y: ey, future: future });
+        m.hard.push(cross ? { id: b.key + e.kind + "m", x: ex - 2, y: g.hy - 6, w: 4, h: 12 } : { id: b.key + e.kind + "m", x: ex - 3.5, y: ey - 3.5, w: 7, h: 7 });
+        if (n) return;   // one label per event
+        var isNext = st.next && st.next.body === b.key && st.next.kind === e.kind && Math.abs(st.next.t - e.t) < 40 * 60e3;
+        var t = (e.kind === "rise" ? "\\u2191" : e.kind === "set" ? "\\u2193" : "") + st.hm(e.t) + " " + (cross ? Math.round(wrap360(e.az)) % 360 + "\\u00b0" : minus(e.alt, 0));
+        var prio = isNext ? 1 : future ? (cross ? 2 : e.kind === "transit" ? 3 : 5) : (cross ? 5 : 7);
+        m.items.push({ id: b.key + "-" + e.kind + "-" + Math.round(e.t / 60e3), t: t, font: "ev", role: future ? b.key : "dim", w: st.meas(t, "ev"), h: LH.ev, x: ex, y: ey, r: 4, prio: prio });
+      });
+    });
+    var bx = chX(b.az, g, c), by = chY(b.alt, g), rr = b.r + 9, nx = (b.events || []).filter(function (e) { return e.t > st.now && (e.kind === "rise" || e.kind === "set"); })[0];
+    m.discs.push({ key: b.key, x: bx, y: by, r: b.r, below: b.alt < 0 });
+    m.hard.push({ id: b.key + "-disc", x: bx - rr, y: by - rr, w: 2 * rr, h: 2 * rr });
+    var t1 = b.name.toUpperCase() + " " + minus(b.labelAlt, 1), t2 = nx ? (nx.kind === "rise" ? "RISES " : "SETS ") + st.hm(nx.t) + " " + compass16(nx.az) : (b.labelAlt < 0 ? "STAYS DOWN" : "STAYS UP") + " NEXT 12 H";
+    m.items.push({ id: b.name, t: t1, t2: t2, font: "name", role: b.labelAlt < 0 ? b.key + "Below" : b.key, w: Math.max(st.meas(t1, "name"), st.meas(t2, "sub")), h: LH.name + LH.sub, x: bx, y: by, r: rr - 4, prio: 0, body: true });
+  });
+  m.bounds = { x0: g.x0, y0: 2, x1: g.x1, y1: g.bot - 1 };
+  return m;
+}
+function compass16(az) { return ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"][Math.round(wrap360(az) / 22.5) % 16]; }
 // Pointing: where the phone's back camera looks, from a deviceorientation event. The camera is the device's -z axis; with the
 // W3C rotation R = Rz(alpha) Rx(beta) Ry(gamma) its east/north/up components give the altitude, and its azimuth too when alpha is
 // absolute (Android's deviceorientationabsolute). iOS gives webkitCompassHeading instead. Both headings are magnetic, so the
@@ -285,97 +425,111 @@ ${traceparentMeta(trace)}
 <meta name="description" content="Where the Sun and the Moon are right now, from JPL DE440, computed on Cloudflare's edge.">
 <meta name="theme-color" content="#05070b" media="(prefers-color-scheme: dark)"><meta name="theme-color" content="#f3f4f6" media="(prefers-color-scheme: light)">
 ${ICON_LINK}
+${HOME_PRELOAD}
 <style>
-/* Mission-ops idiom: near-black, 1px hairlines, a strict grid, uppercase tracked labels, tabular mono readouts,
-   one accent (--accent) plus status colours (--ok, --caution, --alert). System fonts only: no web-font bytes. */
-:root{--bg:#05070b;--ink:#e9edf3;--muted:#8c95a7;--faint:#586174;--line:rgba(255,255,255,.09);--line2:rgba(255,255,255,.18);
---accent:#7cc4ff;--ok:#3ddc97;--caution:#ffb547;--alert:#ff6b5e;--sun:#ffc361;--moon:#d9e3ff;--maxw:1120px;
---sans:"Helvetica Neue",Helvetica,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
---mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;color-scheme:dark}
-@media (prefers-color-scheme:light){:root{--bg:#f3f4f6;--ink:#0c1016;--muted:#535c6c;--faint:#7c8595;--line:rgba(12,16,22,.11);--line2:rgba(12,16,22,.24);
---accent:#0a63bd;--ok:#0b7f55;--caution:#9a5600;--alert:#c02d1d;--sun:#a86200;--moon:#3e4f82;color-scheme:light}}
+${HOME_FONTS}
+/* One system: mission-ops structure in the RPN Instrument language (design system "RPN Instrument": tokens, RPN Dot faces,
+   Sofia Sans Condensed legends, lavender = Sun side, teal = Moon side). Dark first: the page is the instrument's case and
+   the sky is a night instrument. Light is the same system in daylight: a bench-grey page and the chart as a reflective LCD
+   glass. The readout panels are glass in both themes (the hardware does not change with the room). */
+:root{--bg:#101214;--raised:#181b1e;--ink:#ecebe7;--muted:#a8abaf;--faint:#73777c;--line:rgba(236,235,231,.10);--line2:rgba(236,235,231,.22);
+--bezel:#2a2e31;--rim:#202326;--lcd:#bec997;--lcd-margin:#cacc94;--lcd-ghost:#aebf93;--lcd-ink:#1a313e;
+--sun:#cec8fb;--moon:#8fe6e2;--sun-pad:#a39bdc;--moon-pad:#6cd1d1;--glyph:#141a29;--accent:#8fe6e2;
+--ok:#3ddc97;--caution:#ffb547;--alert:#ff6b5e;--maxw:1120px;
+--legend:"Sofia Sans Condensed","Avenir Next Condensed","Arial Narrow",-apple-system,system-ui,sans-serif;
+--sans:-apple-system,BlinkMacSystemFont,"Helvetica Neue","Segoe UI",Roboto,Arial,sans-serif;
+--dot:"RPN Dot",ui-monospace,"SF Mono",Menlo,monospace;--dots:"RPN Dot Small","RPN Dot",ui-monospace,monospace;
+--mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;color-scheme:dark}
+@media (prefers-color-scheme:light){:root{--bg:#eae9e6;--raised:#f7f7f4;--ink:#1d2022;--muted:#55585c;--faint:#6b6f73;--line:rgba(29,32,34,.12);--line2:rgba(29,32,34,.28);
+--sun:#5a4fae;--moon:#0d6e6c;--accent:#0d6e6c;--ok:#0b7f55;--caution:#9a5600;--alert:#c02d1d;color-scheme:light}}
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--sans);-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 .num,.tn{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:0}
-.lbl{font:500 11px/1.3 var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.lbl{font:700 11px/1.2 var(--legend);letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
 .gut{padding-left:max(16px,env(safe-area-inset-left),calc((100% - var(--maxw)) / 2));padding-right:max(16px,env(safe-area-inset-right),calc((100% - var(--maxw)) / 2))}
-/* the page header, then the sky chart: an instrument display, always dark (it is the sky), framed like the cards below */
-.hero{padding-top:max(14px,env(safe-area-inset-top));padding-bottom:12px}
-.sky{padding-top:0;padding-bottom:0}
-.scr{position:relative;height:clamp(232px,40svh,460px);border:1px solid var(--line);border-radius:2px;overflow:hidden;background:#05070b;touch-action:pan-y;cursor:grab;user-select:none;-webkit-user-select:none}
-.scr:active{cursor:grabbing}
-.scr canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
-.top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
-.brand{display:flex;align-items:center;gap:14px;font:600 11px/1 var(--sans);letter-spacing:.22em;color:var(--ink)}
-.live{display:inline-flex;align-items:center;gap:6px;font:500 10px/1 var(--sans);letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
-.live i{width:6px;height:6px;border-radius:50%;background:var(--muted)}
-.live.ok i{background:var(--ok)}.live.caution i{background:var(--caution)}.live.alert i{background:var(--alert)}.live.alert{color:var(--alert)}
-h1{font:500 clamp(30px,4.8vw,56px)/1.05 var(--sans);letter-spacing:-.025em;margin:12px 0 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-h1.coords{font-size:clamp(22px,3.4vw,44px);font-family:var(--mono);letter-spacing:-.02em;margin-top:14px}
+/* header: brand, live, place, the clock in dots */
+.hero{padding-top:max(12px,env(safe-area-inset-top));padding-bottom:10px}
+.top{display:flex;justify-content:space-between;align-items:flex-end;gap:12px}
+.brand{display:flex;align-items:center;gap:12px;font:800 12px/1 var(--legend);letter-spacing:.28em;color:var(--ink)}
+.live{display:inline-flex;align-items:center;gap:6px;font:700 10.5px/1 var(--legend);letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+.live i{width:7px;height:7px;border-radius:50%;background:var(--faint)}
+.live.ok i{background:var(--ok);box-shadow:0 0 6px var(--ok)}.live.caution i{background:var(--caution)}.live.caution{color:var(--caution)}.live.alert i{background:var(--alert)}.live.alert{color:var(--alert)}
+h1{font:800 clamp(28px,4.4vw,52px)/1 var(--legend);letter-spacing:.01em;text-transform:uppercase;margin:8px 0 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+h1.coords{font:400 20px/1.2 var(--dot);text-transform:none;margin-top:12px}
 .now{text-align:right;flex:none}
-.now .lbl{display:block;margin-top:2px}
-.clock{font:400 clamp(24px,2.6vw,32px)/1 var(--mono);font-variant-numeric:tabular-nums;margin-top:6px}
-.ctl{position:absolute;top:0;right:0;z-index:2;display:flex}
-.ctl button{min-height:44px;font:500 10px/1 var(--sans);letter-spacing:.14em;text-transform:uppercase;color:#eef1f6;background:transparent;border:0;padding:0 12px;cursor:pointer}
-.ctl button span{display:inline-block;padding:6px 9px;background:rgba(5,7,11,.72);border:1px solid rgba(255,255,255,.24);border-radius:2px}
-.ctl button:hover span{border-color:#eef1f6}
-.bottom{max-width:42rem;padding-top:14px;padding-bottom:4px}
-.guide{margin:0 0 10px;font:12.5px/1.5 var(--mono);color:var(--accent);white-space:pre-line}
-.lede{font:400 clamp(19px,2.3vw,26px)/1.3 var(--sans);letter-spacing:-.01em;margin:0;text-wrap:pretty}
-.next{margin:10px 0 0;font:14px/1.45 var(--sans);color:var(--muted);display:flex;gap:12px;align-items:baseline}
-.next .lbl{flex:none;color:var(--accent)}
-.next b{color:var(--ink);font-weight:500}
+.now .lbl{display:block}
+.clock{font:400 20px/16px var(--dot);margin-top:8px;white-space:nowrap}
+/* the sky: full bleed, the page's hero */
+.sky{position:relative;height:clamp(232px,40svh,460px);touch-action:pan-y;cursor:grab;user-select:none;-webkit-user-select:none;background:#07090e;
+padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
+@media (prefers-color-scheme:light){.sky{background:var(--lcd)}}
+.sky:active{cursor:grabbing}
+.sky canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+.ctl{position:absolute;top:0;right:env(safe-area-inset-right);z-index:2;display:flex}
+.ctl button{min-height:44px;font:700 11px/1 var(--legend);letter-spacing:.14em;text-transform:uppercase;color:#f1f0eb;background:transparent;border:0;padding:0 10px;cursor:pointer}
+.ctl button span{display:inline-block;padding:6px 9px;background:#171a1c;border-radius:4px;box-shadow:inset 0 1px 0 rgba(255,255,255,.22),inset 0 -2px 0 #0d0f10,0 1px 0 #0d0f10,0 2px 4px rgba(0,0,0,.45)}
+.ctl button[aria-pressed=true] span{background:var(--moon-pad);color:var(--glyph)}
+.ctl button:active span{transform:translateY(1px);box-shadow:inset 0 1px 0 rgba(255,255,255,.1),inset 0 -1px 0 #0d0f10,0 1px 2px rgba(0,0,0,.45)}
+/* status line under the sky: the sentence, then NEXT with its countdown */
+.status{padding-top:12px;padding-bottom:4px}
+.guide{margin:0 0 10px;font:700 14px/1.4 var(--legend);letter-spacing:.04em;text-transform:uppercase;color:var(--accent);white-space:pre-line}
+.lede{font:500 clamp(17px,2.1vw,22px)/1.3 var(--sans);letter-spacing:-.01em;margin:0;text-wrap:pretty}
+.next{margin:10px 0 0;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.next .lbl{color:var(--accent)}
+#next{display:inline-flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.next b{font:800 14px/1 var(--legend);letter-spacing:.1em;text-transform:uppercase;color:var(--ink)}
+.next .t{font:400 20px/16px var(--dot);color:var(--ink)}
+.next .cd{font:400 20px/16px var(--dot);color:var(--muted)}
+/* the readout panels: LCD glass in a bezel, the same hardware in both themes */
+.panels{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;padding-top:12px;padding-bottom:20px}
+.bez{background:var(--bezel);border-radius:8px;padding:7px;box-shadow:inset 0 -1px 0 rgba(255,255,255,.16),inset 0 1px 0 rgba(0,0,0,.35),0 1px 0 rgba(255,255,255,.04)}
+.glass{background:var(--lcd);border-radius:3px;padding:8px 8px 9px;color:var(--lcd-ink);box-shadow:inset 0 2px 3px rgba(0,0,0,.30),inset 0 0 0 1px rgba(0,0,0,.25);
+background-image:linear-gradient(115deg,rgba(255,255,240,.20),rgba(255,255,240,0) 40%),radial-gradient(120% 140% at 50% 40%,rgba(46,58,24,0) 60%,rgba(46,58,24,.18));min-width:0}
+.glass p{margin:0;font:400 20px/16px var(--dot);white-space:pre;overflow:hidden;text-overflow:clip}
+.glass .hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.glass .tag{font:400 20px/16px var(--dots);background:var(--lcd-ink);color:var(--lcd);padding:0 4px;border-radius:1px}
+.glass .st{font:400 20px/16px var(--dots)}
+.bl{font:800 11px/1 var(--legend);letter-spacing:.2em;text-transform:uppercase;padding:2px 2px 7px}.bl.s{color:#cec8fb}.bl.m{color:#8fe6e2}
+.leg{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:8px;vertical-align:0}
+.leg.s{background:var(--sun-pad)}.leg.m{background:var(--moon-pad)}
 main{counter-reset:sec;padding-bottom:40px}
-.blk{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;padding:28px 0 32px;border-top:1px solid var(--line)}
-.blk:first-child{border-top:0}
-.blk>h2,.hood>summary{margin:0;font:500 11px/1.3 var(--sans);letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
-.blk>h2::before,.hood>summary::before{counter-increment:sec;content:counter(sec,decimal-leading-zero);font-family:var(--mono);letter-spacing:0;color:var(--faint);margin-right:12px}
-.bodies{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
-.card{border:1px solid var(--line);border-radius:2px;min-width:0}
-.card header{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line)}
-.card h3{margin:0;font:600 12px/1.2 var(--sans);letter-spacing:.2em;text-transform:uppercase;display:flex;align-items:center;gap:10px}
-.card h3::before{content:"";width:8px;height:8px;border-radius:50%;background:currentColor}
-.sunc h3{color:var(--sun)}.moonc h3{color:var(--moon)}
-.card .state{font:500 10.5px/1.3 var(--sans);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);text-align:right}
-dl.cells{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);margin:0}
-dl.cells>div{padding:12px 16px 14px;min-width:0;border-top:1px solid var(--line)}
-dl.cells>div:nth-child(-n+2){border-top:0}
-dl.cells>div:nth-child(2n){border-left:1px solid var(--line)}
-dl.cells dt{font:500 10.5px/1.3 var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
-dl.cells dd{margin:6px 0 0;font-size:16px;line-height:1.35;display:flex;flex-direction:column;white-space:nowrap}
-dl.cells dd span+span{color:var(--muted)}
-.card .foot{margin:0;padding:12px 16px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
-.big{font:400 22px/1.2 var(--sans);letter-spacing:-.01em;margin:0}
+.blk{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;padding:24px 0 28px;border-top:1px solid var(--line)}
+.blk>h2,.hood>summary{margin:0;font:700 11px/1.3 var(--legend);letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+.blk>h2::before,.hood>summary::before{counter-increment:sec;content:counter(sec,decimal-leading-zero);font:400 20px/16px var(--dot);letter-spacing:0;color:var(--faint);margin-right:12px;vertical-align:-3px}
+.big{font:800 22px/1.2 var(--legend);letter-spacing:.02em;text-transform:uppercase;margin:0}
 .sub{color:var(--muted);margin:6px 0 16px;font-size:13px}
 .strip svg{display:block;width:100%;height:auto}
 .strip text{font-family:var(--mono);fill:var(--muted)}
 .strip .nowl{stroke:var(--ink)}
-.strip line.es{stroke:var(--sun)}.strip circle.es{fill:var(--sun)}.strip line.em{stroke:var(--moon)}.strip circle.em{fill:var(--moon)}
+.strip line.es{stroke:var(--sun-pad)}.strip circle.es{fill:var(--sun-pad)}.strip line.em{stroke:var(--moon-pad)}.strip circle.em{fill:var(--moon-pad)}
 .evs{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:0 32px;margin-top:16px;font-size:14px}
 .evs>div{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--line)}
+.evs>div .tn{font:400 20px/16px var(--dot);font-variant-numeric:normal}
 .evs .past{color:var(--faint)}
 .evs details.more{grid-column:1/-1;margin-top:4px}.evs details.more .evs{margin-top:0}
-.evs .s::before,.evs .m::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:10px;vertical-align:1px}
-.evs .s::before{background:var(--sun)}.evs .m::before{background:var(--moon)}
+.evs .s::before,.evs .m::before{content:"";display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:10px;vertical-align:0}
+.evs .s::before{background:var(--sun-pad)}.evs .m::before{background:var(--moon-pad)}
 .row{display:flex;flex-wrap:wrap;gap:10px;margin-top:20px;align-items:center}
-.btn{min-height:44px;display:inline-flex;align-items:center;font:500 11px/1 var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--ink);background:transparent;border:1px solid var(--line2);border-radius:2px;padding:0 16px;cursor:pointer}
-.btn:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
+.btn{min-height:44px;display:inline-flex;align-items:center;font:700 12px/1 var(--legend);letter-spacing:.14em;text-transform:uppercase;color:#f1f0eb;background:#171a1c;border:0;border-radius:6px;padding:0 16px;cursor:pointer;
+box-shadow:inset 0 1px 0 rgba(255,255,255,.22),inset 0 -3px 0 #0d0f10,0 2px 0 #0d0f10,0 3px 5px rgba(0,0,0,.35)}
+.btn:hover{text-decoration:none;color:#fff}.btn:active{transform:translateY(2px);box-shadow:inset 0 1px 0 rgba(255,255,255,.1),inset 0 -1px 0 #0d0f10,0 0 0 #0d0f10,0 1px 2px rgba(0,0,0,.45)}
 .note{font-size:13px;color:var(--muted)}
-.wxc{display:grid;gap:16px}
+.wxc{display:grid;gap:14px}
 .wxtop{display:flex;align-items:center;gap:8px 20px;flex-wrap:wrap}
-.temp{font:300 44px/1 var(--sans);letter-spacing:-.03em;font-variant-numeric:tabular-nums}
-.wxtop .cond{font:500 16px/1.3 var(--sans)}
+.temp{font:400 40px/32px var(--dot)}
+.wxtop .cond{font:800 16px/1.3 var(--legend);letter-spacing:.06em;text-transform:uppercase}
 .wxtop .wind{color:var(--muted);font:13px/1.4 var(--mono)}
-.wxc dl.cells{grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--line);border-radius:2px}
-.wxc dl.cells>div{border-top:0;border-left:1px solid var(--line)}
+.wxc dl.cells{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin:0;border:1px solid var(--line);border-radius:3px}
+.wxc dl.cells>div{padding:10px 12px 12px;min-width:0;border-left:1px solid var(--line)}
 .wxc dl.cells>div:first-child{border-left:0}
-.wxc dl.cells dd{font-size:14px;white-space:normal;display:block}
+.wxc dl.cells dt{font:700 10.5px/1.3 var(--legend);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.wxc dl.cells dd{margin:6px 0 0;font-size:14px}
 .station{margin:0;color:var(--muted);font:12.5px/1.6 var(--mono)}
 .age{white-space:nowrap}
 .age::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ok);margin-right:7px;vertical-align:1px}
 .age.warn{color:var(--caution)}.age.warn::before{background:var(--caution)}
-details>summary{cursor:pointer;list-style:none;min-height:44px;display:flex;align-items:center;gap:10px;color:var(--accent);font:500 11px/1.3 var(--sans);letter-spacing:.14em;text-transform:uppercase}
+details>summary{cursor:pointer;list-style:none;min-height:44px;display:flex;align-items:center;gap:10px;color:var(--accent);font:700 11px/1.3 var(--legend);letter-spacing:.16em;text-transform:uppercase}
 details>summary::-webkit-details-marker{display:none}
 details:not(.hood)>summary::before{content:"+";font:400 14px/1 var(--mono);width:10px}
 details:not(.hood)[open]>summary::before{content:"\\2212"}
@@ -386,17 +540,16 @@ pre .c{color:var(--faint)}
 .hood>summary::after{content:"+";margin-left:auto;font:400 16px/1 var(--mono);color:var(--muted)}
 .hood[open]>summary::after{content:"\\2212"}
 .hood .in{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:32px;margin-top:16px}
-.hood h3{font:500 11px/1.3 var(--sans);letter-spacing:.14em;text-transform:uppercase;margin:0 0 8px}
+.hood h3{font:700 11px/1.3 var(--legend);letter-spacing:.16em;text-transform:uppercase;margin:0 0 8px}
 .hood p{color:var(--muted);font-size:14px;margin:0 0 14px}
-.hood pre{margin:0;border:1px solid var(--line);border-radius:2px;padding:14px 16px;overflow-x:auto;font:12px/1.7 var(--mono);color:var(--ink)}
+.hood pre{margin:0;border:1px solid var(--line);border-radius:3px;padding:14px 16px;overflow-x:auto;font:12px/1.7 var(--mono);color:var(--ink)}
 footer.tel{border-top:1px solid var(--line);padding-top:14px;padding-bottom:max(14px,env(safe-area-inset-bottom));display:flex;flex-wrap:wrap;gap:6px 24px;font:11.5px/1.5 var(--mono);color:var(--muted)}
-footer.tel i{font:500 10px/1 var(--sans);font-style:normal;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin-right:8px}
-:focus-visible{outline:1px solid var(--accent);outline-offset:3px}
+footer.tel i{font:700 10px/1 var(--legend);font-style:normal;letter-spacing:.16em;text-transform:uppercase;color:var(--faint);margin-right:8px}
+:focus-visible{outline:0;box-shadow:0 0 0 2px #8fe6e2,0 0 0 4px #1a313e}
 .err{color:var(--alert)}
-.inst{margin:0 0 8px;font:500 11px/1 var(--sans);letter-spacing:.14em;text-transform:uppercase}.inst a{color:var(--faint);display:inline-flex;align-items:center;min-height:44px}.inst a:hover{color:var(--accent)}
-@media (max-width:760px){.bodies,.hood .in{grid-template-columns:minmax(0,1fr)}.wxc dl.cells{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+@media (max-width:760px){.panels,.hood .in{grid-template-columns:minmax(0,1fr)}.wxc dl.cells{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
 .wxc dl.cells>div:nth-child(n+3){border-top:1px solid var(--line)}.wxc dl.cells>div:nth-child(3){border-left:0}}
-@media (min-width:900px){.blk{grid-template-columns:200px minmax(0,1fr);gap:32px}.blk>h2{padding-top:3px}.hero{padding-top:max(22px,env(safe-area-inset-top))}}
+@media (min-width:900px){.blk{grid-template-columns:200px minmax(0,1fr);gap:32px}.blk>h2{padding-top:3px}.hero{padding-top:max(20px,env(safe-area-inset-top))}}
 </style>
 </head><body>
 <header class="hero gut">
@@ -407,26 +560,21 @@ footer.tel i{font:500 10px/1 var(--sans);font-style:normal;letter-spacing:.14em;
     </div>
     <div class="now">
       <span class="lbl">Local time</span>
-      <div class="clock" id="clock">--:--</div>
+      <div class="clock" id="clock">--:--:--</div>
     </div>
   </div>
 </header>
-<section class="sky gut" id="sky" aria-label="The Sun and the Moon on a chart of the whole sky, above and below the horizon">
-  <div class="scr" id="scr">
-    <canvas id="cv" tabindex="0" aria-label="Sky chart"></canvas>
-    <div class="ctl" id="ctl"><button type="button" id="point" aria-pressed="false" hidden><span>Point phone</span></button><button type="button" id="recenter" hidden><span>Recenter</span></button></div>
-  </div>
+<section class="sky" id="sky" aria-label="The Sun and the Moon on a chart of the whole sky, above and below the horizon">
+  <canvas id="cv" tabindex="0" aria-label="Sky chart"></canvas>
+  <div class="ctl" id="ctl"><button type="button" id="point" aria-pressed="false" hidden><span>Point phone</span></button><button type="button" id="recenter" hidden><span>Recenter</span></button></div>
 </section>
-<div class="bottom gut" id="bottom">
+<div class="status gut" id="bottom">
   <p class="guide" id="guide" aria-live="polite" hidden></p>
   <p class="lede" id="lede">Finding the Sun and the Moon…</p>
   <p class="next"><span class="lbl">Next</span><span id="next">&nbsp;</span></p>
 </div>
+<div class="panels gut" id="bodies" aria-label="Sun and Moon readouts"></div>
 <main class="gut">
-  <section class="blk">
-    <h2>Ephemeris</h2>
-    <div class="bodies" id="bodies" aria-label="Sun and Moon"></div>
-  </section>
   <section class="blk day">
     <h2>Day</h2>
     <div>
@@ -461,7 +609,6 @@ footer.tel i{font:500 10px/1 var(--sans);font-style:normal;letter-spacing:.14em;
       </div>
     </div>
   </details>
-  <p class="inst"><a href="/instrument" id="inst">Instrument view</a></p>
   <footer class="tel" id="foot"></footer>
 </main>
 <script>const LOC = ${json(v)};</script>
@@ -500,6 +647,7 @@ var fmtCache = {};
 function fmt(opts) { var k = JSON.stringify(opts) + loc.tz; return fmtCache[k] || (fmtCache[k] = new Intl.DateTimeFormat("en-GB", Object.assign({ timeZone: loc.tz, hour12: false }, opts))); }
 function localDate(ms) { return new Intl.DateTimeFormat("en-CA", { timeZone: loc.tz }).format(new Date(ms)); }
 function hm(ms) { return fmt({ hour: "2-digit", minute: "2-digit" }).format(new Date(ms)); }
+function hms(ms) { return fmt({ hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(ms)); }
 function nextDate(d) { var p = d.split("-").map(Number); return new Date(Date.UTC(p[0], p[1] - 1, p[2] + 1)).toISOString().slice(0, 10); }
 function q() { return { lat: loc.lat.toFixed(5), lon: loc.lon.toFixed(5) }; }
 
@@ -532,65 +680,88 @@ function parallactic(alt, az, dec, lat) {
 }
 
 // ---------- canvas: the sky chart ----------
-// All 360° of azimuth (the default frame always shows all of it, so nothing is ever off-screen) by the whole altitude range:
-// the sky (true scale), the horizon, the civil, nautical and astronomical twilight bands (true scale), then the deep ground at a
-// quarter scale (altU, CORE_JS). Each body's 24 h track (now ± 12 h, from the one /v1/track answer) runs through sky and ground,
-// past solid and future dashed; the bodies are always drawn where they are, dimmed below the horizon, with their depth.
-// It draws only when something changes (requestDraw): data, resize, drag, pointing, fonts, or once a minute for the clock.
-var cv = $("cv"), ctx = cv.getContext("2d"), W = 0, H = 0, dpr = 1, PAD_T = 10, AXIS = 20;
-function geom() { var ky = (H - PAD_T - AXIS) / (U_TOP - U_BOT); return { kx: W / 360, ky: ky, top: PAD_T, hy: Math.round(PAD_T + U_TOP * ky) + 0.5, bot: H - AXIS }; }
-function X(az, g) { return W / 2 + wrap180(az - S.center) * g.kx; }
-function Y(alt, g) { return g.top + (U_TOP - altU(alt)) * g.ky; }
-var drawQueued = false, drawnAt = 0;
+// All 360° of azimuth by the whole altitude range (chartModel, CORE_JS): the sky at true scale, the horizon, the civil, nautical
+// and astronomical bands, the deep ground at a quarter scale. Each body's 24 h track (now ± 12 h, the one /v1/track answer)
+// runs through sky and ground, past solid and future dashed, split at the live marker. Dark: the night instrument, Sun in
+// lavender and Moon in teal; light: the same chart on reflective LCD glass, ink only. It draws only when something changes:
+// data, resize, theme, drag, pointing, fonts, or a marker moving half a pixel (checked once a second; no rAF loop).
+var cv = $("cv"), ctx = cv.getContext("2d"), W = 0, H = 0, dpr = 1, insetL = 0, insetR = 0;
+var drawQueued = false, drawnAt = 0, drawnPx = null;
 function requestDraw() { if (!drawQueued) { drawQueued = true; requestAnimationFrame(function () { drawQueued = false; draw(); }); } }
 function resize() {
   dpr = Math.min(2, window.devicePixelRatio || 1);
-  var r = cv.getBoundingClientRect(); if (r.width === W && r.height === H) return;
+  var r = cv.getBoundingClientRect(), cs = getComputedStyle($("sky"));
+  insetL = parseFloat(cs.paddingLeft) || 0; insetR = parseFloat(cs.paddingRight) || 0;
+  if (r.width === W && r.height === H) return;
   W = r.width; H = r.height;
   cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); requestDraw();
 }
 function defaultCenter(p) { return S.pose ? S.pose.az : chartCenter(loc.lat, [p.sun.azimuth, p.moon.azimuth]); }
-function drawMoon(x, y, r, m) {
+var LEG = "'Sofia Sans Condensed', 'Avenir Next Condensed', 'Arial Narrow', -apple-system, system-ui, sans-serif";
+var FONTS = { name: "800 12px " + LEG, sub: "700 10.5px " + LEG, ev: "700 11px " + LEG, band: "800 9px " + LEG, scale: "700 10px " + LEG, axis: "800 10px " + LEG };
+var TRACK = { name: "1.2px", sub: "0.8px", ev: "0.4px", band: "1.6px", scale: "0.8px", axis: "1.4px" };
+var LHS = { name: 14, sub: 12, ev: 12, band: 10, scale: 12 };
+var mw = {};
+function meas(t, f) { var k = f + "|" + t; if (mw[k] == null) { ctx.font = FONTS[f]; if ("letterSpacing" in ctx) ctx.letterSpacing = TRACK[f]; mw[k] = Math.ceil(ctx.measureText(t).width) + 2; } return mw[k]; }
+// Palettes. DARK: the night instrument. LCD: reflective glass (design system: lcd-panel, lcd-ghost, lcd-ink), no colour inside.
+var DARK = { lcd: false, ground: "#07090e", deep: "#04050a", axis: "#05070b", band: [0.20, 0.12, 0.065], bandRGB: "110,140,215", bandOn: 0.14,
+  grid: "rgba(255,255,255,.09)", gridV: "rgba(255,255,255,.05)", brk: "rgba(255,255,255,.24)", horizon: "rgba(255,255,255,.78)", tick: "rgba(255,255,255,.6)", tickMinor: "rgba(255,255,255,.3)",
+  cmp: "rgba(255,255,255,.82)", cmpMinor: "rgba(255,255,255,.5)", shadow: "rgba(4,6,13,.92)",
+  role: { sun: "#d9d3ff", moon: "#9cefe9", sunBelow: "rgba(217,211,255,.82)", moonBelow: "rgba(156,239,233,.82)", dim: "rgba(225,230,240,.6)", band: "rgba(190,205,240,.55)", bandOn: "rgba(235,240,255,.98)", scale: "rgba(255,255,255,.55)" },
+  sub: "rgba(236,235,231,.75)", line: { sun: "#cec8fb", moon: "#8fe6e2" }, ret: { sun: "#cec8fb", moon: "#8fe6e2" }, pose: "#8fe6e2" };
+var LCD = { lcd: true, sky: "#bec997", ground: "#b2bf8c", deep: "#a3b182", axis: "#cacc94", band: [0.07, 0.12, 0.17], bandRGB: "26,49,62", bandOn: 0.10,
+  grid: "rgba(26,49,62,.16)", gridV: "rgba(26,49,62,.09)", brk: "rgba(26,49,62,.4)", horizon: "#1a313e", tick: "rgba(26,49,62,.85)", tickMinor: "rgba(26,49,62,.45)",
+  cmp: "#1a313e", cmpMinor: "rgba(26,49,62,.7)", shadow: null,
+  role: { sun: "#1a313e", moon: "#1a313e", sunBelow: "rgba(26,49,62,.85)", moonBelow: "rgba(26,49,62,.85)", dim: "rgba(26,49,62,.62)", band: "rgba(26,49,62,.6)", bandOn: "#1a313e", scale: "rgba(26,49,62,.7)" },
+  sub: "rgba(26,49,62,.8)", line: { sun: "#1a313e", moon: "#1a313e" }, ret: { sun: "#1a313e", moon: "#1a313e" }, pose: "#1a313e" };
+var lightQ = matchMedia("(prefers-color-scheme: light)");
+function pal() { return lightQ.matches ? LCD : DARK; }
+if (lightQ.addEventListener) lightQ.addEventListener("change", requestDraw);
+// The live position: the last answer moved on by its own rates (deg/min) to now; the readouts keep the answer's numbers.
+function livePos(now) {
+  var p = S.to; if (!p) return null;
+  var dt = AT != null || !p.time ? 0 : (now - Date.parse(p.time.utc)) / 60e3;
+  function mv(b) { return { az: wrap360(b.azimuth + (b.azimuthRate || 0) * dt), alt: Math.max(-90, Math.min(90, altOf(b) + (b.altitudeRate || 0) * dt)) }; }
+  return { sun: mv(p.sun), moon: mv(p.moon) };
+}
+function drawMoon(x, y, r, m, P) {
   var k = m.phase.illuminatedFraction;
   var chi = (m.phase.brightLimbAngle - parallactic(altOf(m), m.azimuth, m.declination, loc.lat)) * D2R; // bright limb from the zenith, toward east
   var rot = Math.atan2(-Math.cos(chi), -Math.sin(chi));
   ctx.save(); ctx.translate(x, y);
-  var g = ctx.createRadialGradient(0, 0, r, 0, 0, r * 3); g.addColorStop(0, "rgba(217,227,255," + (0.05 + 0.12 * k) + ")"); g.addColorStop(1, "rgba(217,227,255,0)");
-  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, r * 3, 0, 2 * Math.PI); ctx.fill();
+  if (!P.lcd) { var gl = ctx.createRadialGradient(0, 0, r, 0, 0, r * 3); gl.addColorStop(0, "rgba(217,227,255," + (0.05 + 0.12 * k) + ")"); gl.addColorStop(1, "rgba(217,227,255,0)"); ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(0, 0, r * 3, 0, 2 * Math.PI); ctx.fill(); }
   ctx.rotate(rot);
-  ctx.beginPath(); ctx.arc(0, 0, r, 0, 2 * Math.PI); ctx.fillStyle = "rgba(60,70,100,.75)"; ctx.fill();
+  ctx.beginPath(); ctx.arc(0, 0, r, 0, 2 * Math.PI); ctx.fillStyle = P.lcd ? "#aebf93" : "rgba(60,70,100,.75)"; ctx.fill();
+  if (P.lcd) { ctx.strokeStyle = "#1a313e"; ctx.lineWidth = 1; ctx.stroke(); }
   ctx.beginPath(); ctx.arc(0, 0, r, -Math.PI / 2, Math.PI / 2, false);
   ctx.ellipse(0, 0, Math.max(0.01, r * Math.abs(1 - 2 * k)), r, 0, Math.PI / 2, -Math.PI / 2, k < 0.5);
-  ctx.fillStyle = "#e9eeff"; ctx.fill();
+  ctx.fillStyle = P.lcd ? "#1a313e" : "#e9eeff"; ctx.fill();
   ctx.restore();
 }
-function drawSun(x, y, r, alt) {
+function drawSun(x, y, r, alt, P) {
+  if (P.lcd) {
+    ctx.save(); ctx.fillStyle = "#1a313e"; ctx.strokeStyle = "#1a313e"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(x, y, r * 0.62, 0, 2 * Math.PI); ctx.fill();
+    for (var i = 0; i < 8; i++) { var a = i * Math.PI / 4; ctx.beginPath(); ctx.moveTo(x + Math.cos(a) * r * 0.85, y + Math.sin(a) * r * 0.85); ctx.lineTo(x + Math.cos(a) * r * 1.25, y + Math.sin(a) * r * 1.25); ctx.stroke(); }
+    ctx.restore(); return;
+  }
   var g = ctx.createRadialGradient(x, y, r * 0.6, x, y, r * 4);
   g.addColorStop(0, "rgba(255,214,140,.38)"); g.addColorStop(1, "rgba(255,214,140,0)");
   ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 4, 0, 2 * Math.PI); ctx.fill();
   ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.fillStyle = alt > 6 ? "#fff3d6" : "#ffc46b"; ctx.fill();
 }
-var FONT = "600 11px 'Helvetica Neue', Helvetica, -apple-system, system-ui, sans-serif", SMALL = "400 10px ui-monospace, 'SF Mono', Menlo, monospace", TINY = "600 8.5px 'Helvetica Neue', Helvetica, -apple-system, system-ui, sans-serif";
-var LH = { }; LH[FONT] = 15; LH[SMALL] = 13; LH[TINY] = 11;
-function track(font) { if ("letterSpacing" in ctx) ctx.letterSpacing = font === SMALL ? "0.3px" : font === TINY ? "1.4px" : "1.4px"; }
-function textW(text, font) { ctx.font = font; track(font); return Math.ceil(ctx.measureText(text).width) + 2; }
-// A label: one or two lines (t, then t2 in SMALL), boxed to {w, h}.
-function labelBox(t, font, t2) { var w = textW(t, font), h = LH[font]; if (t2) { w = Math.max(w, textW(t2, SMALL)); h += LH[SMALL]; } return { w: w, h: h }; }
-function drawLabel(it, r) {
-  ctx.save(); ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.shadowColor = "rgba(4,6,13,.9)"; ctx.shadowBlur = 4;
-  var font = it.font || FONT, h1 = LH[font];
-  ctx.font = font; track(font); ctx.fillStyle = it.color; ctx.fillText(it.t, r.x + 1, r.y + h1 / 2);
-  if (it.t2) { ctx.font = SMALL; track(SMALL); ctx.fillStyle = it.color2 || it.color; ctx.fillText(it.t2, r.x + 1, r.y + h1 + LH[SMALL] / 2); }
-  ctx.restore();
-}
-// An instrument reticle: a hairline ring RET px outside the disc, with four short ticks; dashed when the body is below the horizon.
-var RET = 5;
 function reticle(x, y, r, color, below) {
-  var R = r + RET;
-  ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.globalAlpha = 0.6; if (below) ctx.setLineDash([2, 3]);
+  var R = r + 5;
+  ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.globalAlpha = 0.75; if (below) ctx.setLineDash([2, 3]);
   ctx.beginPath(); ctx.arc(x, y, R, 0, 2 * Math.PI); ctx.stroke(); ctx.setLineDash([]);
   [[0, -1], [1, 0], [0, 1], [-1, 0]].forEach(function (d) { ctx.beginPath(); ctx.moveTo(x + d[0] * R, y + d[1] * R); ctx.lineTo(x + d[0] * (R + 4), y + d[1] * (R + 4)); ctx.stroke(); });
   ctx.restore();
+}
+function text(t, x, y, font, color, P, align) {
+  ctx.font = FONTS[font]; if ("letterSpacing" in ctx) ctx.letterSpacing = TRACK[font];
+  ctx.textAlign = align || "left"; ctx.textBaseline = "middle"; ctx.fillStyle = color;
+  if (P.shadow) { ctx.shadowColor = P.shadow; ctx.shadowBlur = 4; } else if (P.lcd) { ctx.shadowColor = "rgba(26,49,62,.16)"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0.6; ctx.shadowOffsetY = 0.6; }
+  ctx.fillText(t, x, y); ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
 }
 // The tracks and their events, recomputed only when the track, today's events or the minute change (not per drag frame).
 var TI = { key: "" };
@@ -608,154 +779,98 @@ function trackInfo(nowMs) {
   });
   TI = out; return out;
 }
-// One body's track: unwrapped azimuths so it crosses the seam as one line, drawn at every 360° offset that lands on the chart.
-// Past solid, future dashed; the ground part at half strength. Segments go to out (for the ring labels and label avoidance).
-function trackPath(win, p, key, color, g, nowMs, out) {
-  var pts = win.slice(), at = pts.findIndex(function (x) { return x.t > nowMs; }); pts.splice(at < 0 ? pts.length : at, 0, Object.assign({ t: nowMs }, p));
-  var az = unwrapAz(pts.map(function (x) { return x[key].azimuth; })), xs = [], ys = [], lo = Infinity, hi = -Infinity;
-  for (var i = 0; i < pts.length; i++) { var xr = W / 2 + (az[i] - S.center) * g.kx; xs.push(xr); ys.push(Y(altOf(pts[i][key]), g)); lo = Math.min(lo, xr); hi = Math.max(hi, xr); }
-  var span = 360 * g.kx, offs = [];
-  for (var o = Math.floor((-hi) / span) - 1; o <= Math.ceil((W - lo) / span) + 1; o++) if (hi + o * span >= 0 && lo + o * span <= W) offs.push(o * span);
-  [[0, g.hy, 1], [g.hy, g.bot - g.hy, 0.5]].forEach(function (clip) {
-    ctx.save(); ctx.beginPath(); ctx.rect(0, clip[0], W, clip[1]); ctx.clip();
-    for (var pass = 0; pass < 2; pass++) {   // 0: the past 12 h, solid; 1: the next 12 h, dashed
-      ctx.beginPath();
-      offs.forEach(function (dx) {
-        var started = false;
-        for (var j = 0; j < pts.length; j++) {
-          if (pass === 0 ? pts[j].t > nowMs : pts[j].t < nowMs) continue;
-          if (!started) { ctx.moveTo(xs[j] + dx, ys[j]); started = true; } else { ctx.lineTo(xs[j] + dx, ys[j]); if (clip[2] === 1) out.push([xs[j - 1] + dx, ys[j - 1], xs[j] + dx, ys[j]]); }
-        }
-      });
-      ctx.strokeStyle = color; ctx.globalAlpha = (pass ? 0.85 : 0.5) * clip[2]; ctx.lineWidth = pass ? 1.4 : 1.1; ctx.setLineDash(pass ? [4, 3] : []); ctx.stroke(); ctx.setLineDash([]);
-    }
-    ctx.restore();
-  });
-  if (out.length === 0 && false) return;
-}
-// Every x at which azimuth az appears on the chart (one, or two at the seam).
-function xsOf(az, g) { var x = X(az, g), r = [x]; if (x - 360 * g.kx >= -40) r.push(x - 360 * g.kx); if (x + 360 * g.kx <= W + 40) r.push(x + 360 * g.kx); return r; }
-var COL = { sun: "#ffc361", moon: "#d9e3ff" }, LBL = { sun: "rgba(255,226,170,.97)", moon: "rgba(232,238,255,.96)" };
+function nextEvent(now) { var up = upcoming(now); return up.length ? { body: up[0].body, kind: up[0].kind, t: Date.parse(up[0].time) } : null; }
 function draw() {
   if (!W) return;
-  var p = S.to, g = geom(), hy = g.hy, sunAlt = p ? altOf(p.sun) : -30, c = skyAt(sunAlt), nowMs = tNow();
-  drawnAt = nowMs;
-  // sky above the horizon, coloured for the Sun's altitude; the glow on the horizon toward the Sun
-  var grad = ctx.createLinearGradient(0, 0, 0, hy); grad.addColorStop(0, c[0]); grad.addColorStop(1, c[1]);
-  ctx.fillStyle = grad; ctx.fillRect(0, 0, W, hy);
-  if (p && sunAlt > -18) {
-    var a = Math.max(0, 1 - Math.abs(sunAlt - 2) / 20) * 0.55;
-    xsOf(p.sun.azimuth, g).forEach(function (gx) { var rg = ctx.createRadialGradient(gx, hy, 0, gx, hy, Math.max(W, H) * 0.45); rg.addColorStop(0, "rgba(255,170,90," + a + ")"); rg.addColorStop(1, "rgba(255,170,90,0)"); ctx.fillStyle = rg; ctx.fillRect(0, 0, W, hy); });
+  var P = pal(), p = S.to, nowMs = tNow(), live = livePos(nowMs), info = S.track.length ? trackInfo(nowMs) : null, r = Math.max(6, Math.min(10, W / 70));
+  var ce = $("ctl"), ctlR = !$("point").hidden || !$("recenter").hidden ? { id: "ctl", x: W - ce.offsetWidth, y: 0, w: ce.offsetWidth, h: ce.offsetHeight } : null;
+  var bodies = live ? [["sun", "Sun", p.sun], ["moon", "Moon", p.moon]].map(function (o) {
+    var L = live[o[0]], pts = info ? info.win.map(function (x) { return { t: x.t, az: x[o[0]].azimuth, alt: altOf(x[o[0]]) }; }) : [];
+    if (pts.length) { var at = pts.findIndex(function (x) { return x.t > nowMs; }); pts.splice(at < 0 ? pts.length : at, 0, { t: nowMs, az: L.az, alt: L.alt }); }
+    return { key: o[0], name: o[1], az: L.az, alt: L.alt, labelAlt: altOf(o[2]), r: r, pts: pts, events: info ? info[o[0]] : [] };
+  }) : [];
+  var sunAlt = live ? live.sun.alt : -30;
+  var m = chartModel({ W: W, H: H, insetL: insetL, insetR: insetR, center: S.center == null ? (loc.lat >= 0 ? 180 : 0) : S.center, now: nowMs, sunAlt: sunAlt, ctl: ctlR, pose: S.pose,
+    next: nextEvent(nowMs), hm: hm, meas: meas, LH: LHS, bodies: bodies });
+  var g = m.g, hy = g.hy, c = S.center == null ? (loc.lat >= 0 ? 180 : 0) : S.center;
+  drawnAt = nowMs; drawnPx = bodies.map(function (b) { return [chX(b.az, g, c), chY(b.alt, g)]; });
+  // sky
+  if (P.lcd) { ctx.fillStyle = P.sky; ctx.fillRect(0, 0, W, hy); }
+  else {
+    var sc = skyAt(sunAlt), grad = ctx.createLinearGradient(0, 0, 0, hy); grad.addColorStop(0, sc[0]); grad.addColorStop(1, sc[1]);
+    ctx.fillStyle = grad; ctx.fillRect(0, 0, W, hy);
+    if (live && sunAlt > -18) { var a = Math.max(0, 1 - Math.abs(sunAlt - 2) / 20) * 0.55;
+      chXs(live.sun.az, g, c).forEach(function (gx) { var rg = ctx.createRadialGradient(gx, hy, 0, gx, hy, Math.max(W, H) * 0.45); rg.addColorStop(0, "rgba(255,170,90," + a + ")"); rg.addColorStop(1, "rgba(255,170,90,0)"); ctx.fillStyle = rg; ctx.fillRect(0, 0, W, hy); }); }
   }
-  // the ground: three twilight bands (the one the Sun is in, brighter), then the deep ground, then the compass axis
-  ctx.fillStyle = "#07090e"; ctx.fillRect(0, hy, W, H - hy);
-  var bands = [[0, -6, "CIVIL", 0.20], [-6, -12, "NAUTICAL", 0.12], [-12, -18, "ASTRONOMICAL", 0.065]], fixed = [], sunBand = -1;
-  if (p) bands.forEach(function (b, i) { if (sunAlt <= b[0] && sunAlt > b[1]) sunBand = i; });
-  bands.forEach(function (b, i) {
-    var y0 = Y(b[0], g), y1 = Y(b[1], g), on = i === sunBand;
-    ctx.fillStyle = "rgba(110,140,215," + (b[3] + (on ? 0.14 : 0)) + ")"; ctx.fillRect(0, y0, W, y1 - y0);
-    if (y1 - y0 >= 9) fixed.push({ id: "band" + i, t: b[2], x: W - 6 - textW(b[2], TINY), y: (y0 + y1) / 2 - LH[TINY] / 2, w: textW(b[2], TINY), h: LH[TINY], font: TINY, color: on ? "rgba(225,233,255,.95)" : "rgba(190,205,240,.5)", text: true });
-  });
-  var y18 = Y(-18, g);
-  ctx.fillStyle = "#04050a"; ctx.fillRect(0, y18, W, g.bot - y18);
-  ctx.fillStyle = "#05070b"; ctx.fillRect(0, g.bot, W, H - g.bot);
-  // grid: altitude rings at 30° and 60°, -45° in the deep ground, verticals at the eight compass points; the scale break at -18°
-  var rings = [];
-  ctx.lineWidth = 1; ctx.strokeStyle = "rgba(255,255,255,.09)";
-  [30, 60].forEach(function (alt) { var y = Math.round(Y(alt, g)) + 0.5; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); rings.push({ alt: alt, y: y }); });
-  ctx.strokeStyle = "rgba(255,255,255,.05)";
-  var y45 = Math.round(Y(-45, g)) + 0.5; ctx.beginPath(); ctx.moveTo(0, y45); ctx.lineTo(W, y45); ctx.stroke();
-  for (var vz = 0; vz < 360; vz += 45) xsOf(vz, g).forEach(function (vx) { vx = Math.round(vx) + 0.5; if (vx < 0 || vx > W) return; ctx.beginPath(); ctx.moveTo(vx, 0); ctx.lineTo(vx, g.bot); ctx.stroke(); });
-  ctx.strokeStyle = "rgba(255,255,255,.22)"; ctx.setLineDash([2, 3]); ctx.beginPath(); ctx.moveTo(0, Math.round(y18) + 0.5); ctx.lineTo(W, Math.round(y18) + 0.5); ctx.stroke(); ctx.setLineDash([]);
-  var deepH = g.bot - y18, sc = "\\u221218\\u00b0 \\u00b7 \\u00bc scale below", nad = "\\u221290\\u00b0";
-  var scaleNote = deepH >= 18 ? { t: sc, w: textW(sc, SMALL) } : null;   // placed with the ring labels, below the -18° line
-  if (deepH >= 30) {
-    fixed.push({ id: "nadir", t: nad, x: W - 6 - textW(nad, SMALL), y: g.bot - LH[SMALL] - 1, w: textW(nad, SMALL), h: LH[SMALL], font: SMALL, color: "rgba(255,255,255,.32)", text: true });
-  }
-  // horizon: the strong line, with compass ticks under it; names on the axis at the bottom
-  ctx.strokeStyle = "rgba(255,255,255,.7)"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(0, hy); ctx.lineTo(W, hy); ctx.stroke(); ctx.lineWidth = 1;
-  var ticks = [];
-  for (var az = 0; az < 360; az += 15) xsOf(az, g).forEach(function (x) {
+  // ground, bands, the deep ground, the axis
+  ctx.fillStyle = P.ground; ctx.fillRect(0, hy, W, H - hy);
+  m.bands.forEach(function (b, i) { ctx.fillStyle = "rgba(" + P.bandRGB + "," + (P.band[i] + (b.on ? P.bandOn : 0)) + ")"; ctx.fillRect(0, b.y0, W, b.y1 - b.y0); });
+  var y18 = chY(-18, g); ctx.fillStyle = P.deep; ctx.fillRect(0, y18, W, g.bot - y18);
+  ctx.fillStyle = P.axis; ctx.fillRect(0, g.bot, W, H - g.bot);
+  if (P.lcd) { var vg = ctx.createRadialGradient(W / 2, H * 0.45, Math.min(W, H) * 0.3, W / 2, H * 0.45, Math.max(W, H) * 0.75); vg.addColorStop(0, "rgba(46,58,24,0)"); vg.addColorStop(1, "rgba(46,58,24,.16)"); ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H); }
+  // grid
+  ctx.lineWidth = 1; ctx.strokeStyle = P.grid;
+  [30, 60, -45].forEach(function (alt) { var y = Math.round(chY(alt, g)) + 0.5; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); });
+  ctx.strokeStyle = P.gridV;
+  for (var vz = 0; vz < 360; vz += 45) chXs(vz, g, c).forEach(function (vx) { vx = Math.round(vx) + 0.5; if (vx < 0 || vx > W) return; ctx.beginPath(); ctx.moveTo(vx, 0); ctx.lineTo(vx, g.bot); ctx.stroke(); });
+  ctx.strokeStyle = P.brk; ctx.setLineDash([2, 3]); ctx.beginPath(); ctx.moveTo(0, Math.round(y18) + 0.5); ctx.lineTo(W, Math.round(y18) + 0.5); ctx.stroke(); ctx.setLineDash([]);
+  ctx.strokeStyle = P.horizon; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(0, hy); ctx.lineTo(W, hy); ctx.stroke(); ctx.lineWidth = 1;
+  for (var az = 0; az < 360; az += 15) chXs(az, g, c).forEach(function (x) {
     if (x < -2 || x > W + 2) return;
-    var major = az % 45 === 0, len = major ? 6 : 3;
-    ctx.strokeStyle = "rgba(255,255,255," + (major ? 0.6 : 0.3) + ")"; ctx.beginPath(); ctx.moveTo(x, hy); ctx.lineTo(x, hy + len); ctx.stroke();
-    if (major) { var t2 = compass(az); ctx.font = SMALL; track(SMALL); ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = az % 90 ? "rgba(255,255,255,.45)" : "rgba(255,255,255,.8)"; if (x > 6 && x < W - 6) ctx.fillText(t2, x, g.bot + AXIS / 2); }
+    var major = az % 45 === 0; ctx.strokeStyle = major ? P.tick : P.tickMinor; ctx.beginPath(); ctx.moveTo(x, hy); ctx.lineTo(x, hy + (major ? 6 : 3)); ctx.stroke();
+    if (major && x > g.x0 + 6 && x < g.x1 - 6) text(compass(az), x, g.bot + CH_AXIS / 2 + 1, "axis", az % 90 ? P.cmpMinor : P.cmp, P, "center");
   });
-  ticks.push({ id: "horizon", x: -1e4, y: hy - 2, w: 2e4, h: 8 });
-  // the tracks, their events, the bodies
-  var segs = [], items = [], discs = [], marks = [], info = S.track.length ? trackInfo(nowMs) : null, r = Math.max(6, Math.min(10, W / 70));
-  if (info) [["sun", COL.sun], ["moon", COL.moon]].forEach(function (o) { if (p) trackPath(info.win, p, o[0], o[1], g, nowMs, segs); });
-  if (p) [["sun", "Sun", p.sun], ["moon", "Moon", p.moon]].forEach(function (o) {
-    var key = o[0], b = o[2], alt = altOf(b), below = alt < 0, evs = info ? info[key] : [];
-    // events: crossings on the horizon (time, azimuth), culminations on the track (time, altitude); future ones labelled first
-    evs.forEach(function (e) {
-      var future = e.t > nowMs, ex = X(e.az, g), ey = e.kind === "rise" || e.kind === "set" ? hy : Y(e.alt, g);
-      ctx.save(); ctx.globalAlpha = future ? 0.95 : 0.5; ctx.strokeStyle = COL[key]; ctx.fillStyle = COL[key];
-      if (e.kind === "rise" || e.kind === "set") { ctx.beginPath(); ctx.moveTo(ex, hy - 5); ctx.lineTo(ex, hy + 5); ctx.lineWidth = 1.5; ctx.stroke(); }
-      else { ctx.beginPath(); ctx.arc(ex, ey, 2.5, 0, 2 * Math.PI); ctx.fillStyle = "#05070b"; ctx.fill(); ctx.stroke(); }
+  // tracks: past solid, future dashed; the ground half at half strength
+  Object.keys(m.lines).forEach(function (key) {
+    var tl = m.lines[key];
+    [[0, hy, 1], [hy, g.bot - hy, 0.5]].forEach(function (clip) {
+      ctx.save(); ctx.beginPath(); ctx.rect(0, clip[0], W, clip[1]); ctx.clip();
+      for (var pass = 0; pass < 2; pass++) {
+        ctx.beginPath();
+        tl.offs.forEach(function (dx) {
+          var a0 = pass ? Math.max(0, tl.split - 1) : 0, a1 = pass ? tl.xs.length : tl.split;
+          for (var j = a0; j < a1; j++) { if (j === a0) ctx.moveTo(tl.xs[j] + dx, tl.ys[j]); else ctx.lineTo(tl.xs[j] + dx, tl.ys[j]); }
+        });
+        ctx.strokeStyle = P.line[key]; ctx.globalAlpha = (pass ? 0.9 : 0.6) * clip[2]; ctx.lineWidth = (key === "sun" ? 1.6 : 1.2) * (P.lcd ? 1.15 : 1); ctx.setLineDash(pass ? [4, 3] : []); ctx.stroke(); ctx.setLineDash([]);
+      }
       ctx.restore();
-      marks.push({ id: key + e.kind + "-mark", x: ex - 3, y: ey - 5, w: 6, h: 10 });
-      var tt = (e.kind === "rise" ? "\\u2191" : e.kind === "set" ? "\\u2193" : "") + hm(e.t) + " " + (e.kind === "rise" || e.kind === "set" ? Math.round(wrap360(e.az)) % 360 : (e.alt < 0 ? "\\u2212" : "") + Math.abs(e.alt).toFixed(0)) + "\\u00b0";
-      items.push({ id: key + "-" + e.kind + "-" + Math.round(e.t / 60e3), t: tt, font: SMALL, x: ex, y: ey, r: 3, w: textW(tt, SMALL), h: LH[SMALL], color: future ? LBL[key] : "rgba(222,228,240,.72)", optional: true, prio: future ? (e.kind === "rise" || e.kind === "set" ? 2 : 3) : 4 });
     });
-    // the body itself, always: dimmed under the horizon, with its depth and its next crossing
-    var bx = X(b.azimuth, g), by = Y(alt, g), nx = evs.filter(function (e) { return e.t > nowMs && (e.kind === "rise" || e.kind === "set"); })[0];
-    ctx.save(); if (below) ctx.globalAlpha = 0.55;
-    if (key === "sun") drawSun(bx, by, r, alt); else drawMoon(bx, by, r, b);
+  });
+  // event markers
+  m.marks.forEach(function (k) {
+    ctx.save(); ctx.globalAlpha = k.future ? 1 : 0.55; ctx.strokeStyle = P.line[k.key]; ctx.lineWidth = 1.5;
+    if (k.kind === "rise" || k.kind === "set") { ctx.beginPath(); ctx.moveTo(k.x, hy - 6); ctx.lineTo(k.x, hy + 6); ctx.stroke(); }
+    else { ctx.beginPath(); ctx.arc(k.x, k.y, 2.75, 0, 2 * Math.PI); ctx.fillStyle = P.lcd ? P.sky : "#05070b"; ctx.fill(); ctx.stroke(); }
     ctx.restore();
-    reticle(bx, by, r, LBL[key], below);
-    var rr = r + RET + 4; discs.push({ id: o[1] + "-disc", x: bx - rr, y: by - rr, w: 2 * rr, h: 2 * rr });
-    var t1 = o[1].toUpperCase() + " " + (alt < 0 ? "\\u2212" : "") + Math.abs(alt).toFixed(1) + "\\u00b0";
-    var t2 = nx ? (nx.kind === "rise" ? "rises " : "sets ") + hm(nx.t) + " " + compass(nx.az) : info ? (below ? "stays down" : "stays up") + " next 12 h" : "";
-    var bb = labelBox(t1, FONT, t2);
-    items.push({ id: o[1], t: t1, t2: t2, x: bx, y: by, r: rr - 4, w: bb.w, h: bb.h, color: below ? "rgba(215,222,240,.88)" : LBL[key], color2: "rgba(225,232,245,.72)", prio: 0 });
   });
-  // pointing mode: where the phone looks
-  if (S.pose) {
-    var px = X(S.pose.az, g), py = Y(S.pose.alt, g);
-    ctx.save(); ctx.strokeStyle = "#7cc4ff"; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(px, py, 14, 0, 2 * Math.PI); ctx.stroke();
-    [[0, -1], [1, 0], [0, 1], [-1, 0]].forEach(function (d) { ctx.beginPath(); ctx.moveTo(px + d[0] * 8, py + d[1] * 8); ctx.lineTo(px + d[0] * 20, py + d[1] * 20); ctx.stroke(); });
-    ctx.restore();
-    discs.push({ id: "pose", x: px - 20, y: py - 20, w: 40, h: 40 });
-  }
-  // the buttons over the chart's top-right corner are in the way too
-  var ce = $("ctl"); if (!$("point").hidden || !$("recenter").hidden) discs.push({ id: "ctl", x: W - ce.offsetWidth, y: 0, w: ce.offsetWidth, h: ce.offsetHeight });
-  // ring labels: the first spot along each ring that no path line, disc or band label touches (dropped if none)
-  var bounds = { x0: 4, y0: 2, x1: W - 4, y1: g.bot - 2 }, ringRects = [];
-  rings.forEach(function (rg) {
-    var t = rg.alt + "\\u00b0", w = textW(t, SMALL), spot = ringLabelSpot(rg.y, w, LH[SMALL], { x0: 4, y0: 2, x1: W - 4, y1: hy - 3 }, segs, discs.concat(ringRects, fixed), 3);
-    if (!spot) return;
-    var f = { id: "alt" + rg.alt, t: t, x: spot.x, y: spot.y, w: w, h: LH[SMALL], font: SMALL, color: "rgba(255,255,255,.5)", text: true };
-    ringRects.push(f); fixed.push(f);
+  // the bodies: always where they are; dimmed under the horizon
+  m.discs.forEach(function (d) {
+    var b = d.key === "sun" ? p.sun : p.moon;
+    ctx.save(); if (d.below && !P.lcd) ctx.globalAlpha = 0.6;
+    if (d.key === "sun") drawSun(d.x, d.y, d.r, altOf(b), P); else drawMoon(d.x, d.y, d.r, b, P);
+    ctx.restore(); reticle(d.x, d.y, d.r, P.ret[d.key], d.below);
   });
-  if (scaleNote) {   // the scale break is always labelled: the first clear spot along the -18° line, just below it
-    var sn = ringLabelSpot(Math.round(y18) - 1, scaleNote.w, LH[SMALL], { x0: 4, y0: y18 + 1, x1: W - 4, y1: g.bot - 1 }, segs, discs.concat(fixed), 2);
-    if (sn) fixed.push({ id: "scale", t: sc, x: sn.x, y: sn.y, w: scaleNote.w, h: LH[SMALL], font: SMALL, color: "rgba(255,255,255,.5)", text: true, keep: true });
-  }
-  // Path lines near a label's anchor become small soft obstacles, so a name sits beside its line rather than on it.
-  items.sort(function (a, b) { return a.prio - b.prio; });
-  var pathDots = [];
-  segs.forEach(function (sg) {
-    var n = Math.max(1, Math.ceil(Math.hypot(sg[2] - sg[0], sg[3] - sg[1]) / 5));
-    for (var i = 0; i <= n; i++) { var qx = sg[0] + (sg[2] - sg[0]) * i / n, qy = sg[1] + (sg[3] - sg[1]) * i / n;
-      if (items.some(function (it) { return Math.abs(qx - it.x) < 120 && Math.abs(qy - it.y) < 70; })) pathDots.push({ id: "path", x: qx - 1.5, y: qy - 1.5, w: 3, h: 3 }); }
+  if (m.pose) { ctx.save(); ctx.strokeStyle = P.pose; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(m.pose.x, m.pose.y, 14, 0, 2 * Math.PI); ctx.stroke();
+    [[0, -1], [1, 0], [0, 1], [-1, 0]].forEach(function (d) { ctx.beginPath(); ctx.moveTo(m.pose.x + d[0] * 8, m.pose.y + d[1] * 8); ctx.lineTo(m.pose.x + d[0] * 20, m.pose.y + d[1] * 20); ctx.stroke(); }); ctx.restore(); }
+  // labels: one layout for all of them (layoutLabels, CORE_JS)
+  var placed = layoutLabels(m.items, m.hard, m.segs, m.bounds, 2), byId = {};
+  m.items.forEach(function (it) { byId[it.id] = it; });
+  placed.forEach(function (pl) {
+    if (pl.dropped) return; var it = byId[pl.id], col = P.role[it.role] || P.role.dim;
+    text(it.t, pl.x + 1, pl.y + LHS[it.font] / 2, it.font, col, P);
+    if (it.t2) text(it.t2, pl.x + 1, pl.y + LHS.name + LHS.sub / 2, "sub", P.sub, P);
   });
-  // Two passes: the bodies' own labels first (only discs, markers and the horizon in the way); the scale labels then yield to
-  // them; then the event labels, optional, wherever there is still clear room.
-  var mine = items.filter(function (it) { return it.prio === 0; }), rest = items.filter(function (it) { return it.prio > 0; });
-  var p1 = placeLabels(mine, discs.concat(ticks, marks, fixed.filter(function (f) { return f.keep; })), bounds);   // nearest clear spot, even across a track line
-  var hard1 = discs.concat(p1);
-  fixed = fixed.filter(function (f) { return f.keep || !hard1.some(function (o) { return overlapArea(f, o) > 0; }); });
-  var p2 = placeLabels(rest, discs.concat(ticks, marks, fixed, p1), bounds, pathDots), placed = p1.concat(p2);
-  items = mine.concat(rest);
-  fixed.forEach(function (f) { drawLabel(f, f); });
-  var shownLabels = [];
-  placed.forEach(function (pl, i) { if (pl.dropped) return; drawLabel(items[i], pl); shownLabels.push(Object.assign({ text: true }, pl)); });
-  var drawn = discs.concat(fixed, shownLabels);
-  window.__sky = { rects: drawn, overlaps: overlaps(drawn), band: { top: g.top, hy: hy, bottom: g.bot }, segs: segs, rings: fixed.filter(function (f) { return f.id.indexOf("alt") === 0; }), ringLines: rings,
-    labels: placed.map(function (pl) { return { id: pl.id, clear: pl.clear, dropped: !!pl.dropped }; }), draws: (window.__sky ? window.__sky.draws : 0) + 1 };
+  window.__sky = { labels: placed, hard: m.hard, segs: m.segs.length, draws: (window.__sky ? window.__sky.draws : 0) + 1, W: W, H: H,
+    overlaps: overlaps(placed.filter(function (x) { return !x.dropped; }).map(function (x) { return Object.assign({ text: true }, x); }).concat(m.hard.filter(function (h) { return /disc|m$|pose|ctl/.test(h.id); }))) };
   if (p && !draw.marked && window.performance && performance.mark) { draw.marked = true; performance.mark("ephem:data"); __rum.mark("first-sky-draw"); }   // first frame with an answer (journey.ts, RUM)
+}
+// once a second (tick): redraw only if a live marker has moved half a pixel, or a minute has passed (the time split on the paths)
+function liveCheck(now) {
+  if (!S.to || !W) return;
+  if (now - drawnAt >= 60e3 || !drawnPx || drawnPx.length < 2) { requestDraw(); return; }   // the last frame had no bodies yet
+  var L = livePos(now), g = chartGeom(W, H, insetL, insetR), c = S.center;
+  var moved = [L.sun, L.moon].some(function (b, i) { return Math.abs(chX(b.az, g, c) - drawnPx[i][0]) >= 0.5 || Math.abs(chY(b.alt, g) - drawnPx[i][1]) >= 0.5; });
+  if (moved) requestDraw();
 }
 
 // pan; Recenter appears once you've looked away and restores the default frame
@@ -795,22 +910,31 @@ $("point").addEventListener("click", function () {
   else pointStart();
 });
 
-// ---------- readouts ----------
+// ---------- readouts: LCD glass in a bezel, the legend printed on the bezel above (lavender Sun, teal Moon) ----------
+// Inside the glass: ink only, the dot face, the calculator's tags ("AZ:"), ASCII minus, STD numbers (no leading zero).
+function std(x, d) { var s = x.toFixed(d); return s.replace(/^(-?)0[.]/, "$1."); }
+function deg(x, d) { return std(x, d) + "\u00b0"; }
+function dayTimes(key) {
+  var ev = S.day ? S.day.events.filter(function (e) { return e.body === key; }) : [], f = function (k) { var e = ev.find(function (x) { return x.kind === k; }); return e ? hm(Date.parse(e.time)) : "--:--"; };
+  var ti = S.track.length ? trackInfo(tNow()) : {}, tr = ev.find(function (x) { return x.kind === "transit"; }), info = ti[key] && tr ? ti[key].find(function (e) { return e.kind === "transit" && Math.abs(e.t - Date.parse(tr.time)) < 40 * 60e3; }) : null;
+  return { rise: f("rise"), set: f("set"), transit: f("transit"), transitAlt: info ? Math.round(info.alt) + "\u00b0" : "" };
+}
 function cardsHtml(p) {
-  function state(b) {
-    var a = altOf(b), rising = wrap360(b.azimuth) < 180;
-    return (a >= 0 ? (rising ? "Rising" : "Setting") : (rising ? "Below the horizon" : "Set")) + ", " + dirWord(b.azimuth);
+  function state(b) { var a = altOf(b), e = wrap360(b.azimuth) < 180; return (a >= 0 ? (e ? "RISING " : "SETTING ") : (e ? "DOWN " : "SET ")) + compass(b.azimuth); }
+  function line(t) { return "<p>" + esc(t) + "</p>"; }
+  function panel(key, name, b, extra) {
+    var dt = dayTimes(key), m = azM(b.azimuth).replace(" M", "M");
+    return '<div class="bez"><div class="bl ' + key.charAt(0) + '">' + name + '</div><div class="glass" role="group" aria-label="' + name + ' readout">' +
+      '<div class="hd"><span class="tag">' + name.toUpperCase() + '</span><span class="st">' + state(b) + '</span></div>' +
+      line("AZ:  " + azT(b.azimuth).replace(" T", "T") + (m ? " " + m : "")) +
+      line("ALT: " + deg(b.altitude, 2)) +
+      line("APP: " + (b.apparentAltitude == null ? "below horizon" : deg(b.apparentAltitude, 2))) +
+      line("RISE " + dt.rise + "  SET " + dt.set) +
+      line("TRANSIT " + dt.transit + (dt.transitAlt ? " " + dt.transitAlt : "")) + extra + '</div></div>';
   }
-  function cell(label, value, title) { return '<div><dt' + (title ? ' title="' + title + '"' : "") + '>' + label + '</dt><dd class="num">' + value + '</dd></div>'; }
-  function nums(b, dist) {
-    var m = azM(b.azimuth);
-    return '<dl class="cells">' + cell("Azimuth", '<span>' + azT(b.azimuth) + '</span>' + (m ? '<span>' + m + '</span>' : "")) + cell("Altitude", d2(b.altitude)) +
-      cell("Apparent alt.", b.apparentAltitude == null ? "below horizon" : d2(b.apparentAltitude), "Altitude with atmospheric refraction") + cell("Distance", dist) + '</dl>';
-  }
-  var s = p.sun, m = p.moon, ph = m.phase;
-  return '<article class="card sunc"><header><h3>Sun</h3><span class="state">' + state(s) + '</span></header>' + nums(s, (s.distanceKm / AU).toFixed(5) + " au") + '</article>' +
-    '<article class="card moonc"><header><h3>Moon</h3><span class="state">' + state(m) + '</span></header>' + nums(m, Math.round(m.distanceKm).toLocaleString("en-US") + " km") +
-    '<p class="foot">' + ph.name.charAt(0).toUpperCase() + ph.name.slice(1) + ', <span class="tn">' + (ph.illuminatedFraction * 100).toFixed(1) + '%</span> lit</p></article>';
+  var s = p.sun, mo = p.moon, ph = mo.phase;
+  return panel("sun", "Sun", s, line("DIST: " + std(s.distanceKm / AU, 5) + " AU")) +
+    panel("moon", "Moon", mo, line("DIST: " + Math.round(mo.distanceKm) + " KM") + line(ph.name.toUpperCase() + " " + (ph.illuminatedFraction * 100).toFixed(1) + "%"));
 }
 function setPos(p) {
   if (!S.to) __rum.mark("data-ready");
@@ -840,15 +964,15 @@ function upcoming(now) {
 var lastNext = "";
 function tick() {
   var now = tNow();
-  setText("clock", hm(now));
+  setText("clock", hms(now));
   var age = S.posAt ? (Date.now() - S.posAt) / 1000 : null, st = S.posErr ? "alert" : age == null ? "" : age < 15 ? "ok" : "caution";
   if (domMemo.live !== st) { domMemo.live = st; $("live").className = "live " + st; }
   setText("liveT", st === "alert" ? "No signal" : AT != null && st ? "Fixed time" : st === "ok" ? "Live" : st === "caution" ? "Delayed" : "Acquiring");
-  if (S.to && now - drawnAt >= 60e3) requestDraw();   // the chart's paths and markers: once a minute
+  liveCheck(now);   // the chart: a marker that moved half a pixel, or a minute
   var up = upcoming(now), html = lastNext;
   if (up.length) {
-    var e = up[0], t = Date.parse(e.time);
-    html = '<b>' + evName(e) + '</b> ' + (localDate(t) !== localDate(now) ? "tomorrow " : "") + 'at <span class="tn">' + hm(t) + '</span>, <span class="tn" style="white-space:nowrap">' + countdown(t - now) + '</span>';
+    var e = up[0], t = Date.parse(e.time), ti = S.track.length ? trackInfo(now) : {}, ex = ti[e.body] && ti[e.body].find(function (x) { return x.kind === e.kind && Math.abs(x.t - t) < 40 * 60e3; });
+    html = '<b>' + evName(e) + '</b><span class="t">' + (localDate(t) !== localDate(now) ? "TMRW " : "") + hm(t) + (ex && (e.kind === "rise" || e.kind === "set") ? " " + compass(ex.az) : "") + '</span><span class="cd" aria-label="' + countdown(t - now) + '">' + tminus(t - now) + '</span>';
   } else if (S.day && !S.day.loading && S.tomorrowFor === S.day.date) {
     if (S.tomorrow) html = "No rise, set or twilight in the next two days.";
   } else if (S.day && !S.day.loading) loadTomorrow();   // today has nothing left: only now is tomorrow's /v1/day needed
@@ -873,7 +997,7 @@ function drawStrip() {
   for (var hh = 0; hh <= 24; hh += w < 600 ? 6 : 3) { var x = Math.min(w, hh * 3600e3 / span * w); svg.appendChild(el("text", { x: x, y: y0 + bh + 20, "text-anchor": hh === 0 ? "start" : x >= w - 1 ? "end" : "middle", "font-size": 10.5 }, String(hh).padStart(2, "0") + ":00")); }
   S.day.events.forEach(function (e) {
     if (!(e.kind === "rise" || e.kind === "set" || e.kind === "transit")) return;
-    var x = (Date.parse(e.time) - s) / span * w, col = e.body === "sun" ? "#ffc361" : "#d9e3ff", cls = e.body === "sun" ? "es" : "em";
+    var x = (Date.parse(e.time) - s) / span * w, col = e.body === "sun" ? "#a39bdc" : "#6cd1d1", cls = e.body === "sun" ? "es" : "em";
     svg.appendChild(el("line", { x1: x, x2: x, y1: y0 - 6, y2: y0 + bh, stroke: col, "stroke-width": 1, "stroke-opacity": 0.9, class: cls }));
     svg.appendChild(el("circle", { cx: x, cy: y0 - 8, r: 2.5, fill: col, class: cls }));
   });
@@ -901,7 +1025,7 @@ function err(e) { S.err = e.message || String(e); var s = document.createElement
 // The live answer: no time parameter, so the front door computes it (never forwarded, never cached; a timed URL would add an
 // Api hop and a single-use immutable cache entry every 5 s).
 function loadPos() {
-  return api("/v1/position", AT == null ? q() : Object.assign(q(), { time: AT_ISO })).then(function (p) { S.posAt = Date.now(); S.posErr = null; setPos(p); })
+  return api("/v1/position", AT == null ? q() : Object.assign(q(), { time: AT_ISO })).then(function (p) { S.posAt = Date.now(); S.posErr = null; setPos(p); tick(); })
     .catch(function (e) { S.posErr = e; err(e); });
 }
 function loadDay() {
@@ -910,7 +1034,7 @@ function loadDay() {
   return api("/v1/day", dayQuery(today)).then(applyDay).catch(err);
 }
 function dayQuery(today) { return Object.assign(q(), { date: today, tz: loc.tz }); }
-function applyDay(r) { S.day = r; S.tomorrow = null; S.tomorrowFor = null; drawEvents(); drawStrip(); tick(); }
+function applyDay(r) { S.day = r; S.tomorrow = null; S.tomorrowFor = null; drawEvents(); drawStrip(); tick(); if (S.to) setHtml("bodies", cardsHtml(S.to)); requestDraw(); }
 // Tomorrow's events matter only once today's have all passed (the Next line); fetched then, once per day.
 function loadTomorrow() {
   var d = S.day; S.tomorrowFor = d.date;
@@ -972,7 +1096,7 @@ function applyTrack(r) {
   var out = [], step = r.stepSeconds * 1000, s0 = Date.parse(r.start);
     function b(x, i) { return { azimuth: x.azimuth[i], altitude: x.altitude[i], apparentAltitude: x.apparentAltitude[i] }; }
     for (var i = 0; i < r.count; i++) out.push({ t: s0 + i * step, sun: b(r.sun, i), moon: b(r.moon, i) });
-    S.track = out; drawStrip(); requestDraw();
+    S.track = out; drawStrip(); requestDraw(); if (S.to) setHtml("bodies", cardsHtml(S.to));
     if (window.performance && performance.mark) performance.mark("ephem:track");
 }
 function pad(k) { return (k.toUpperCase() + "                    ").slice(0, 18); }
@@ -1034,7 +1158,6 @@ $("locate").addEventListener("click", function () {
     $("locnote").textContent = ""; history.replaceState(null, "", "?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "&tz=" + encodeURIComponent(loc.tz)); reloadAll();
   }, function (e) { $("locnote").textContent = e.code === 1 ? "Location permission denied; using Cloudflare's estimate." : "Couldn't get a location fix."; }, { enableHighAccuracy: true, timeout: 10000 });
 });
-if (location.search) $("inst").href = "/instrument" + location.search;
 $("share").addEventListener("click", function () {
   var u = location.origin + "/?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "&tz=" + encodeURIComponent(loc.tz) + (loc.source === "device" ? "" : "&place=" + encodeURIComponent(loc.city));
   (navigator.clipboard ? navigator.clipboard.writeText(u) : Promise.reject()).then(function () { $("locnote").textContent = "Link copied."; }, function () { $("locnote").textContent = u; });
