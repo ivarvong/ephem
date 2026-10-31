@@ -117,7 +117,7 @@ var tiles = [
   ["Long tasks", String(k.longTasks), "longest " + ms(k.longestTask)],
   ["Clock offset", "±" + ms(M.offset.plusMinusMs), "θ " + ms(M.offset.thetaMs, 1) + " from " + M.offset.n + " requests"],
 ];
-if (m.rum) tiles.push(["RUM vs CDP", m.rum.within + " / " + m.rum.checks, "timings within " + m.rum.tolMs + " ms (max " + ms(m.rum.max, 1) + ") · " + m.rum.rows + " rows"]);
+if (m.rum) tiles.push(["RUM vs CDP", m.rum.within + " / " + m.rum.checks, "production RUM timings within " + m.rum.tolMs + " ms of Chrome's (max " + ms(m.rum.max, 1) + "), " + m.rum.rows + " rows" + (m.rum.firstByteUnderThrottling ? "; first byte −" + Math.abs(m.rum.firstByteUnderThrottling.meanMs).toFixed(0) + " ms (emulated latency)" : "")]);
 $("kpis").innerHTML = tiles.map(function (t) { return '<div class="kpi"><span>' + esc(t[0]) + "</span><b>" + esc(t[1]) + "</b><small>" + esc(t[2]) + "</small></div>"; }).join("");
 var cv = M.coverage, allOk = cv.joined === cv.total;
 $("cov").className = "cov " + (allOk ? "ok" : "bad");
@@ -170,7 +170,7 @@ var srvTracks = {};
   var items = M.srv.filter(function (s) { return s.track === t; });
   var groups = groupBy(items, function (s) { return t === "internal" ? s.trace : s.req + ":" + s.trace; });
   var p = pack(groups, function (it) { return t === "edge" ? it.d : (t === "internal" ? Math.min(it.d, 3) : 0); });
-  srvTracks[t] = { groups: groups, lanes: p.lanes, depth: t === "edge" ? Math.min(p.depth, 4) : t === "internal" ? Math.min(p.depth, 4) : 1 };
+  srvTracks[t] = { groups: groups, lanes: p.lanes, depth: t === "edge" ? Math.min(p.depth, 3) : t === "internal" ? Math.min(p.depth, 4) : 1 };
 });
 
 // ---------- canvas ----------

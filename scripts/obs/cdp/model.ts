@@ -53,18 +53,20 @@ export function buildModel(c: Client, srvIn: Server, meta: Record<string, unknow
   // ---------- requests ----------
   const reqModel = c.reqs.filter(r => !r.url.startsWith("data:")).map((r, i) => {
     const u = new URL(r.url), same = u.origin === c.origin
-    const inv = r.ray ? invs.find(v => v.ep === "default" && v.ray0 === ray0(r.ray)) : undefined
-    const internal = r.ray ? invs.filter(v => v.ep !== "default" && v.ray0 === ray0(r.ray)) : []
+    // A browser-cache hit has the cf-ray of the response that filled the cache (another invocation): never join it.
+    const inv = r.ray && !r.fromCache ? invs.find(v => v.ep === "default" && v.ray0 === ray0(r.ray)) : undefined
+    const internal = r.ray && !r.fromCache ? invs.filter(v => v.ep !== "default" && v.ray0 === ray0(r.ray)) : []
     let join = "joined", reason = ""
     if (!same) { join = "external"; reason = "not ephem" }
     else if (r.fromCache) { join = "browser-cache"; reason = `browser ${r.fromCache} cache: no request left the browser, no server involved` }
-    else if (r.failed) { join = "failed"; reason = r.failed }
+    else if (r.failed && !(r.ray && inv)) { join = "failed"; reason = r.failed }
     else if (!r.ray) { join = "no-ray"; reason = c.source === "rum" ? "no ray in the resource's serverTiming (a response before ray;desc, or no Timing-Allow)" : "no cf-ray on the response" }
     else if (!inv) { join = "missing"; reason = `ray ${r.ray} not in Workers Observability after ${ingestS.toFixed(0)} s` }
-    const root = r.ray ? sspans.find(s => s.ray && ray0(s.ray) === ray0(r.ray) && !s.parent) : undefined
+    const root = r.ray && !r.fromCache ? sspans.find(s => s.ray && ray0(s.ray) === ray0(r.ray) && !s.parent) : undefined
     const eff = root ? sspans.find(s => s.trace === root.trace && s.a["client.trace_id"]) : undefined
     const byTrace = !!eff && eff.a["client.trace_id"] === c.traceId && (!r.spanId || eff.a["client.span_id"] === r.spanId || eff.a["client.document_span_id"] === r.spanId)
     if (join === "joined") reason = byTrace ? "" : r.spanId || r.type === "Document" ? "joined by cf-ray only (no client.trace_id match)" : ""
+    if (join === "joined" && r.failed) reason = (reason ? reason + "; " : "") + `CDP says ${r.failed} (a keepalive fetch: the browser stops reporting it) but the response (${r.status}) and its invocation exist`
     if (inv && r.cache === "HIT" && !internal.some(v => v.ep === "Api")) reason = (reason ? reason + "; " : "") + "Workers Cache HIT: the front door ran, the Api entrypoint did not"
     return { i, url: u.pathname + (u.pathname.startsWith("/v1/") && u.search ? `?${[...u.searchParams.keys()].join("&")}` : ""), path: u.pathname, method: r.method, type: r.type, status: r.status,
       protocol: r.protocol ?? null, start: r.start, end: r.end, bytes: r.bytes, ph: r.ph, ray: r.ray ?? null, cache: r.cache ?? null, fromCache: r.fromCache ?? null,

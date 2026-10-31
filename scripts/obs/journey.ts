@@ -21,6 +21,15 @@ import { viewerHtml } from "./cdp/viewer.ts"
 
 // ---------- args ----------
 const argv = process.argv.slice(2)
+// --rebuild <name>.raw.json: rebuild the model and viewer from a run's saved inputs (after a model.ts / viewer.ts change).
+if (argv[0] === "--rebuild") {
+  const { readFileSync } = await import("node:fs")
+  const raw = JSON.parse(readFileSync(argv[1]!, "utf8")), base = argv[1]!.replace(/\.raw\.json$/, "")
+  const m = buildModel(raw.client, raw.server, raw.meta); (m.meta as any).rum = raw.rum
+  writeFileSync(`${base}.model.json`, JSON.stringify(m, null, 1)); writeFileSync(`${base}.html`, viewerHtml(m, base.split("/").pop()!))
+  console.log(`rebuilt ${base}.{model.json,html}: coverage ${m.coverage.joined}/${m.coverage.total}, offset ${m.offset.thetaMs} ± ${m.offset.plusMinusMs} ms`)
+  process.exit(0)
+}
 const flag = (k: string) => argv.includes(`--${k}`)
 const opt = (k: string, d: string) => { const i = argv.indexOf(`--${k}`); return i >= 0 && argv[i + 1] ? argv[i + 1]! : d }
 const target = argv.find(a => /^https?:/.test(a)) ?? "https://ephem.ivar.workers.dev/"
@@ -139,7 +148,7 @@ const creqs: CReq[] = pageReqs.map(r => {
   const tp = r.reqHeaders["traceparent"]
   return { url: r.url, method: r.method, type: r.type ?? "", status: r.status ?? 0, protocol: r.protocol, fromCache: r.fromCache ?? null, failed: r.failed,
     start: rel(r.start * 1000), ph, end: r.end ? rel(r.end * 1000) : null, bytes: r.encoded ?? 0, ray: r.headers["cf-ray"], cache: r.headers["x-ephem-cache"],
-    version: r.headers["x-ephem-version"]?.slice(0, 8), serverTiming: r.headers["server-timing"], traceId: r.headers["x-ephem-trace"] ?? tp?.slice(3, 35), spanId: tp?.slice(36, 52),
+    version: r.headers["x-ephem-version"]?.slice(0, 8), serverTiming: r.headers["server-timing"], traceId: tp?.slice(3, 35) ?? r.headers["x-ephem-trace"], spanId: tp?.slice(36, 52),
     sendWall: t ? base + t.sendStart + WALL : undefined, headWall: t ? base + t.receiveHeadersEnd + WALL : undefined }
 })
 
@@ -252,6 +261,8 @@ const rumCheck = { rows: rum.length, kinds: Object.fromEntries([...new Set(rum.m
 writeFileSync(join(outDir, `${name}.rum.json`), JSON.stringify({ rumCheck, checks, rows: rum }, null, 1))
 
 // ---------- outputs ----------
+const metaIn = { ...model.meta }; delete (metaIn as any).rum
+writeFileSync(join(outDir, `${name}.raw.json`), JSON.stringify({ client, server, meta: metaIn, rum: rumCheck }))
 writeFileSync(join(outDir, `${name}.model.json`), JSON.stringify(model, null, 1))
 writeFileSync(join(outDir, `${name}.html`), viewerHtml(model, name))
 const keepPids = new Set([mainPid, ...trace.filter(e => e.ph === "M" && e.name === "process_name" && /Browser|GPU/.test(e.args?.name)).map(e => e.pid)])
