@@ -1,0 +1,4 @@
+# Mechanical reformats, skipped by blame: git config blame.ignoreRevsFile .git-blame-ignore-revs
+# (GitHub reads this file by itself.)
+# format: reformat the repo (prettier, ruff, shfmt)
+f9200a3209be9492eef13a44248e0432080ed623
