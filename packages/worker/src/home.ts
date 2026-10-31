@@ -862,7 +862,18 @@ function detailsHtml(p) {
     kv("Moon distance", Math.round(mo.distanceKm).toLocaleString("en-US") + " km") +
     kv("Moon phase", esc(mo.phase.name) + " \u00b7 " + (mo.phase.illuminatedFraction * 100).toFixed(1) + "% lit") + "</dl>";
 }
-function setBodies() { if (!S.to) return; setHtml("bodies", cardsHtml(S.to)); setHtml("detailsBody", detailsHtml(S.to)); }
+function setBodies() { if (!S.to) return; patchHtml("bodies", cardsHtml(S.to)); patchHtml("detailsBody", detailsHtml(S.to)); }
+// Update in place: when the new markup has the same shape, only the text of changed leaves is rewritten, so the readouts are
+// painted once as new elements (one LCP candidate, not a new one every time a number or the magnetic azimuth arrives).
+function patchHtml(id, h) {
+  if (domMemo[id] === h) return;
+  var el = $(id), tmp = document.createElement("div"); tmp.innerHTML = h;
+  var a = el.querySelectorAll("*"), b = tmp.querySelectorAll("*"), same = domMemo[id] != null && a.length === b.length;
+  for (var i = 0; same && i < a.length; i++) if (a[i].tagName !== b[i].tagName || a[i].className !== b[i].className || a[i].children.length !== b[i].children.length) same = false;
+  if (!same) el.innerHTML = h;
+  else for (i = 0; i < a.length; i++) if (!a[i].children.length && a[i].textContent !== b[i].textContent) a[i].textContent = b[i].textContent;
+  domMemo[id] = h;
+}
 // "Night", "Civil twilight", ... from the Sun's altitude
 function skyPhase(a) { return a >= 0 ? "Day" : a >= -6 ? "Civil twilight" : a >= -12 ? "Nautical twilight" : a >= -18 ? "Astronomical twilight" : "Night"; }
 function setPos(p) {
@@ -900,7 +911,7 @@ function tick() {
   var now = tNow();
   setText("clock", hms(now));
   var age = S.posAt ? (Date.now() - S.posAt) / 1000 : null, st = S.posErr ? "alert" : age == null ? "" : age < 15 ? "ok" : "caution";
-  if (domMemo.live !== st) { domMemo.live = st; $("live").className = "live " + st; }
+  if (domMemo.live !== st) { domMemo.live = st; $("live").className = "dot " + st; }
   setText("liveT", st === "alert" ? "No signal" : AT != null && st ? "Fixed time" : st === "ok" ? "Live" : st === "caution" ? "Delayed" : "Acquiring");
   liveCheck(now);   // the chart: a marker that moved half a pixel, or a minute
   var up = upcoming(now), html = lastNext;
