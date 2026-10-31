@@ -257,7 +257,7 @@ geoid (heightMsl 0; before 2026-10-30 it was 0 m above the ellipsoid). With `hei
 point reports `heightEllipsoid`, `heightMsl`, `geoidUndulation`, and the body's `altitudeRate` / `azimuthRate` seen from that
 point (analytic, as /v1/position); `target` echoes the target's heights; a `conventions` block states the solve, what
 `azimuth` means, terrestrial refraction (modelled: constant k = 0.13 along the sight line), refraction and heights. The
-Worker prefetches the geoid bands for target lat ± maxDistanceKm. Evidence: the customer's Statue of Liberty repro
+Worker prefetches the geoid bands for target lat ± maxDistanceKm. Evidence: the Statue of Liberty reference repro
 (2026-11-17T03:44:30–03:46:00Z) in ellipsoidal heights (their hand-copied N = −32.81 m) and in msl heights (70 m / 5 m)
 agree to ≤ 8.5 m along a 12 m/s track (N at the statue is −32.90 m, so their target was 0.09 m high); vs the Skyfield
 oracle with msl heights: position ≤ 25 mm, heightEllipsoid ≤ 1.8 mm (`crosscheck.py --only alignment`, 0 failures).
@@ -265,7 +265,7 @@ oracle with msl heights: position ≤ 25 mm, heightEllipsoid ≤ 1.8 mm (`crossc
 **Context (`include=sun,phase`, 2026-10-30).** On /v1/alignment (each track point and pass) and /v1/crossing (each
 crossing): `sun` = the Sun's azimuth, true altitude and apparent altitude (sea horizon at the eye's height, else null) seen
 from that point at that instant, and `phase` = the Moon's geocentric phase, both exactly /v1/position's values there
-(worker test). Replaces the customer's per-pass /v1/position calls. Answers without `include` are unchanged (no
+(worker test). Replaces the Liberty reference per-pass /v1/position calls. Answers without `include` are unchanged (no
 CACHE_VERSION bump).
 
 **Aim points (`aim`, `aim.ts`, 2026-10-30).** Which point of the disc is put on the target (alignment) or on the altitude
@@ -283,11 +283,11 @@ Sun's direction from the Moon projected on the sky plane at the Moon; the projec
 (Moon − eye is along the line of sight), so it is exact. Validation: `reference/oracle/litcentroid.py` (Skyfield + DE440s,
 2 M equal-area points on the lunar sphere, visible ∧ sunlit, weighted by solid angle at the eye, centroid on the gnomonic
 sky plane) at four instants (crescent 9 %, 46 %, 45 %, gibbous 82 %): offsets agree to ≤ 0.028′ (0.19 % of r, the
-orthographic approximation), angles to ≤ 0.006° (`core/test/aim.test.ts`). **Customer check** (Nov 16 2026 EST, 47 %):
+orthographic approximation), angles to ≤ 0.006° (`core/test/aim.test.ts`). **Reference check** (Nov 16 2026 EST, 47 %):
 ours 6.844′ at 155.70° clockwise from the vertical (brute force 6.847′, 155.70°); their 6.75′ is exactly the closed form
 with the *geocentric* illuminated fraction 46.9 % instead of the topocentric 46.15 % (parallax moves the phase angle ≈ 0.9°).
 On the track, the spot where the centroid is on the statue at 03:45:19 gets the centre 36.8 s later, 4.5 m to the side
-(customer: 40 s, 4.9 m). Crossing with litCentroid: the set moves by offset·cos(angle)/rate (test, ≤ 2 s).
+(reference: 40 s, 4.9 m). Crossing with litCentroid: the set moves by offset·cos(angle)/rate (test, ≤ 2 s).
 
 *Bright limb from the vertical.* /v1/position `moon.brightLimbAngleFromVertical`: the same direction, degrees clockwise from
 the local vertical as seen from the eye (towards increasing azimuth), topocentric. Checked against 360° − (χ − q), Meeus'
@@ -308,11 +308,11 @@ of curvature k/R (k = 0.13, as alignment) through both ends, k·s₁·s₂/(2R) 
 stated in conventions. Obstacles are projected on the line (along, cross-track: a local flat projection, so crossTrackM is
 approximate at tens of km), clearance = line − obstacle, `blocks` = refracted clearance < 0. Evidence: PROJ (EPSG
 4978→4979) + GeographicLib on a 3.6 km and a 152 km line: heightEllipsoid ≤ 1.5e-7 m, distance ≤ 2.6e-7 m; midpoint drop
-= s₁s₂/2R to ±5 cm (N varies); Pier 6 → statue figure crosses Governors Island at ~28 m MSL (customer: 22–28 m).
+= s₁s₂/2R to ±5 cm (N varies); Pier 6 → statue figure crosses Governors Island at ~28 m MSL (reference: 22–28 m).
 ### 10.x Alignment search over a region (`region.ts`, `search.ts`, `search-request.ts`; 2026-10-30)
 
 `POST /v1/alignment/search` answers "every pass in [start, end) when the alignment standing point P(t) lies inside a
-standing region", in one call. It replaces the customer's crossing → alignment → polygon clip → position pipeline (~150
+standing region", in one call. It replaces the Liberty reference crossing → alignment → polygon clip → position pipeline (~150
 calls, ~39 s per 12-month scan). P(t) is `standingPoint` (above, same solver, heights, `aim`), so nothing new is modelled.
 
 **Region.** GeoJSON Polygon / MultiPolygon with holes (or a Feature with one) or a bbox. Edges are straight in (lon, lat)
@@ -339,7 +339,7 @@ azimuth's distance from its band (H = band + 15°, and only as far as |h| provab
 settings at the wrong bearing. Near the band it steps 60 s and keeps each step [t₀, t₁] with d(t₀) + d(t₁) ≤ L·(t₁ − t₀) for
 both altitude and azimuth (H = band + 1°). Each kept span's ends are then pulled in by the same jumps from both sides until a
 jump is < 1 s, and an end is always an evaluated out-of-band instant. Every instant with P inside lies in a kept span, and span
-ends are outside (counted as `anomalies` if ever not; 0 everywhere so far). Measured (2026-10-30, Node, the customer's
+ends are outside (counted as `anomalies` if ever not; 0 everywhere so far). Measured (2026-10-30, Node, the Liberty reference
 12-month park scan): scan evaluations 16 649 → 6 210, track evaluations 4 376 → 2 563, span time 15 660 → 9 713 s, same
 64 passes / 125 segments, entries and exits within 1 ms (ms rounding), brute force 1 s: 0 missed.
 
@@ -362,14 +362,14 @@ on exact repeats and puts a whole year's CPU in one invocation.
 
 | Check | Result |
 | --- | --- |
-| Customer's scan: Liberty 40.68925, −74.04450, 70 m MSL; Brooklyn Bridge Park (OSM way 56469108, 424 refs); eye 5 m MSL; 2026-10-30 → 2027-10-30 | **64 passes, 125 segments** (customer: 64 / 125); 66 spans, 16 649 scan + 4 376 track + 559 refine solves, 164 ms Node |
-| Nov 16 pass entry | **2026-11-17T03:45:19.646Z at 40.703292, −73.996305** (customer: 03:45:19 at 40.70329, −73.99630) |
+| Liberty reference scan: Liberty 40.68925, −74.04450, 70 m MSL; Brooklyn Bridge Park (OSM way 56469108, 424 refs); eye 5 m MSL; 2026-10-30 → 2027-10-30 | **64 passes, 125 segments** (reference: 64 / 125); 66 spans, 16 649 scan + 4 376 track + 559 refine solves, 164 ms Node |
+| Nov 16 pass entry | **2026-11-17T03:45:19.646Z at 40.703292, −73.996305** (reference: 03:45:19 at 40.70329, −73.99630) |
 | Brute force: solver every 1 s whenever the Moon is within [−1.5°, +3°] at the park centre (band 0.24–0.68°), no azimuth filter, 12 months | 1 165 039 solves, 1 047 in-park instants, **0 outside a returned segment**, all 125 segments sampled |
 | Brute force on other geometries (`search.test.ts`, 30 days): Sun over a 2–9 km fan, 55° of bearings; Moon, 300 m tower 1–3 km away, MultiPolygon with a hole | 0 missed |
 | Entries/exits on an edge, and P(entry time) = the entry point | ≤ 1 cm, ≤ 2 cm (ms rounding of the time) |
-| aim=litCentroid, Nov 16 (47 % lit) | entry 36.3 s earlier (customer: 40 s; §10 aim: 36.8 s on the track) |
+| aim=litCentroid, Nov 16 (47 % lit) | entry 36.3 s earlier (reference: 40 s; §10 aim: 36.8 s on the track) |
 
-The remaining differences from the customer's numbers are inputs, not geometry: they used one hand-copied N = −32.81 m for
+The remaining differences from the reference numbers are inputs, not geometry: they used one hand-copied N = −32.81 m for
 both ends (EGM96 here: −32.90 m at the statue, −32.81 m at the park), 5 s sampling plus client-side bisection, and the same
 OSM outline (piers and inlets split passes identically: 125 segments both ways).
 
@@ -586,10 +586,10 @@ independent implementation), then core/worker; then regenerate fixtures and run 
 
 ## 17. Open items
 
-- **Target extent (customer round-2 #4), designed, not built:** target = vertical segment base..top with half-width w
+- **Target extent (open), designed, not built:** target = vertical segment base..top with half-width w
   perpendicular to the sight line → for a fixed observer an angular box az ∈ A ± atan(w/D), apparent elevation
   [e_base, e_top]; contact / clear = first / last instant the disc (aim point, radius r) is within r of the box. "Full overlap"
-  needs the customer's definition (disc inside the box is impossible for the Statue of Liberty, 0.14° wide vs a 0.5° disc;
+  needs a user's definition (disc inside the box is impossible for the Statue of Liberty, 0.14° wide vs a 0.5° disc;
   the box's width inside the disc at the target's height is the silhouette case). It belongs with /v1/alignment/search,
   where intervals are per standing segment, so it waits for that endpoint.
 

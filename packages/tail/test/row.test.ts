@@ -35,7 +35,7 @@ describe("tail rows", () => {
     expect(toRow({ outcome: "ok", event: null }, 0)).toEqual({ ts: "1970-01-01T00:00:00.000Z", outcome: "ok", exceptions: 0, error_logs: 0, basin_send_failed: 0 })
     expect(routeOf("https://x/secret/path")).toBe("other"); expect(routeOf("not a url")).toBe("other"); expect(routeOf("https://x/")).toBe("/")
   })
-  it("labels every ephem route from ephem's own list (packages/worker/src/routes.ts), incl. the round-2 routes", () => {
+  it("labels every ephem route from ephem's own list (packages/worker/src/routes.ts)", () => {
     expect(TAIL_ROUTES).toBe(ROUTES)
     for (const p of ["/v1/track", "/v1/sightline", "/v1/alignment/search", "/internal/alignment-search-window", "/llms.txt", "/docs/interactive"])
       expect(routeOf(`https://ephem.ivar.workers.dev${p}?lat=1`), p).toBe(p)

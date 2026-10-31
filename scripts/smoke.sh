@@ -71,7 +71,7 @@ chk de440-block-404 404 "/assets/de440/29915576d0a65557/12556" "no block"
 chk page-trace 200 "/?lat=40.7&lon=-74&tz=America/New_York" '<meta name="traceparent" content="00-'   # document trace context (src/clienttrace.ts)
 RT=$(openssl rand -hex 16); RS=$(openssl rand -hex 8)
 chk rum 204 "/rum" "" '{"tp":"00-'"$RT"'-'"$RS"'-01","page":"/","seq":0,"s":[{"k":"app","n":"smoke","sid":"'"$RS"'","t":0}]}'   # RUM ingest (src/rum.ts), stored synthetic
-chk docs 200 "/docs" 'href="/openapi.json"'                       # useful without JS: links the spec (round-2 #7)
+chk docs 200 "/docs" 'href="/openapi.json"'                       # useful without JS: links the spec
 chk docs-interactive 200 "/docs/interactive"
 chk llms 200 "/llms.txt" "$B/mcp"                                 # names the MCP endpoint
 chk openapi 200 "/openapi.json"
@@ -88,7 +88,7 @@ chk weather 200 "/v1/weather?lat=40.7&lon=-74"
 chk unknown-param 400 "/v1/day?lat=40.7&lon=-74&date=2026-10-29&tz=America/New_York&bogus=1"
 chk not-found 404 "/position?lat=40.7&lon=-74" 'did you mean /v1/position?' # unprefixed: JSON 404 naming the endpoints (no alias)
 chk window-internal 404 "/internal/alignment-search-window?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&region=r1.x&start=2026-10-17T00:00:00Z"
-# the customer's Nov 16 2026 pass over a bbox of Brooklyn Bridge Park (fans out to cached window GETs)
+# the Liberty reference Nov 16 2026 pass over a bbox of Brooklyn Bridge Park (fans out to cached window GETs)
 chk search 200 "/v1/alignment/search" '"enter":{"time":"2026-11-17T03:4' \
   '{"body":"moon","targetLat":40.68925,"targetLon":-74.0445,"targetHeight":70,"targetHeightRef":"msl","region":[-73.9995,40.7,-73.993,40.706],"height":5,"heightRef":"msl","start":"2026-11-16T00:00:00Z","end":"2026-11-18T00:00:00Z"}'
 # A deterministic key nobody has asked for (random lat at 1e-7°): MISS computed by the Api, then HIT from its cache.

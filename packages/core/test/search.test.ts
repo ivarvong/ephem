@@ -1,4 +1,4 @@
-// /v1/alignment/search core: region canonicalisation, the customer's 12-month Brooklyn Bridge Park scan (round-2 feedback),
+// /v1/alignment/search core: region canonicalisation, the Liberty reference 12-month Brooklyn Bridge Park scan,
 // completeness against a brute-force scan that shares none of the search's band or scan logic, and exactness of entries.
 import { describe, expect, it } from "vitest"
 import { readFileSync } from "node:fs"
@@ -96,18 +96,18 @@ describe("region", () => {
   })
 })
 
-describe("search: the customer's Statue of Liberty / Brooklyn Bridge Park scan (round-2 feedback, 2026-10-30)", () => {
+describe("search: the Statue of Liberty / Brooklyn Bridge Park reference scan", () => {
   const year = scan("moon", target, park, EYE, T0, T1)
-  it("12 months: 64 passes, 125 in-park segments (the customer's numbers), no invariant tripped", () => {
+  it("12 months: 64 passes, 125 in-park segments (the reference numbers), no invariant tripped", () => {
     expect(year.passes.length).toBe(64)
     expect(year.passes.reduce((s, p) => s + p.segments.length, 0)).toBe(125)
     expect(year.counters.anomalies).toBe(0)
   })
-  it("regression: the Nov 16 pass enters at 2026-11-17T03:45:19Z, 40.70329, −73.99630 (the customer's expected entry)", () => {
+  it("regression: the Nov 16 pass enters at 2026-11-17T03:45:19Z, 40.70329, −73.99630 (the reference expected entry)", () => {
     const p = year.passes.find(x => x.time.startsWith("2026-11-17T03:4"))!
     const e = p.segments[0]!.enter
     expect(Math.abs(Date.parse(e.time) - Date.parse("2026-11-17T03:45:19.646Z"))).toBeLessThanOrEqual(5)   // pinned (this solver)
-    expect(Math.abs(Date.parse(e.time) - Date.parse("2026-11-17T03:45:19.5Z"))).toBeLessThan(1000)         // the customer's second
+    expect(Math.abs(Date.parse(e.time) - Date.parse("2026-11-17T03:45:19.5Z"))).toBeLessThan(1000)         // the reference second
     expect(e.lat).toBeCloseTo(40.70329, 5); expect(e.lon).toBeCloseTo(-73.9963, 5)
     expect(p.moon.illuminated).toBeCloseTo(0.47, 2)                                                       // "Nov 16 (47% lit)"
     expect(p.sunAlt).toBeLessThan(-18)
@@ -135,7 +135,7 @@ describe("search: the customer's Statue of Liberty / Brooklyn Bridge Park scan (
     expect(r).toMatchObject({ missed: [], unsampled: 0 })
     expect(r.samples).toBeGreaterThan(100)
   }, 60_000)
-  it("aim=litCentroid (47% lit): the Nov 16 pass comes earlier, as the customer measured (~40 s)", () => {
+  it("aim=litCentroid (47% lit): the Nov 16 pass comes earlier, as the reference measured (~40 s)", () => {
     const from = Date.parse("2026-11-16T12:00:00Z"), to = Date.parse("2026-11-17T12:00:00Z")
     const r = searchWindow(diskBlocks, { body: "moon", target, region: park, ...EYE, startMs: from, endMs: to, aim: "litCentroid" })
     if ("error" in r) throw new Error(r.error)

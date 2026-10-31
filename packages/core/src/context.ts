@@ -1,4 +1,4 @@
-// `include=sun,phase` (round-2 #5): context for an alignment track point, an alignment pass or a crossing, so a client
+// `include=sun,phase`: context for an alignment track point, an alignment pass or a crossing, so a client
 // needs no follow-up /v1/position call. Same definitions as /v1/position.
 import type { BlockSource } from "./ephemeris.ts"
 import { type Geodetic, apparent, frameAt, topocentric } from "./observe.ts"

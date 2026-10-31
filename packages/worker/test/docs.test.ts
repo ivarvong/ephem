@@ -1,4 +1,4 @@
-// /docs without JavaScript, /llms.txt, /docs/interactive (round-2 #7).
+// /docs without JavaScript, /llms.txt, /docs/interactive.
 import { describe, expect, it } from "vitest"
 import { QUERY_PARAMS } from "@ephem/api"
 import { makeHandler } from "../src/app.ts"

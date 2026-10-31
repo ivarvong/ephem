@@ -1,4 +1,4 @@
-// /v1/sightline (round-2 #6): the height above mean sea level of the sight line from an eye to a target, against ground
+// /v1/sightline: the height above mean sea level of the sight line from an eye to a target, against ground
 // distance, and the clearance over given obstacle points. Pure geometry (no ephemeris, no time).
 //
 // Geometric line: the straight chord eye → target between exact WGS-84 ECEF points, so Earth's curvature is in it by

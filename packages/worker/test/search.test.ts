@@ -23,7 +23,7 @@ const post = async (h: typeof local, body: unknown, headers: Record<string, stri
 }
 
 describe("POST /v1/alignment/search", () => {
-  it("the customer's Nov 16 pass: one call, exact entry 2026-11-17T03:45:19Z at 40.70329, −73.99630", async () => {
+  it("the Liberty reference Nov 16 pass: one call, exact entry 2026-11-17T03:45:19Z at 40.70329, −73.99630", async () => {
     const { status, j, headers } = await post(local, BODY)
     expect(status).toBe(200); expect(headers.get("cache-control")).toBe("no-store")
     expect(j.passes).toHaveLength(1)

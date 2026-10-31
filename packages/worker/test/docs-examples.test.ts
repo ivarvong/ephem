@@ -69,7 +69,7 @@ const CLAIMS: Record<string, (j: any, path: string) => void> = {
   "/v1/sightline": (j, p) => {   // "height above sea level against ground distance … and the clearance over obstacle points"
     expect(j.profile).toHaveLength(Number(q(p).get("samples") ?? 101))
     for (const o of j.obstacles) { expect(o.clearanceM).toBeCloseTo(o.lineHeightMsl - o.heightMsl, 9); expect(typeof o.blocks).toBe("boolean") }
-    expect(j.obstacles[0].lineHeightMsl).toBeGreaterThan(22); expect(j.obstacles[0].lineHeightMsl).toBeLessThan(34)   // "22–28 m over the island" (customer)
+    expect(j.obstacles[0].lineHeightMsl).toBeGreaterThan(22); expect(j.obstacles[0].lineHeightMsl).toBeLessThan(34)   // "22–28 m over the island" (reference)
   },
   "/v1/magnetic": j => { expect(j.magnetic.model).toBe("WMM2025"); expect(j.magnetic.declination).toBeGreaterThan(-14); expect(j.magnetic.declination).toBeLessThan(-11); expect(j.magnetic.compass).toBe("ok") },   // NYC ≈ −12.5° W
   "/v1/weather": (j, p) => {   // "Nearest METAR stations, decoded, with distance and true / magnetic bearing"

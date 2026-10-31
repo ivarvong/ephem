@@ -1,4 +1,4 @@
-// /v1/alignment through the real handler: height references (round-2 feedback #2), conventions, rates.
+// /v1/alignment through the real handler: height references, conventions, rates.
 import { describe, expect, it } from "vitest"
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
@@ -10,7 +10,7 @@ const FIX = resolve(__dirname, "../../core/test/fixtures/blocks")   // 5441–54
 const handler = makeHandler(makeBlocks(direct(async first => { const b = readFileSync(`${FIX}/${first}.bin`); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer })))
 const get = async (q: string) => { const r = await handler(new Request(`http://x/v1/alignment?${q}`)); return { status: r.status, j: await r.json() as any } }
 
-// The customer's Nov 16 2026 (EST) pass behind the Statue of Liberty, heights ellipsoidal (their hand-copied N = −32.81 m).
+// The Liberty reference Nov 16 2026 (EST) pass behind the Statue of Liberty, heights ellipsoidal (their hand-copied N = −32.81 m).
 const BASE = "body=moon&targetLat=40.68925&targetLon=-74.0445&start=2026-11-17T03:44:30Z&end=2026-11-17T03:46:00Z&stepSeconds=5&maxDistanceKm=8"
 const ELLIPSOID = `${BASE}&targetHeight=37.2&height=-27.8`
 const MSL = `${BASE}&targetHeight=70&height=5&heightRef=msl&targetHeightRef=msl`
@@ -19,7 +19,7 @@ const metres = (a: { lat: number; lon: number }, b: { lat: number; lon: number }
   Math.hypot((a.lat - b.lat) * 111_000, (a.lon - b.lon) * 111_000 * Math.cos(a.lat * Math.PI / 180))
 
 describe("alignment height references", () => {
-  it("the customer's ellipsoidal repro keeps working: 19 points, entering Brooklyn Bridge Park near 03:45:19Z", async () => {
+  it("the Liberty reference ellipsoidal repro keeps working: 19 points, entering Brooklyn Bridge Park near 03:45:19Z", async () => {
     const { status, j } = await get(ELLIPSOID)
     expect(status).toBe(200)
     expect(j.track).toHaveLength(19)
@@ -36,7 +36,7 @@ describe("alignment height references", () => {
     expect(b.target.geoidUndulation).toBeCloseTo(geoidUndulation(40.68925, -74.0445), 12)
     expect(b.conventions).toMatchObject({ heightRef: "msl", targetHeightRef: "msl" })
     // The hand-copied N (−32.81 at the park centroid, used for both heights) differs from N at the statue and at each standing
-    // point by centimetres; 1 m of eye height moves the spot ~60 m (customer), so the tracks agree to a few metres, not mm.
+    // point by centimetres; 1 m of eye height moves the spot ~60 m (reference), so the tracks agree to a few metres, not mm.
     const dN = Math.abs(b.target.geoidUndulation + 32.8) + Math.max(...b.track.map((p: any) => Math.abs(p.geoidUndulation + 32.8)))
     for (const [i, p] of b.track.entries()) {
       expect(p.time).toBe(a.track[i].time)
@@ -79,7 +79,7 @@ describe("alignment height references", () => {
 
 const pos = async (lat: number, lon: number, hE: number, time: string) =>
   (await (await handler(new Request(`http://x/v1/position?lat=${lat}&lon=${lon}&height=${hE}&time=${time}`))).json()) as any
-describe("include=sun,phase (round-2 #5)", () => {
+describe("include=sun,phase", () => {
   it("alignment: every track point and pass carries the Sun and the Moon phase, equal to /v1/position there and then", async () => {
     const { status, j } = await get(`${MSL}&include=sun,phase&lat=40.7003&lon=-73.9968`)
     expect(status).toBe(200)
@@ -109,7 +109,7 @@ describe("include=sun,phase (round-2 #5)", () => {
   })
 })
 
-describe("aim (round-2 #3)", () => {
+describe("aim", () => {
   it("litCentroid: the aim point sits on the target (geometry re-checked), ~37 s earlier than the centre at the same spot", async () => {
     const c = (await get(MSL)).j, l = (await get(`${MSL}&aim=litCentroid`)).j
     expect(l.conventions.aim).toMatchObject({ point: "litCentroid" })

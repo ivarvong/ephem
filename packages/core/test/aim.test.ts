@@ -1,4 +1,4 @@
-// Aim points (round-2 #3): the lit-area centroid's closed form against a brute-force integration over the lunar sphere with
+// Aim points: the lit-area centroid's closed form against a brute-force integration over the lunar sphere with
 // an independent ephemeris (Skyfield + DE440s, reference/oracle/litcentroid.py, 2 M surface points), and the bright limb
 // from the local vertical against Meeus' position angle minus the parallactic angle.
 import { describe, expect, it } from "vitest"
@@ -26,7 +26,7 @@ describe("lit-area centroid", () => {
   })
   // Frozen output of reference/oracle/litcentroid.py (2026-10-30): offset (′), angle clockwise from vertical (°).
   const BRUTE: ReadonlyArray<[string, number, number, number, number, number]> = [
-    ["2026-11-17T03:45:20Z", 40.70333, -73.99618, -27.8, 6.8473, 155.703],    // the customer's Nov 16 (EST) pass, 46 % lit
+    ["2026-11-17T03:45:20Z", 40.70333, -73.99618, -27.8, 6.8473, 155.703],    // the Liberty reference Nov 16 (EST) pass, 46 % lit
     ["2026-11-17T00:00:00Z", 40.7, -74.0, 0, 7.0432, 125.897],
     ["2026-11-20T23:00:00Z", 51.5, -0.1, 20, 2.3682, 138.543],                // gibbous, 82 %
     ["2026-11-12T10:00:00Z", -33.9, 151.2, 30, 11.5114, 202.163],             // crescent, 9 %
@@ -36,7 +36,7 @@ describe("lit-area centroid", () => {
     expect(Math.abs(g.centroidOffset * 60 - off)).toBeLessThan(0.05)
     expect(Math.abs(g.brightLimbAngleFromVertical! - ang)).toBeLessThan(0.02)
   })
-  it("the customer's check value: 6.75′ is the geocentric phase (46.9 %); topocentric (46.15 %) gives 6.84′", () => {
+  it("the Liberty reference check value: 6.75′ is the geocentric phase (46.9 %); topocentric (46.15 %) gives 6.84′", () => {
     const { g, r } = at("2026-11-17T03:45:20Z", 40.70333, -73.99618, -27.8)
     const geo = positionRequest(diskBlocks, { utcMs: Date.parse("2026-11-17T03:45:20Z"), lat: 40.70333, lon: -73.99618, height: -27.8 }).moon.phase
     const cosGeo = 2 * geo.illuminatedFraction - 1

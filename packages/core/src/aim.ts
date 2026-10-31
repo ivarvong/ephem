@@ -1,4 +1,4 @@
-// Aim points on a disc (round-2 #3): the centre, the upper or lower limb along the local vertical, or the centroid of the
+// Aim points on a disc: the centre, the upper or lower limb along the local vertical, or the centroid of the
 // Moon's illuminated area. All in the true (unrefracted) sky, topocentric; callers refract the aim point's altitude.
 //
 // Lit-area centroid. Seen from the observer the Moon is a disc of angular radius r (topocentric, asin(R☾/d)). With

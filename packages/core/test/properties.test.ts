@@ -61,7 +61,7 @@ describe("refraction down to the horizon (2026-10-29)", () => {
       expect(refraction(a, T, P)).toBeCloseTo(k * bennett(a, T, P), 12)
     }), { numRuns: 500 })
     expect(refraction(89.95, 10, 1010)).toBe(0); expect(refraction(REFRACTION_FLOOR - 0.01, 10, 1010)).toBe(0)
-    // the customer's case: −1.02° true from 320 m above the sea: about 40′ of refraction, not 0
+    // the Liberty reference case: −1.02° true from 320 m above the sea: about 40′ of refraction, not 0
     const a = apparentAltitudeOf(-1.02, 10, 1010, -seaDip(320))!
     expect((a + 1.02) * 60).toBeGreaterThan(38); expect((a + 1.02) * 60).toBeLessThan(42)
     // alignment's solver uses the same model, falling back to no refraction only below the floor

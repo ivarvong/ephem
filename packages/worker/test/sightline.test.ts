@@ -1,4 +1,4 @@
-// /v1/sightline (round-2 #6). Geometry cross-checked offline against PROJ + GeographicLib (reference/oracle/
+// /v1/sightline. Geometry cross-checked offline against PROJ + GeographicLib (reference/oracle/
 // sightline_check.py, 2026-10-30): heightEllipsoid ≤ 1.5e-7 m, distance ≤ 2.6e-7 m on a 3.6 km and a 152 km line.
 import { describe, expect, it } from "vitest"
 import { makeHandler } from "../src/app.ts"
@@ -29,7 +29,7 @@ describe("sight line", () => {
     const { j } = await get(`${PIER6}&samples=101&obstacles=40.6894:-74.0166:25,40.6894:-74.0166:30,40.70:-73.99:5`)
     const [a, b, c] = j.obstacles
     expect(a.clearanceM).toBeCloseTo(a.lineHeightMsl - 25, 9); expect(a.blocks).toBe(false)
-    expect(a.lineHeightMsl).toBeGreaterThan(22); expect(a.lineHeightMsl).toBeLessThan(34)     // customer: 22–28 m over the island
+    expect(a.lineHeightMsl).toBeGreaterThan(22); expect(a.lineHeightMsl).toBeLessThan(34)     // reference: 22–28 m over the island
     expect(b.blocks).toBe(true); expect(b.refractedClearanceM).toBeLessThan(0)
     expect(Math.abs(a.crossTrackM)).toBeLessThan(400)
     expect(c.distanceKm).toBeLessThan(0); expect(c.clearanceM).toBe(null); expect(c.blocks).toBe(null)   // behind the eye

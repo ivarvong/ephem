@@ -1,6 +1,6 @@
 // /docs (plain HTML, no JS needed), /llms.txt (plain text for agents) and /docs/interactive (Scalar, needs JS), from one
 // endpoint table. Parameter lists come from QUERY_PARAMS and definitions from CONVENTIONS (both @ephem/api), so they cannot
-// drift from the contract; test/docs.test.ts checks every parameter of every route is listed (round-2 feedback #7).
+// drift from the contract; test/docs.test.ts checks every parameter of every route is listed.
 import { CONVENTIONS, PARAM_DOCS, QUERY_PARAMS } from "@ephem/api"
 import { ICON_LINK } from "./favicon.ts"
 

@@ -55,3 +55,13 @@ and EGM96 read from PROJ's GeoTIFF through pyproj (`reference/geoid/fetch.sh` fe
 ## Conventions
 
 Every quantity's definition is in `packages/api/src/index.ts` (`CONVENTIONS`) and in `/openapi.json` of any deployment.
+
+## License
+
+MIT (see `LICENSE`), except for the following:
+- **Ephem DIN** is a subset of D-DIN © 2017 Datto Inc., modified and renamed as the SIL Open Font License 1.1 requires (`licenses/OFL-D-DIN.txt`; built by `scripts/fonts/din.py`).
+- **Third-party data** included for tests and the bundled model, all from US government sources and in the public domain:
+  - JPL DE440 test blocks and test points;
+  - the NGA EGM96 geoid;
+  - the NOAA WMM2025 coefficients;
+  - a METAR snapshot from aviationweather.gov.
