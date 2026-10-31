@@ -22,11 +22,12 @@
 #          the new version, then check it: /health (target, limits), unauthenticated POST /run refused (401), and with the token
 #          (~/.config/ephem-load/token) an over-limit /plan refused (400) and a 10-request run from one region answered by
 #          ephem (scripts/obs/load-remote.ts). Any failure routes ephem-load back to its previous version. Tags deployed-load/<ts>.
+#          (A new LOAD_TOKEN: scripts/obs/load-token.sh.)
 #          It never touches ephem, so it runs (and can fail) before the ephem phase.
 # auto (default) = ephem, plus tail first when packages/tail, the shared route list or the invocations schema changed since
 # the last deployed-tail/ tag, or tailConsumers changed since the last deployed/ tag, plus load when packages/load changed
-# since the last deployed-load/ tag. Success tags deployed/<ts> (ephem), deployed-tail/<ts> and deployed-load/<ts>. (ephem-compute, a separate Worker for Api + BlockStore, and its `compute` target were removed after the
-# 2026-10-30 A/B, DESIGN §12.0; old deployed-compute/ tags are history.) Smoke checks live in the deployed commit's scripts/smoke.sh. Fails closed at every step.
+# since the last deployed-load/ tag. Success tags deployed/<ts> (ephem), deployed-tail/<ts> and deployed-load/<ts>.
+# Smoke checks live in the deployed commit's scripts/smoke.sh. Fails closed at every step.
 # Telemetry gate (scripts/obs/canary-gate.py): after the pinned canary smoke and before promotion,
 # the gate reads Workers Observability for exactly the smoke's requests (smoke.sh --run: x-ephem-smoke header; --manifest:
 # their cf-rays) and fails on exceptions, 5xx, error logs, missing entrypoints/spans or missing telemetry; a failure removes
@@ -41,8 +42,7 @@
 #              lock owner line stays true; the inner copy's EXIT trap releases the lock and removes the worktree on every
 #              path. Keep it tiny: it is the only code that runs from the shared tree.
 #   inner      main() below, from <rev>: node_modules links, gate, deploy, smokes, telemetry gate, rollback. Its smoke.sh and
-#              scripts/obs/* are <rev>'s too. A <rev> from before the bootstrap (no EPHEM_DEPLOY_INNER in its deploy.sh) runs
-#              its own deploy.sh whole (it takes the lock itself).
+#              scripts/obs/* are <rev>'s too. A <rev> from before the two-stage deploy.sh is refused.
 if [ "${EPHEM_DEPLOY_INNER:-}" != 1 ]; then
   set -euo pipefail
   REV=${1:?usage: deploy.sh <rev> "<message>" [auto|ephem|tail|load|all]}
@@ -58,12 +58,7 @@ if [ "${EPHEM_DEPLOY_INNER:-}" != 1 ]; then
   fi
   WT=$(mktemp -d "${TMPDIR:-/tmp}/ephem-deploy-$SHA-XXXX")
   git -C "$ROOT" worktree add --detach -q "$WT" "$SHA"
-  if ! grep -q 'EPHEM_DEPLOY_INNER' "$WT/scripts/deploy.sh"; then
-    OLD=$(mktemp "${TMPDIR:-/tmp}/ephem-deploy-legacy-XXXX"); cp "$WT/scripts/deploy.sh" "$OLD"
-    git -C "$ROOT" worktree remove --force "$WT"; WT=""; rm -rf "$LOCK"; trap - EXIT
-    echo "== bootstrap: $SHA predates the two-stage deploy; running its own deploy.sh whole" >&2
-    exec env EPHEM_ROOT="$ROOT" bash "$OLD" "$@"
-  fi
+  grep -q 'EPHEM_DEPLOY_INNER' "$WT/scripts/deploy.sh" || { echo "$SHA predates the two-stage deploy.sh; not deploying it" >&2; exit 1; }
   echo "== bootstrap: lock + worktree for $SHA; exec its own scripts/deploy.sh (sha256 $(shasum -a 256 "$WT/scripts/deploy.sh" | cut -c1-12); shared tree's $(shasum -a 256 "$0" | cut -c1-12))"
   exec env EPHEM_DEPLOY_INNER=1 EPHEM_DEPLOY_LOCK="$LOCK" EPHEM_DEPLOY_WT="$WT" EPHEM_ROOT="$ROOT" bash "$WT/scripts/deploy.sh" "$@"
 fi
@@ -82,7 +77,6 @@ LL="$GITDIR/ephem-live.lock"   # held by the live watcher (below) from promotion
 LIVEDIR="$GITDIR/ephem-live"; mkdir -p "$LIVEDIR"
 LAST=$(git -C "$ROOT" tag --list 'deployed/*' --sort=-refname | head -1)
 O11Y_LIVE_S=${O11Y_LIVE_S:-90}
-HAS_GATE=0; [ -f "$WT/scripts/obs/canary-gate.py" ] && HAS_GATE=1
 
 # --- helpers -------------------------------------------------------------------------------------------------------------
 now() { python3 -c 'import time; print(f"{time.time():.1f}")'; }
@@ -91,8 +85,6 @@ iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 # stage <name>: close the running stage (its duration joins TIMINGS, printed as one `== timings` line)
 TIMINGS=""; T_INNER=$(now); T_STAGE=$T_INNER
 stage() { TIMINGS="$TIMINGS $1=$(since "$T_STAGE")"; T_STAGE=$(now); }
-# exists <worker>: it has a deployment
-exists() { cf workers deployments list --worker "$1" --per-page 1 >/dev/null 2>&1; }
 # active <worker>: the version id serving 100%, or "" if the current deployment is split
 active() { cf workers deployments list --worker "$1" --per-page 1 | python3 -c 'import json,sys; v=json.load(sys.stdin)["deployments"][0]["versions"]; print(v[0]["version_id"] if len(v)==1 and v[0]["percentage"]==100 else "")'; }
 # route <worker> <message> <id>:<pct> [<id>:<pct>]: create a deployment with these versions
@@ -125,7 +117,6 @@ smoke_twice() {
 }
 # o11y_gate <worker> <new> <prev> <since-iso> <run> <manifest> [gate args]: the telemetry gate (prints its table)
 o11y_gate() {
-  if [ $HAS_GATE = 0 ]; then echo "!! $SHA predates the telemetry gate (no scripts/obs/canary-gate.py): gate skipped for $1 ${2:0:8}" >&2; return 0; fi
   if [ "${SKIP_O11Y_GATE:-}" = 1 ]; then
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" >&2
     echo "!! SKIP_O11Y_GATE=1: the telemetry gate for $1 ${2:0:8} is SKIPPED. Emergencies only. Nothing read the canary's traces." >&2
@@ -137,8 +128,6 @@ o11y_gate() {
   python3 -I "$WT/scripts/obs/canary-gate.py" "$w" "$n" "${p:--}" --since "$since" --run "$run" --manifest "$man" --wait "${O11Y_WAIT_S:-90}" "$@" || rc=$?
   echo "== telemetry gate ($w ${n:0:8}${1:+ $*}): exit $rc after $(since "$t0")s"; return $rc
 }
-# gate_args <run> <manifest>: smoke.sh --run/--manifest, only when this commit's smoke.sh has them
-gate_args() { [ $HAS_GATE = 1 ] && printf '%s\n' --run "$1" --manifest "$2"; return 0; }
 notify() { osascript -e "display notification \"$(echo "$2" | tr -d '"\\' | cut -c1-200)\" with title \"$(echo "$1" | tr -d '"\\')\"" >/dev/null 2>&1 || true; }
 # rollback_ephem <reason>: route 100% back to PREV, wait until it serves, re-smoke it with the last deployed commit's smoke.sh
 rollback_ephem() {
@@ -154,7 +143,7 @@ rollback_ephem() {
 tail_verify() {   # after ephem traffic (the smoke): the new tail ran ok and labelled the smoke's routes; else roll it back
   [ -n "${TAIL_NEW:-}" ] || return 0
   echo "== tail check ($TAIL_NEW)"
-  if python3 -I "$WT/scripts/obs/tail-check.py" --version "$TAIL_NEW" --minutes 5 --wait 150 --require /v1/track,/v1/sightline,/v1/alignment/search,/llms.txt,/docs/interactive; then
+  if python3 -I "$WT/scripts/obs/tail-check.py" --version "$TAIL_NEW" --minutes 5 --wait 150 --require /track,/sightline,/alignment/search,/llms.txt,/docs/interactive; then
     git -C "$ROOT" tag -f "deployed-tail/$(date -u +%Y%m%dT%H%M%SZ)" "$SHA" >/dev/null; echo "== deployed ephem-tail $SHA ($TAIL_NEW)"; return 0
   fi
   route ephem-tail "rollback: tail check failed for $TAIL_NEW [git $SHA]" "$TAIL_PREV:100"
@@ -308,8 +297,8 @@ stage wait_prev
 # A new Worker with Durable Objects (exports), deployed whole (cf deploy). Checked from outside; rolled back on any failure.
 if [ $DO_LOAD = 1 ]; then
   LB=https://ephem-load.ivar.workers.dev; LOAD_PREV=""
-  exists ephem-load && { LOAD_PREV=$(active ephem-load); [ -n "$LOAD_PREV" ] || { echo "ephem-load has a split deployment; resolve it first" >&2; exit 1; }; }
-  echo "== deploy ephem-load @ $SHA (previous ${LOAD_PREV:-none: first deploy})"
+  LOAD_PREV=$(active ephem-load); [ -n "$LOAD_PREV" ] || { echo "ephem-load has a split deployment; resolve it first" >&2; exit 1; }
+  echo "== deploy ephem-load @ $SHA (previous $LOAD_PREV)"
   cd "$WT/packages/load"
   out=$(cf deploy --message "$MSG [git $SHA]" 2>&1) || { echo "$out" | tail -20 >&2; echo "ephem-load deploy failed" >&2; exit 1; }
   LOAD_NEW=$(echo "$out" | sed -n 's/.*Current Version ID: *\([0-9a-f-]*\).*/\1/p' | head -1)
@@ -325,20 +314,6 @@ if [ $DO_LOAD = 1 ]; then
       sleep 0.5
     done
     echo "ok   load-health $LOAD_NEW serving after $(since "$t0")s"
-    if [ -n "$LT" ] && [ "$(curl -s --max-time 10 "$LB/health" | python3 -c 'import json,sys; print(json.load(sys.stdin)["configured"])')" != True ]; then
-      # first deploy: the secret can only be set on an existing Worker. load-token.sh stores it (a new version); wait for that one.
-      echo "== ephem-load has no LOAD_TOKEN: setting it from ~/.config/ephem-load/token (scripts/obs/load-token.sh)"
-      bash "$WT/scripts/obs/load-token.sh" || { echo "FAIL load-secret: could not set LOAD_TOKEN"; return 1; }
-      LOAD_NEW=$(active ephem-load); [ -n "$LOAD_NEW" ] || { echo "FAIL load-secret: split deployment after the secret"; return 1; }
-      t0=$(now); ok=0
-      while [ $ok -lt 5 ]; do
-        v=$(curl -s --max-time 10 "$LB/health" | python3 -c 'import json,sys; j=json.load(sys.stdin); print((j.get("version") or "") + ("+" if j.get("configured") else ""))' 2>/dev/null)
-        if [ "$v" = "$LOAD_NEW+" ]; then ok=$((ok + 1)); else ok=0; fi
-        [ "$(python3 -c "import sys,time; print(int(time.time()-float(sys.argv[1]) > 60))" "$t0")" = 1 ] && { echo "FAIL load-secret: $LOAD_NEW never answered configured"; return 1; }
-        sleep 0.5
-      done
-      echo "ok   load-secret LOAD_TOKEN set; $LOAD_NEW serving"
-    fi
     h=$(curl -s --max-time 10 "$LB/health")
     echo "$h" | python3 -c 'import json,sys; j=json.load(sys.stdin); assert j["service"]=="ephem-load" and j["target"]=="https://ephem.ivar.workers.dev" and j["limits"]["maxRate"]<=300 and j["limits"]["maxDurationS"]<=600, j' \
       && echo "ok   load-health-body target + limits" || { echo "FAIL load-health-body: $h"; return 1; }
@@ -357,12 +332,10 @@ if [ $DO_LOAD = 1 ]; then
   if load_check; then
     git -C "$ROOT" tag -f "deployed-load/$(date -u +%Y%m%dT%H%M%SZ)" "$SHA" >/dev/null; echo "== deployed ephem-load $SHA ($LOAD_NEW)"
   else
-    if [ -n "$LOAD_PREV" ]; then route ephem-load "rollback: load check failed for $LOAD_NEW [git $SHA]" "$LOAD_PREV:100"; echo "LOAD CHECK FAILED: ephem-load rolled back to $LOAD_PREV" >&2
-    else echo "LOAD CHECK FAILED on the first ephem-load deploy ($LOAD_NEW); nothing to roll back to (it serves no users). Not tagged." >&2; fi
+    route ephem-load "rollback: load check failed for $LOAD_NEW [git $SHA]" "$LOAD_PREV:100"; echo "LOAD CHECK FAILED: ephem-load rolled back to $LOAD_PREV" >&2
     exit 1
   fi
 fi
-# --- ephem-tail ------------------------------------------------------------------------------------------------------------
 # --- ephem-tail ------------------------------------------------------------------------------------------------------------
 TAIL_NEW=""; TAIL_PREV=""
 if [ $DO_TAIL = 1 ]; then
@@ -402,7 +375,7 @@ if [ $MODE = gradual ]; then
   echo "pinned requests reach $NEW after ${s}s"
   stage pin_wait
   CS=$(iso_now); RUN="c-$SHA-$(date +%s)"; : > "$WT/.manifest-canary"
-  if ! smoke_twice canary --pin "$NEW" --expect-compute "$NEW" $(gate_args "$RUN" "$WT/.manifest-canary"); then
+  if ! smoke_twice canary --pin "$NEW" --expect-compute "$NEW" --run "$RUN" --manifest "$WT/.manifest-canary"; then
     route ephem "canary failed: $MSG [git $SHA]" "$PREV:100"
     echo "CANARY SMOKE FAILED on $NEW (twice): prod never served it; removed it from the deployment (100% $PREV)" >&2; exit 1
   fi
@@ -431,7 +404,7 @@ LIVE_OK=1
 if s=$(serving "$NEW" 60); then echo "$NEW serving all of 5 consecutive /healthz ${s}s after promotion"; else echo "FAIL $NEW not serving after ${s}s"; LIVE_OK=0; fi
 stage serving
 LRUN="l-$SHA-$(date +%s)"; : > "$WT/.manifest-live"
-[ $LIVE_OK = 1 ] && { smoke_twice live --expect "$NEW" --expect-compute "$NEW" $(gate_args "$LRUN" "$WT/.manifest-live") || LIVE_OK=0; }
+[ $LIVE_OK = 1 ] && { smoke_twice live --expect "$NEW" --expect-compute "$NEW" --run "$LRUN" --manifest "$WT/.manifest-live" || LIVE_OK=0; }
 stage smoke_live
 if [ $LIVE_OK = 0 ]; then
   rollback_ephem "live smoke failed"
