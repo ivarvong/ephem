@@ -278,7 +278,7 @@ const f = (x: number | null | undefined) => x == null ? "–" : `${x.toFixed(0)}
 const { kpi, offset, coverage } = model
 console.log(`\n${name}  run ${run}  ${url.pathname}  ${device.name} · ${net?.name ?? "no throttling"} · CPU ${cpu}× · ${mode}  ephem ${model.meta.versions.join(",")}  trace ${TRACE_ID}`)
 console.log(`TTFB ${f(kpi.ttfb)}  FCP ${f(kpi.fcp)}  LCP ${f(kpi.lcp)}  data drawn ${f(kpi.data)}  INP(scripted) ${f(kpi.inp)}  requests ${kpi.requests}  server CPU ${kpi.serverCpu} ms / ${kpi.invocations} invocations  cache ${JSON.stringify(kpi.cache)} blocks ${JSON.stringify(kpi.blocks)}`)
-console.log(`clock offset θ (server − client) = ${offset.thetaMs} ± ${offset.plusMinusMs} ms from ${offset.n} requests${offset.consistent ? "" : " (INCONSISTENT: tightest single request used)"}; tightest ${offset.tightest?.path} ${offset.tightest?.widthMs} ms wide`)
+console.log(`clock offset θ (server − client) = ${offset.thetaMs} ± ${offset.plusMinusMs} ms from ${offset.n} requests${offset.consistent ? " (all agree)" : ` (${offset.agree}/${offset.n} agree; outliers ${JSON.stringify(offset.outliers)})`}; tightest ${offset.tightest?.path} ${offset.tightest?.widthMs} ms wide`)
 if (sntp) console.log(`independent check: sntp ${sntp.host} says server − laptop = ${sntp.offsetMs} ± ${sntp.errMs} ms (NTP is not the Workers clock; agreement within both errors is the check)`)
 console.log(`server root span inside its request's send → first byte (± uncertainty): ${model.inside.ok}/${model.inside.n}`)
 console.log(`coverage: ${coverage.joined} of ${coverage.total} requests joined to a server invocation (${coverage.byTrace} by trace id + ray)${coverage.unjoined.length ? "; unjoined: " + coverage.unjoined.map(u => `#${u.i} ${u.url} (${u.reason})`).join("; ") : ""}`)

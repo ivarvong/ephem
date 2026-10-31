@@ -480,6 +480,32 @@ runs), so it was not the lever; the latency the split bought came from compute's
 Found on the way (kept): core's EGM96 band source is a process global, and an isolate holds two `makeGeoid` (front door +
 Api); src/geoid.ts now installs a source that reads every L1 (the E arm's first canary 500'd /v1/position?time= without it).
 
+### 12.2 Trace context, Server-Timing and RUM (2026-10-30)
+
+One trace id per page view, from the browser through every server entrypoint, for real users as well as the lab harness:
+
+- **Documents** (`/`, `/instrument`; `src/clienttrace.ts`): the front door adopts a valid incoming `traceparent` (W3C, strict:
+  version 00, lower-case hex, non-zero ids) or uses the root request span's own trace id, and returns it three ways:
+  `<meta name="traceparent" content="00-<trace>-<root span>-01">` (the OpenTelemetry document-load convention),
+  `Server-Timing: trace;desc="…"` (the navigation entry's `serverTiming`) and `x-ephem-trace`. The HTML is `private,
+  no-store` and never forwarded to the cached Api, so a per-response id cannot be replayed (tested).
+- **Fetches**: the page reads meta → serverTiming → a fresh id, and every fetch sends a child `traceparent` plus
+  `tracestate: ephem=<document span>`. Root spans record `client.trace_id`, `client.span_id`, `client.parent_id`
+  (documents: `client.document_span_id`, `client.trace_origin` adopted|minted). Loopbacks carry it on: the Api gets the
+  client's header, BlockStore and MetarFeed get the calling span's (`loopback.trace` span). A BlockStore fetch is shared
+  by concurrent requests in an isolate (in-flight dedup), so it carries the trace of the request that started it.
+- **Server-Timing** on every front-door response: `ray`, `api` (cache status + loopback duration), `api-blocks/geoid` (a
+  fresh Api run only: a cached answer would replay another request's numbers), `blocks`, `geoid`, `feed`, `trace`, `total`.
+  Durations are the Workers clock, which only moves on I/O. There is deliberately no CPU entry: CPU is not readable inside
+  a request; it is `cpuTimeMs` in Workers Observability, joined by trace id or ray. `Timing-Allow-Origin: *`.
+- **RUM** (`src/rum.ts`): an inline client on both pages (6.9 KB, 2.6 KB gzip; trace glue 1.7 KB) (navigation + resource timing with serverTiming, FCP, LCP,
+  CLS, INP, long animation frames, every fetch with its ids, app spans) batched to `POST /rum` (uncached; ≤ 64 KiB, ≤ 300
+  spans, per-trace and per-isolate limits), validated to route ids and fixed patterns, stored in Basin `ephem_rum` →
+  `ephem.rum`. Request rows gained trace ids in a new stream, `ephem_requests_v2` (dual-written with `ephem_requests`;
+  stream schemas are immutable). DNT/GPC and unsampled traceparents send and store nothing; synthetic traffic is flagged.
+- Tools: `scripts/obs/journey.ts` (CDP lab instrument, checks RUM against Chrome's ground truth) and
+  `scripts/obs/trace-view.ts <trace-id>` (a real view from RUM + server telemetry); guide: "Unified client+server traces".
+
 ### 12.1 Storage sizes, and why R2 rather than a Durable Object
 
 | Unit | Blocks | Bytes |

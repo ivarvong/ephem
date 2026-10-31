@@ -49,7 +49,8 @@ const reqOf = (r: any): CReq => {
   const end = r.kind === "navigation" ? (head != null && dl != null ? head + dl : null) : n(r.dur_ms) != null ? s + n(r.dur_ms)! : null
   const fetchSpan = r.name === "fetch" && R.some(x => x.kind === "fetch" && x.span_id === r.span_id)
   const tb = n(r.transfer_bytes)
-  return { url: origin + (r.kind === "navigation" ? page : r.target === "external" ? "/external" : r.target ?? "/other"), method: "GET", type: typeOf(r), status: n(r.status) ?? 0,
+  const url = r.kind === "navigation" ? origin + page : r.target === "external" ? "https://external.invalid/" : origin + (r.target?.startsWith("/") ? r.target : "/other")
+  return { url, method: "GET", type: typeOf(r), status: n(r.status) ?? 0,
     protocol: r.protocol ?? undefined, fromCache: tb === 0 && !r.ray ? "disk (transferSize 0)" : null, start: s, ph, end, bytes: tb ?? 0, ray: r.ray ?? undefined, cache: r.cache ?? undefined,
     serverTiming: r.server_timing ?? undefined, traceId, spanId: r.kind === "navigation" ? r.span_id : fetchSpan ? r.span_id : undefined,
     sendWall: sent != null ? t0Wall + sent : undefined, headWall: head != null ? t0Wall + head : undefined }

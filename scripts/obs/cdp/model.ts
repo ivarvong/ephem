@@ -27,25 +27,27 @@ export function buildModel(c: Client, srvIn: Server, meta: Record<string, unknow
   // ---------- clock offset (NTP-style bounds, intersected) ----------
   // server = client + θ. The Worker's root span starts after the browser sent (t2 > t1 + θ) and its first byte leaves before
   // the browser has the headers (t3 < t4 + θ): θ ∈ (t3 − t4, t2 − t1). Server times are whole ms: widen by 1 ms each side.
+  // t3: the response leaving. The runtime's time_to_first_byte_ms can exceed the client's whole send → headers (a streamed
+  // body: headers leave first; seen on /v1/track, 68 ms vs 52.7 ms), so t3 is the earlier of it and the Effect request span's end.
   const bounds: Array<{ ray: string; lo: number; hi: number; path: string }> = []
-  for (const r of c.reqs) {
-    if (!r.ray || r.sendWall == null || r.headWall == null || r.fromCache) continue
-    const root = sspans.find(s => s.ray && ray0(s.ray) === ray0(r.ray) && s.ep === "default" && !s.parent)
-    if (!root) continue
-    const ttfb = root.a["cloudflare.response.time_to_first_byte_ms"] ?? 0
-    bounds.push({ ray: r.ray, lo: root.s + ttfb - r.headWall - 1, hi: root.s - r.sendWall + 1, path: new URL(r.url).pathname })
+  const bound = (ray: string, sendWall: number, headWall: number, path: string) => {
+    const root = sspans.find(s => s.ray && ray0(s.ray) === ray0(ray) && s.ep === "default" && !s.parent)
+    if (!root) return
+    const eff = sspans.find(s => s.trace === root.trace && s.a["effect.span_id"] && !s.a["effect.parent_id"] && /^(GET|POST|HEAD)$/.test(s.name))
+    const ttfb = Math.min(root.a["cloudflare.response.time_to_first_byte_ms"] ?? 0, eff ? eff.e - root.s : Infinity)
+    bounds.push({ ray, lo: root.s + Math.max(0, ttfb) - headWall - 1, hi: root.s - sendWall + 1, path })
   }
-  for (const p of c.calib ?? []) {
-    const root = sspans.find(s => s.ray && ray0(s.ray) === ray0(p.ray) && s.ep === "default" && !s.parent)
-    if (root) bounds.push({ ray: p.ray, lo: root.s + (root.a["cloudflare.response.time_to_first_byte_ms"] ?? 0) - p.headWall - 1, hi: root.s - p.sendWall + 1, path: "/healthz (clock probe)" })
-  }
-  let lo = Math.max(...bounds.map(x => x.lo)), hi = Math.min(...bounds.map(x => x.hi))
-  const consistent = bounds.length > 0 && lo <= hi
+  for (const r of c.reqs) if (r.ray && r.sendWall != null && r.headWall != null && !r.fromCache) bound(r.ray, r.sendWall, r.headWall, new URL(r.url).pathname)
+  for (const p of c.calib ?? []) bound(p.ray, p.sendWall, p.headWall, "/healthz (clock probe)")
+  // Marzullo: the interval covered by the most bounds (all of them when they agree); a bound that disagrees is reported.
+  const edges = bounds.flatMap(b => [{ x: b.lo, d: 1 }, { x: b.hi, d: -1 }]).toSorted((a, z) => a.x - z.x || z.d - a.d)
+  let cnt = 0, bestN = 0, lo = 0, hi = 0
+  for (let i = 0; i < edges.length; i++) { cnt += edges[i]!.d; if (cnt > bestN && edges[i + 1]) { bestN = cnt; lo = edges[i]!.x; hi = edges[i + 1]!.x } }
+  const consistent = bounds.length > 0 && bestN === bounds.length
+  const outliers = bounds.filter(b => b.hi < lo || b.lo > hi).map(b => ({ path: b.path, ray: b.ray, lo: +b.lo.toFixed(1), hi: +b.hi.toFixed(1) }))
   const best = bounds.toSorted((a, b) => (a.hi - a.lo) - (b.hi - b.lo))[0]
-  if (!consistent && best) { lo = best.lo; hi = best.hi }
-  if (!bounds.length) { lo = 0; hi = 0 }
   const theta = (lo + hi) / 2
-  const offset = { thetaMs: +theta.toFixed(2), plusMinusMs: +((hi - lo) / 2).toFixed(2), lo: +lo.toFixed(2), hi: +hi.toFixed(2), n: bounds.length, consistent,
+  const offset = { thetaMs: +theta.toFixed(2), plusMinusMs: +((hi - lo) / 2).toFixed(2), lo: +lo.toFixed(2), hi: +hi.toFixed(2), n: bounds.length, agree: bestN, consistent, outliers,
     tightest: best ? { path: best.path, ray: best.ray, widthMs: +(best.hi - best.lo).toFixed(2) } : null,
     note: "server clock − client clock; each request bounds it by (t3 − t4, t2 − t1); server times are whole ms (±1 ms); the interval is the intersection over all joined requests" }
   const srvRel = (epochMs: number) => +(epochMs - theta - c.t0Wall).toFixed(3)

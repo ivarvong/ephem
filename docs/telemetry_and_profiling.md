@@ -4,7 +4,7 @@ How to see what prod ephem is doing: traces, per-version CPU numbers, and CPU/he
 run against prod. **Keep this file current:** when a command, flag, span, attribute or gotcha changes, update it in the
 same change, and add the date to "Last verified".
 
-Last verified: 2026-10-30 (cold search windows: 21250fb5 → 7708ca81 → 8413211a, git a7eb737 / cdf06b0; remote load: ephem-load 8d0730a7 against ephem 8413211a, run L20261030T224759Z-kcfr; compute split A/B: S 02dd1270 + ephem-compute fca6e275 vs E cc6ddd8e, git 5edf1b7, → one Worker ephem d3caf38f, git 7a125fd; compute split: ephem 121b7984 + ephem-compute bb0a1127, git 01e0323; version 4e7c34ee; crossing span + MCP probe b49a8a02; MCP section 68c58ae5; Caching section c72a360c; cold-split, LOAD=track and isolate warmth fbdb337e; geoid bands + bundle A/B 5c337183 / 164e1cd7 / 61305294).
+Last verified: 2026-10-31 (unified client+server traces + RUM: ephem 2abe54b3, git b8746cc; cold search windows: 21250fb5 → 7708ca81 → 8413211a, git a7eb737 / cdf06b0; remote load: ephem-load 8d0730a7 against ephem 8413211a, run L20261030T224759Z-kcfr; compute split A/B: S 02dd1270 + ephem-compute fca6e275 vs E cc6ddd8e, git 5edf1b7, → one Worker ephem d3caf38f, git 7a125fd; compute split: ephem 121b7984 + ephem-compute bb0a1127, git 01e0323; version 4e7c34ee; crossing span + MCP probe b49a8a02; MCP section 68c58ae5; Caching section c72a360c; cold-split, LOAD=track and isolate warmth fbdb337e; geoid bands + bundle A/B 5c337183 / 164e1cd7 / 61305294).
 
 ## The loop
 
@@ -33,6 +33,8 @@ Every number you report carries its version id (and trace id or profile file). L
 | `python3 scripts/obs/canary-gate.py <worker> <new> <prev> --since ISO --run ID --manifest FILE [--live 90]` | deploy.sh's telemetry gate: the smoke's requests (by `x-ephem-smoke`, cf-rays) in o11y; fails on exceptions, 5xx, error logs, missing entrypoints/spans or telemetry; CPU vs previous as warnings. See "Telemetry gate". |
 | `python3 scripts/obs/tail-check.py [--minutes 10] [--version <id>] [--wait 90] [--require /v1/track,…]` | ephem-tail from its own o11y events (no Basin token needed): invocations by (version, outcome), `basin_send_failed` lines, and the route labels summed from its `tail_batch` log lines. Exit 1 on a non-ok outcome, a send failure or a missing required label. deploy.sh runs it after a tail deploy. |
 | `python3 scripts/obs/trace.py --jsonrpc-id <id>` | The trace of one MCP message (the probe's ids are `<run>-<step>`). |
+| `node --experimental-strip-types scripts/obs/journey.ts <url> [--device iphone\|desktop] [--net fast3g\|4g\|none] [--cpu 4] [--cold\|--warm] [--script instrument-sky\|home-drag\|none] [--duration 70] [--out dir]` | **Unified client+server trace** of one page view, driven by our CDP client (scripts/obs/cdp/): Chrome timeline + network, every request joined to its invocations and spans, clock offset, the page's own RUM checked against Chrome. Single-file viewer + Perfetto JSON. `--rebuild <name>.raw.json` after a model/viewer change. See "Unified client+server traces". |
+| `node --experimental-strip-types scripts/obs/trace-view.ts <trace-id>\|--latest [--real]` | A real page view rebuilt from production RUM (Basin `ephem.rum`), `ephem.requests_v2` and o11y by trace id; same viewer. |
 | `python3 scripts/obs/symbolize.py in.pb [out.pb]` | Replaces minified function names in a prod pprof with names read from the source (see "Source maps"). |
 
 All of them shell out to the `cf` CLI (OAuth as ivar). Reading profiles needs `go` (`go tool pprof`).
@@ -745,6 +747,138 @@ there is no method), a child of the router's `POST` span. A tools/call span is t
 
 Find calls with a raw query filter on `jsonrpc.id`, `mcp.tool` or `mcp.client` (e.g. `claude-code/2.1.312`). A filter on
 `$metadata.transactionName = mcp.tools/call` returned only some of the matching spans (2026-10-29), so don't count with it.
+
+## Unified client+server traces (2026-10-30)
+
+Every page view carries one W3C trace id from the browser through every server entrypoint, for real users (production RUM)
+and for the lab harness (our own CDP client). Design: DESIGN §12.2. Code: src/clienttrace.ts, src/servertiming.ts,
+src/rum.ts, scripts/obs/cdp/, scripts/obs/journey.ts, scripts/obs/trace-view.ts.
+
+**Propagation.**
+
+| Where | What |
+| --- | --- |
+| document `/`, `/instrument` | front door adopts a valid `traceparent` (strict W3C: `00-<32 hex>-<16 hex>-<2 hex>`, lower case, non-zero) or uses the root request span's trace id; returns `<meta name="traceparent" content="00-<trace>-<root span>-01">` (OTel document-load), `Server-Timing: trace;desc="…"`, `x-ephem-trace`; `<meta name="ephem-synthetic">` when the request had `x-ephem-load` / `x-ephem-smoke` |
+| page boot | reads meta → navigation `serverTiming` → fresh id (`window.__ephemTrace.from`: meta / server-timing / fresh) |
+| every fetch (`__tfetch`) | `traceparent: 00-<trace>-<new span>-01`, `tracestate: ephem=<document span>` |
+| root Effect span (front, Api) | `client.trace_id`, `client.span_id`, `client.parent_id`; documents: `client.document_span_id`, `client.trace_origin` (`adopted` / `minted`); `/rum`: `client.trace_id` of the batch |
+| loopbacks | Api: the client's header (forwardHeaders); BlockStore, MetarFeed: the calling span's traceparent, recorded on a `loopback.trace` span. A block or band fetch is shared by concurrent requests in an isolate (in-flight dedup), so it carries the trace of the request that started it |
+| never | the raw header beyond the two ids, tracestate other than `ephem=<16 hex>`, anything malformed (tests: test/clienttrace.test.ts) |
+
+Query: spans with `client.trace_id = <id>` (o11y key `client.trace_id`) give every trace of the view; Basin
+`ephem.requests_v2.trace_id` and `ephem.rum.trace_id` join by SQL.
+
+**Server-Timing** (every front-door response; src/servertiming.ts): `trace` (documents first), `ray;desc="<cf-ray>"`, `api;desc="HIT";dur=`
+(Api loopback), `api-blocks` / `api-geoid` (a fresh Api run only: a cached answer would replay another request's numbers),
+`blocks;desc="L1 n=2";dur=`, `geoid`, `feed`, `trace` (a traceresponse for fetches), `total;dur=` (I/O wall). Durations are
+the Workers clock, which only advances on I/O: wall around I/O, never CPU. **No CPU entry**: CPU is not readable inside a
+request (`performance.now()` / `Date.now()` are frozen during compute); it is `cpuTimeMs` in o11y, joined by trace id or ray.
+`Timing-Allow-Origin: *`, `Access-Control-Expose-Headers: server-timing, x-ephem-trace, x-ephem-version, x-ephem-cache`.
+
+**Production RUM** (src/rum.ts `RUM_JS`, inline on both pages, 6.9 KB / 2.6 KB gzip, no deps): navigation and every resource
+(Resource Timing phases + `serverTiming`), FCP, LCP, CLS (session window), INP (Event Timing, worst interaction), long
+animation frames (longtask fallback), every fetch with its span ids, app spans `boot`, `data-ready`, `first-sky-draw`,
+interactions `key` (soft key → stack drawn, key id) and `drag`. Batches go to `POST /rum` (sendBeacon on pagehide /
+visibilitychange hidden, keepalive fetch every 15 s and 2 s after data-ready).
+
+| `/rum` rule | Value |
+| --- | --- |
+| body | ≤ 64 KiB (413), JSON object `v: 1`, `tp` a valid traceparent (400), `page` `/` or `/instrument`, ≤ 300 spans (413) |
+| rate | ≤ 30 batches per trace per minute, ≤ 600 per 10 s per isolate (429; in-isolate, best effort) |
+| privacy | DNT / GPC (header or navigator) → nothing sent or stored; sampled flag `00` → nothing; no IP, no UA (family only), no URL or query (targets are ROUTES ids, `/assets/<known file>`, `other`, `external`), names/details from fixed patterns, ids hex only |
+| synthetic | `x-ephem-load`, `x-ephem-smoke`, `navigator.webdriver`, or the document's `<meta name="ephem-synthetic">` → `synthetic = true` |
+| storage | Basin stream `ephem_rum` (3f7057f2…) → `ephem.rum`, one row per span (`trace_id`, `span_id`, `parent_id`, `kind`, `name`, `target`, `start_ms`, `dur_ms`, `value`, phases, `server_timing`, `cache`, `ray`, …: ops/basin/rum.schema.json) |
+
+Request rows with trace ids: new stream `ephem_requests_v2` (82c448ef…, `ephem.requests_v2`: v1 columns + `schema`, `synthetic`,
+`trace_id`, `span_id`, `client_span_id`, `client_parent_id`, `trace_origin`), dual-written with `ephem_requests` until
+readers have moved. Streams/sinks/pipelines: `basin.py create-streams <stream>` then `basin.py provision <stream>` (before the
+Worker binds them).
+
+```sql
+-- client spans joined to server request rows
+SELECT r.kind, r.name, r.target, r.start_ms, r.dur_ms, q.route, q.status, q.api_cache, q.wall_ms
+FROM ephem.rum r LEFT JOIN ephem.requests_v2 q ON q.trace_id = r.trace_id AND q.client_span_id = r.span_id AND q.role = 'front'
+WHERE r.trace_id = '<id>' ORDER BY r.start_ms
+```
+
+**The CDP client** (scripts/obs/cdp/, no deps, `node --experimental-strip-types`): cdp.ts (launch Chrome headless/headed with
+a temp profile and `--remote-debugging-port`, `/json/version`, one browser WebSocket, typed `send`, events, `waitFor`,
+flattened sessions, per-command timeouts, teardown on exit/SIGINT/SIGTERM/uncaught: Chrome killed, profile removed),
+page.ts (navigate + load / network idle, iPhone 390×844@3 and desktop 1440×900@2, Fast 3G / Fast 4G, CPU throttling, cold
+cache, tap / drag / key / type, screenshots, Tracing with devtools.timeline, Network recorder with full timing and headers),
+server.ts (o11y pull + ingest polling), model.ts (join, offset, tracks, critical path, costs, Perfetto), viewer.ts.
+
+```sh
+node --experimental-strip-types scripts/obs/journey.ts https://ephem.ivar.workers.dev/instrument --device iphone --cold   # Fast 3G + 4× CPU by default on iphone
+node --experimental-strip-types scripts/obs/journey.ts https://ephem.ivar.workers.dev/ --device desktop --warm --duration 75
+node --experimental-strip-types scripts/obs/trace-view.ts <trace-id>          # a real view from RUM + server telemetry only
+node --experimental-strip-types scripts/obs/trace-view.ts --latest --real     # the newest non-synthetic RUM view
+```
+
+journey.ts: the document gets the harness's traceparent via Fetch interception (documents only). Not
+`Network.setExtraHTTPHeaders`: it applies to every request of the page, so every fetch would carry the same span id instead of
+its own. `x-ephem-load: <run>` does go on every request via setExtraHTTPHeaders (tags invocations; request rows `synthetic`).
+Then: drive (`instrument-sky`: SKY, AZ T, ALT, ENTER; `home-drag`: drag the sky left and right), dwell to `--duration`
+(default 70 s: polls), leave the page (pagehide → RUM beacon), unthrottled clock probes, pull the server side (polls until every
+request's root span and every MISS's Api invocation is in, `--wait`), pull the page's own RUM rows from Basin and check them
+against CDP. Outputs `<name>.html` (self-contained viewer), `.perfetto.json` (ui.perfetto.dev), `.model.json`, `.rum.json`, `.png`.
+
+**Clock offset** (model.ts). Each request with a server root span bounds θ = server − client: the root span starts after the
+browser sent (t2 > t1 + θ) and its first byte (`cloudflare.response.time_to_first_byte_ms`) leaves before the browser had the
+headers (t3 < t4 + θ), so θ ∈ (t3 − t4, t2 − t1), ±1 ms for whole-ms server times; the estimate is the midpoint of the
+intersection over all requests. Width ≥ the network RTT, so ± ≈ RTT/2 at best. DevTools throttling adds its emulated latency
+to what CDP reports, so throttled runs also use 12 unthrottled `/healthz` probes from the harness process (same system clock).
+Independent check: `sntp time.apple.com`.
+
+**Measured** (2026-10-31 00:05–00:19Z, ephem 2abe54b3, git b8746cc + journey f83752e; 75 s each; outputs and raw inputs:
+scratchpad `journey/`):
+
+| run | TTFB | FCP | LCP | data drawn | requests joined | θ ± (agree/n) | sntp | RUM vs CDP within 10 ms (max) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| /instrument iPhone Fast 3G 4× cold (e428e61d) | 716 | 1078 | 1478 | 1606 | 11/11 | 79.0 ± 13.7 (23/23) | 82.3 ± 24.8 | 21/21 (1.9) |
+| /instrument iPhone warm (df6e594f) | 576 | 768 | 768 | 1334 | 7/11, 4 browser cache | 79.8 ± 14.3 (19/19) | 82.8 ± 24.1 | 21/21 (0.6) |
+| /instrument desktop cold (da821017) | 242 | 380 | 380 | 351 | 11/11 | 81.2 ± 15.1 (23/23) | 81.8 ± 21.9 | 29/29 (0.6) |
+| /instrument desktop warm (32650451) | 38 | 88 | 88 | 104 | 7/11, 4 browser cache | 79.8 ± 14.6 (19/19) | 82.9 ± 26.0 | 25/25 (0.2) |
+| / iPhone Fast 3G 4× cold (05927b60) | 694 | 957 | 957 | 1540 | 26/26 | 78.6 ± 14.5 (38/38) | 82.7 ± 24.2 | 60/60 (7.4) |
+| / iPhone warm (926652ab) | 576 | 750 | 750 | 1337 | 22/25, 3 browser cache | 78.5 ± 14.1 (34/34) | 82.8 ± 23.9 | 59/60 (20.3) |
+| / desktop cold (f5629ee6) | 228 | 286 | 286 | 337 | 26/26 | 81.4 ± 13.1 (37/38: /v1/track) | 81.9 ± 20.9 | 80/80 (8.7) |
+| / desktop warm (251e41e4) | 39 | 61 | 61 | 110 | 22/25, 3 browser cache | 80.4 ± 14.0 (34/34) | 82.3 ± 21.6 | 76/77 (15.7) |
+| real view /instrument, headed, RUM only (f53fb9c8) | 183 | 972 | 972 | 420 | 8/8 | 80.3 ± 15.6 (RUM bounds) | – | – |
+| real view /, headed, RUM only (fbc4701c) | 280 | 316 | 340 | 349 | 20/21 (favicon 404: no ray) | 83.6 ± 10.5 (RUM bounds) | – | – |
+
+- **Every request joins**: document, fonts, every fetch and poll (/ polls position every 5 s: 15 per run; weather at 60 s), the
+  RUM beacons. Unjoined = browser cache hits (no server), and the real view's `/favicon.ico` 404 (a router error skips the
+  Server-Timing middleware, so RUM has no ray for it). Document and every fetch also join by trace id (4/4 and 19/19 fetches
+  carried the document's id).
+- **Server inside client**: every front-door root span lies inside its request's send → first byte window (± θ uncertainty)
+  in all runs but one request (/v1/track, desktop cold: a streamed body; its runtime TTFB 68 ms > the client's 52.7 ms send →
+  headers, so it is also the one disagreeing offset bound).
+- **Clock offset**: θ = server − laptop 78.5–81.4 ms, ± 13–15 ms (half the ~30 ms RTT: the method's floor), all bounds agreeing
+  in 7 of 8 runs; sntp against time.apple.com 81.8–82.9 ± 21–26 ms. RUM-only reconstruction of the real views: 80.3 ± 15.6,
+  83.6 ± 10.5. (Earlier the same laptop read 119.5 ± 17 vs sntp 125 ± 24: macOS slews its clock; measure per run.)
+- **RUM vs CDP**: starts, ends, FCP, LCP, data-ready agree to p50 < 0.1 ms, max 20 ms (a warm disk-cache fetch); first byte
+  under Fast 3G differs by −510 to −538 ms = the emulated latency (Resource Timing has the real first byte).
+- **Top client-side costs** (iPhone Fast 3G, 4× CPU, cold):
+  1. Fonts on /instrument: 3 fonts (37 KiB) finish 930 ms after the document's first byte (last at 1645 ms); the LCD's
+     data is drawn at 1606 ms, so the dot fonts finish last on the critical path. Warm: 114 ms.
+  2. /instrument's inline script forces a synchronous layout: one 135–142 ms long task at ~830 ms (EvaluateScript 137 ms, of it
+     forced style + layout 127 ms, text shaping 80 ms), and the live `/v1/position` fetch only starts after it (1.01 s). Desktop:
+     22 ms layout before data.
+  3. The homepage keeps the main thread busy while idle: 673–820 ms script + 490–607 ms paint self time over 75 s at 4× CPU
+     (earlier cold run 5b4aeaba: 860 BeginMainFrame in 75 s, PageAnimator::serviceScriptedAnimations 637 ms, Commit
+     354 ms: the requestAnimationFrame loop runs while nothing changes), plus a 99 ms long task at load.
+  The rest of the critical path is the network: `/v1/position` send → first byte 565–578 ms under Fast 3G with server CPU 2–5 ms.
+
+**Gotchas.**
+- Under DevTools throttling, CDP's `receiveHeadersEnd` includes the emulated latency; Resource Timing's `responseStart` (RUM)
+  is the real first byte. RUM and CDP agree on starts and ends to < 1 ms and differ on first byte by ~the emulated latency.
+- A RUM beacon at pagehide shows in CDP as `net::ERR_ABORTED` (the page is gone) though the server stored it: model.ts joins
+  `/rum` requests to the trace's `/rum` invocations by order.
+- Headless Event Timing durations (INP) are not comparable to a headed browser's.
+- A comment inside a one-line JS function in the viewer template swallowed the rest of the line (blank viewer); use `/* */`.
+- `cf o11y telemetry query` rejects fractional timeframe bounds (ZodError invalid_type): round them.
+- `cloudflare.config.ts` pipeline bindings for new streams: a version upload once failed with `[10021] Pipeline binding error`
+  (transient; the retry deployed).
 
 ## Request logs (Basin)
 
