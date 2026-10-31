@@ -241,4 +241,13 @@ describe("/weather end to end (fake upstream)", () => {
     expect(resolute.magnetic.horizontalIntensityNt).toBeGreaterThanOrEqual(2000); expect(resolute.magnetic.compass).toBe("caution")
     expect(nyc.magnetic.compass).toBe("ok"); expect(nyc.conventions.compass).toMatch(/blackout below 2000 nT/)
   })
+  it("/magnetic heightRef=msl is the same field as that height above the ellipsoid (height + N); no height = on the geoid", async () => {
+    const handler = makeHandler(makeBlocks(async () => { throw new Error("no blocks") }))
+    const at = async (qs: string) => (await (await handler(new Request(`http://x/magnetic?lat=27.99&lon=86.93&time=2026-10-29T12:00:00Z${qs}`))).json() as any)
+    const msl = await at("&height=8848&heightRef=msl"), ell = await at(`&height=${msl.observer.heightEllipsoid}`), none = await at(""), geoid = await at(`&height=${none.observer.geoidUndulation}`)
+    expect(msl.observer.heightEllipsoid).toBeCloseTo(8848 + msl.observer.geoidUndulation, 9)
+    expect(ell.magnetic.totalIntensityNt).toBe(msl.magnetic.totalIntensityNt); expect(ell.magnetic.declination).toBe(msl.magnetic.declination)
+    expect(geoid.magnetic.totalIntensityNt).toBe(none.magnetic.totalIntensityNt)
+    expect(Math.abs(msl.magnetic.totalIntensityNt - none.magnetic.totalIntensityNt)).toBeGreaterThan(50)   // 8.8 km up: ~ −3·F·h/R ≈ −120 nT
+  })
 })

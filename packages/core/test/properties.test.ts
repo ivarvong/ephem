@@ -235,3 +235,31 @@ describe("limbs past the zenith (sweep 2026-10-31)", () => {
     }
   })
 })
+
+describe("horizon profile wraparound and the date line (sweep 2026-10-31)", () => {
+  it("a profile rotated by δ, read at azimuth + δ, is the same profile: the segment through north interpolates like any other", () => {
+    fc.assert(fc.property(fc.uniqueArray(fc.integer({ min: 0, max: 3599 }), { minLength: 1, maxLength: 12 }), fc.array(fc.double({ min: -1.5, max: 10, noNaN: true }), { minLength: 12, maxLength: 12 }),
+      fc.integer({ min: 0, max: 3599 }), fc.double({ min: 0, max: 359.999, noNaN: true }), (azs, els, rot, a) => {
+        const pts = azs.map((z, i) => [z / 10, els[i]!] as const), δ = rot / 10
+        const p = parseProfile(pts.map(([z, e]) => `${z}:${e.toFixed(4)}`).join(",")), r = parseProfile(pts.map(([z, e]) => `${((z + δ) % 360).toFixed(1)}:${e.toFixed(4)}`).join(","))
+        if (typeof p === "string" || typeof r === "string") return   // a rotation can collide two azimuths after rounding
+        expect(profileAt(r, (a + δ) % 360)).toBeCloseTo(profileAt(p, a), 9)
+      }), { numRuns: 400 })
+  })
+  it("a sunrise behind a skyline that wraps through north: /day equals /crossing on the same profile (≤ 1 ms)", () => {
+    const prof = "120:1.5,240:0.5", w = dayRequest(diskBlocks, { date: "2026-10-29", tz: "America/New_York", lat: 40.7484, lon: -73.9857, horizonProfile: prof }); if (!("ok" in w)) throw new Error(w.error)
+    const c = crossingRequest(diskBlocks, { startMs: Date.parse(w.ok.start), endMs: Date.parse(w.ok.end), lat: 40.7484, lon: -73.9857, body: "sun", horizonProfile: prof, aim: "upper" }); if (!("ok" in c)) throw new Error(c.error)
+    const rs = w.ok.events.filter(e => e.body === "sun" && (e.kind === "rise" || e.kind === "set"))
+    expect(c.ok.crossings.map(x => x.direction)).toEqual(rs.map(e => e.kind))
+    c.ok.crossings.forEach((x, i) => { expect(Math.abs(Date.parse(x.time) - Date.parse(rs[i]!.time))).toBeLessThanOrEqual(1); expect(x.azimuth < 120 || x.azimuth > 240).toBe(true) })   // both in the wrap segment
+  })
+  it("longitude 180 and −180 are the same place: identical sky and day", () => {
+    fc.assert(fc.property(arbMs, fc.double({ min: -89, max: 89, noNaN: true }), (ms, lat) => {
+      const a = positionRequest(diskBlocks, { utcMs: ms, lat, lon: 180 }), b = positionRequest(diskBlocks, { utcMs: ms, lat, lon: -180 })
+      for (const k of ["sun", "moon"] as const) { expect(a[k].altitude).toBeCloseTo(b[k].altitude, 9); expect(Math.abs(((a[k].azimuth - b[k].azimuth + 540) % 360) - 180)).toBeLessThan(1e-9) }
+      expect(a.observer.geoidUndulation).toBeCloseTo(b.observer.geoidUndulation, 9)
+    }), { numRuns: 60 })
+    const d = (lon: number) => { const r = dayRequest(diskBlocks, { date: "2026-10-31", tz: "Pacific/Fiji", lat: -16.8, lon }); if (!("ok" in r)) throw new Error(r.error); return r.ok.events }
+    d(180).forEach((e, i) => expect(Math.abs(Date.parse(e.time) - Date.parse(d(-180)[i]!.time))).toBeLessThanOrEqual(1))
+  })
+})
