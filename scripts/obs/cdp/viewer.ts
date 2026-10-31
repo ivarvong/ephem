@@ -169,6 +169,11 @@ main{padding:0 16px 24px}
 .row.flame .nm{padding-left:8px}
 .rdg{grid-template-columns:minmax(0,1fr)}
 }
+@media (max-width:480px){
+:root{--nw:45%;--ind:6px}
+.sc{overflow-x:clip}.wf{min-width:0}
+.row.main .sub span:nth-child(n+2){display:none}
+}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 `
 
@@ -288,6 +293,14 @@ for (const e of tasks) if (e.s <= tKey) L1 = Math.max(L1, e.s + e.d);
 if (!(L1 > 0)) L1 = END;
 const LOAD = [0, Math.min(END * 1.01, L1 * 1.035 + 4)];
 const ALL = [0, END * 1.015];
+/* the critical-path window: from the first element on the path to data drawn (and the path's responses) */
+let c0 = Infinity, c1 = k.data || 0;
+for (const n of nodes.values()) if (n.crit && (n.kind === "req" || n.kind === "srv") && !n.after) {
+  c0 = Math.min(c0, n.s);
+  c1 = Math.max(c1, n.kind === "srv" && n.x.root ? (n.x.bodyEnd != null ? n.x.bodyEnd : n.x.respEnd != null ? n.x.respEnd : n.e) : n.e);
+}
+const CRITW = isFinite(c0) && c1 > c0 ? [Math.max(0, c0 - (c1 - c0) * 0.02), c1 + (c1 - c0) * 0.05] : LOAD;
+const PHONE = matchMedia("(max-width:480px)").matches;
 
 const early = reqNs.filter(n => n.s <= tKey || n.crit), late = reqNs.filter(n => !(n.s <= tKey || n.crit));
 const groupN = late.length ? mk("later", { kind: "group", s: late[0].s, e: Math.max(...late.map(subEnd)) }) : null;
@@ -343,6 +356,7 @@ function srvLabel(n) {
 
 /* ---------- view ---------- */
 let v0 = LOAD[0], v1 = LOAD[1], sel = null, selEv = null, critOn = false, detOpen = false;
+if (PHONE) { v0 = CRITW[0]; v1 = CRITW[1]; critOn = true; }   /* phones: start on the path to data drawn */
 const P = t => (t - v0) / (v1 - v0) * 100;
 const f3 = x => x.toFixed(3);
 function bar(s, e, cls, title) {
@@ -374,6 +388,8 @@ function lab(s, e, html, pad, solid) {
     : w <= left ? '<span class="lb" style="right:' + (TW - A + G).toFixed(1) + 'px">' + h + "</span>" : "";
   const full = place(html, textW(html)); if (full) return full;
   const sh = short !== html ? place(short, textW(short)) : ""; if (sh) return sh;
+  const first = short.split(" · ")[0];
+  const fp = first !== short ? place(first, textW(first)) : ""; if (fp) return fp;
   if (solid && textW(short) <= inside) return '<span class="lb in" style="left:' + (A + G).toFixed(1) + "px;width:" + inside.toFixed(1) + 'px;text-align:right">' + short + "</span>";
   const room = Math.max(right, left, 0);
   if (room < 24) return "";
@@ -385,7 +401,8 @@ function flat() {
   walk(mainN, 0); for (const n of early) walk(n, 0); if (groupN) walk(groupN, 0);
   return out;
 }
-const trackW = () => { const wf = $("wf"); return Math.max(100, wf.clientWidth - parseFloat(getComputedStyle(wf).getPropertyValue("--nw"))); };
+const nwPx = () => { const wf = $("wf"), v = getComputedStyle(wf).getPropertyValue("--nw").trim(); return v.endsWith("%") ? wf.clientWidth * parseFloat(v) / 100 : parseFloat(v); };
+const trackW = () => Math.max(60, $("wf").clientWidth - nwPx());
 function niceStep(span, n) { const raw = span / Math.max(1, n), mag = Math.pow(10, Math.floor(Math.log10(raw))); for (const m of [1, 2, 5, 10]) if (m * mag >= raw) return m * mag; return 10 * mag; }
 const tickFmt = (t, step) => t === 0 ? "0" : Math.abs(t) >= 1000 ? (t / 1000).toFixed(step >= 1000 ? 0 : step >= 100 ? 1 : 2) + " s" : (step < 1 ? t.toFixed(1) : String(Math.round(t))) + " ms";
 
@@ -758,7 +775,8 @@ $("mm").addEventListener("pointerup", e => {
   mmDrag = null;
 });
 
-function toggleCrit() { critOn = !critOn; $("bCrit").setAttribute("aria-pressed", String(critOn)); schedule(); }
+function toggleCrit() { critOn = !critOn; $("bCrit").setAttribute("aria-pressed", String(critOn)); if (critOn) setView(CRITW[0], CRITW[1]); else schedule(); }
+$("bCrit").setAttribute("aria-pressed", String(critOn));
 /* each view brings its fold state: page load opens the requests the page waited for, whole journey folds them and opens the later ones */
 function viewLoad() { for (const n of early) open.add(n.key); if (groupN) open.delete(groupN.key); setView(LOAD[0], LOAD[1]); }
 function viewAll() { for (const n of early) open.delete(n.key); if (groupN) open.add(groupN.key); setView(ALL[0], ALL[1]); }
@@ -830,7 +848,7 @@ render();
 /* narrow: the waterfall scrolls sideways; open it with data drawn in view */
 requestAnimationFrame(() => {
   if (sc.scrollWidth <= sc.clientWidth + 1) return;
-  const t = k.data != null ? k.data : tKey, nw = parseFloat(getComputedStyle(wf).getPropertyValue("--nw"));
+  const t = k.data != null ? k.data : tKey, nw = nwPx();
   sc.scrollLeft = Math.max(0, P(t) / 100 * trackW() - (sc.clientWidth - nw) * 0.6);
 });
 })();
