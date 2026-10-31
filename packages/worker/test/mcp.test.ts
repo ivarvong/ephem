@@ -119,12 +119,12 @@ describe("tools/call equals the REST endpoint", () => {
 describe("errors", () => {
   it("bad arguments and out-of-range inputs are tool results with isError", async () => {
     const a = await modern("tools/call", { name: "position", arguments: { lat: 91, lon: "x" } })
-    expect(a.status).toBe(200); expect(a.body.result.isError).toBe(true); expect(a.body.result.content[0].text).toMatch(/lat[\s\S]*lon|between -90 and 90/)
+    expect(a.status).toBe(200); expect(a.body.result.isError).toBe(true); expect(a.body.result.content[0].text).toMatch(/Invalid arguments for position: (lat|lon)=\S+ is not valid: /)
     const extra = await modern("tools/call", { name: "position", arguments: { lat: 1, lon: 2, latitude: 3 } }); expect(extra.body.result.isError).toBe(true)
     const range = await modern("tools/call", { name: "position", arguments: { lat: 0, lon: 0, time: "1960-01-01T00:00:00Z" } })
-    expect(range.body.result).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/^OutOfRange: /) }] })
+    expect(range.body.result).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/^InvalidRequest: /) }] })
     const tz = await legacy("tools/call", { name: "day", arguments: { ...DAY, tz: "Mars/Olympus" } })
-    expect(tz.body.result).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/^InvalidInput: unknown IANA time zone/) }] })
+    expect(tz.body.result).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/^InvalidRequest: tz=Mars\/Olympus is not an IANA time zone/) }] })
   })
   it("invalid params, unknown tool, unknown method: JSON-RPC errors", async () => {
     const p = await legacy("tools/call", { arguments: {} }); expect(p.body.error.code).toBe(-32602)

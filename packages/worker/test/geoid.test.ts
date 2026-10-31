@@ -79,7 +79,7 @@ describe("geoid bands via BlockStore", () => {
     expect(a.status).toBe(200)
     expect([...new Set(ok)].toSorted()).toEqual([...new Set([...geoidBandsFor(40.68925 - 0.2), ...geoidBandsFor(40.68925 + 0.2)])].toSorted())
   })
-  it("fails closed: a failed fetch or a band with the wrong bytes is a 503 GeoidUnavailable, and is retried next request", async () => {
+  it("fails closed: a failed fetch or a band with the wrong bytes is a 503 Unavailable, and is retried next request", async () => {
     let n = 0
     const h = makeHandler(blocks(), undefined, undefined, makeGeoid(loopbackGeoid(async b => {
       n++; return n === 1 ? new Response("R2 down", { status: 502 }) : n === 2 ? new Response(ab(bundledGeoidBand(b + 1))) : new Response(ab(bundledGeoidBand(b)), { headers: { "cf-cache-status": "HIT" } })
@@ -88,7 +88,7 @@ describe("geoid bands via BlockStore", () => {
       const r = await h(new Request(`http://x/track?${NYC}&start=2026-10-29T00:00:00Z&end=2026-10-29T01:00:00Z`))
       expect(r.status).toBe(503)
       const body = await r.json() as { _tag: string; message: string }
-      expect(body._tag).toBe("GeoidUnavailable"); expect(body.message).toMatch(want)
+      expect(body._tag).toBe("Unavailable"); expect(body.message).toMatch(want)
       expect(r.headers.get("cache-control")).not.toMatch(/immutable/)
     }
     expect((await h(new Request(`http://x/track?${NYC}&start=2026-10-29T00:00:00Z&end=2026-10-29T01:00:00Z`))).status).toBe(200)

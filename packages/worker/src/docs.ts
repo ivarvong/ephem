@@ -31,7 +31,7 @@ const RULES = [
   "Times are UTC ISO-8601 with a trailing Z (e.g. 2026-11-17T03:45:00Z); supported 1972-01-01 to 2149-12-31.",
   "Angles are degrees; azimuth from true north through east, [0, 360). Rates are degrees per minute.",
   "Heights are metres above the WGS-84 ellipsoid unless heightRef=msl (targetHeightRef=msl for an alignment target); without a height the observer is on the EGM96 geoid (sea level).",
-  "Unknown query parameters are rejected with 400 InvalidRequest listing the allowed ones. Errors are JSON with a _tag (InvalidRequest 400, InvalidInput / OutOfRange 422, GeoidUnavailable / WeatherUnavailable 503).",
+  "Errors are JSON {_tag, message, parameter?, allowed?}: 400 InvalidRequest for anything wrong with the request (unknown, missing, malformed or out-of-range parameter, or an impossible combination; the message names the parameter, what was wrong and what is allowed); 503 Unavailable when a data source (geoid, METAR feed) fails; 404 NotFound lists the endpoints.",
   "Every data response has provenance (ephemeris, blocks, compute time, cache tiers); position, day, crossing, alignment and track have a conventions block stating every threshold, refraction and height reference used.",
   "Deterministic answers (anything with an explicit time or window) are cached immutably; x-ephem-cache says HIT or MISS.",
 ]

@@ -50,7 +50,7 @@ describe("roles", () => {
     const h = makeHandler(blocks(), { role: "api" })
     const d = await h(new Request("http://api.internal" + DAY)); expect(d.status).toBe(200); expect(d.headers.get("cache-control")).toBe(IMMUTABLE)
     const n = await h(new Request("http://api.internal" + POS_NOW)); expect(n.headers.get("cache-control")).toBe(API_LIVE)
-    const bad = await h(new Request("http://api.internal/day?date=2026-10-28&tz=Nowhere/Zone&lat=1&lon=1")); expect(bad.status).toBe(422); expect(bad.headers.get("cache-control")).toBe("no-store")
+    const bad = await h(new Request("http://api.internal/day?date=2026-10-28&tz=Nowhere/Zone&lat=1&lon=1")); expect(bad.status).toBe(400); expect(bad.headers.get("cache-control")).toBe("no-store")
   })
   it("front role: API GETs go to the Api (sorted query), relay its cache status, outward header; / /docs /mcp stay local", async () => {
     const seen: Array<string> = []

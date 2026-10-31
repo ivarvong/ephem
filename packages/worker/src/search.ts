@@ -7,7 +7,7 @@
 // front door does no astronomy at all. Filters and include run after the cache, so they never split it.
 import * as Effect from "effect/Effect"
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder"
-import { EphemApi, GeoidUnavailable, InvalidInput, OutOfRange, type SearchPayload, type SearchWindowResponse } from "@ephem/api"
+import { EphemApi, Unavailable, InvalidRequest, type SearchPayload, type SearchWindowResponse } from "@ephem/api"
 import { SEARCH, SUPPORTED, parseInclude, WINDOW_MS, blocksFor, decodeRegion, encodeRegion, isoMs, parseRegion, searchLatRange, searchWindowRequest, windowReadRange, windowsFor } from "@ephem/core"
 import { PROV, compute, geoidAcross, jd, parseUtc } from "./handlers.ts"
 import { Edge, canonical, forwardHeaders } from "./responses.ts"
@@ -26,18 +26,18 @@ interface WindowQuery {
 
 /** One window: the GET handler's body, also run in-process by the POST when there is no front door (tests, dev). */
 const windowAnswer = (q: WindowQuery) => Effect.gen(function* () {
-  const start = yield* parseUtc(q.start)
-  if (start % WINDOW_MS !== 0) return yield* new InvalidInput({ message: `start must be on the ${SEARCH.windowDays}-day window grid (a multiple of ${SEARCH.windowDays} days since 1970-01-01T00:00Z); this instant's window starts ${isoMs(Math.floor(start / WINDOW_MS) * WINDOW_MS)}` })
+  const start = yield* parseUtc(q.start, "start")
+  if (start % WINDOW_MS !== 0) return yield* new InvalidRequest({ message: `start must be on the ${SEARCH.windowDays}-day window grid (a multiple of ${SEARCH.windowDays} days since 1970-01-01T00:00Z); this instant's window starts ${isoMs(Math.floor(start / WINDOW_MS) * WINDOW_MS)}` })
   const { fromMs, toMs } = windowReadRange(start)
-  if (fromMs < SUPPORTED.fromMs || toMs >= SUPPORTED.toMs) return yield* new OutOfRange({ message: "the window is outside 1972-01-01 … 2149-12-31 UTC" })
+  if (fromMs < SUPPORTED.fromMs || toMs >= SUPPORTED.toMs) return yield* new InvalidRequest({ message: "the window is outside 1972-01-01 … 2149-12-31 UTC" })
   const reg = decodeRegion(q.region)
-  if ("error" in reg) return yield* new InvalidInput({ message: reg.error })
+  if ("error" in reg) return yield* new InvalidRequest({ parameter: "region", message: reg.error })
   const { out, provenance } = yield* compute("search", blocksFor(jd(fromMs), jd(toMs)), src =>
     searchWindowRequest(src, { body: q.body, targetLat: q.targetLat, targetLon: q.targetLon, targetHeight: q.targetHeight, targetHeightRef: q.targetHeightRef,
       height: q.height, heightRef: q.heightRef, region: reg.ok, encoding: q.region, startMs: start, temperature: q.temperature, pressure: q.pressure, dut1: q.dut1, aim: q.aim }),
     o => ("ok" in o ? { "ephem.passes": o.ok.passes.length, "ephem.region_vertices": o.ok.region.vertices, ...Object.fromEntries(Object.entries(o.ok.counters).map(([k, v]) => [`ephem.search.${k}`, v])) } : {}),
     geoidAcross(searchLatRange(reg.ok, q.targetLat)))
-  if ("error" in out) return yield* new InvalidInput({ message: out.error })
+  if ("error" in out) return yield* new InvalidRequest({ message: out.error })
   return { ...out.ok, provenance } as SearchWindowResponse
 })
 
@@ -52,9 +52,8 @@ export const windowPath = (q: WindowQuery): string =>
   canonical(new URL(`http://x${SEARCH_WINDOW_PATH}?${new URLSearchParams(Object.entries(q).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)]))}`))
 
 const failFrom = (status: number, body: any) =>
-  status === 422 && body?._tag === "OutOfRange" ? new OutOfRange({ message: String(body.message) })
-    : status === 422 ? new InvalidInput({ message: String(body?.message ?? "invalid window") })
-    : status === 503 ? new GeoidUnavailable({ message: String(body?.message ?? "geoid unavailable") })
+  status === 400 ? new InvalidRequest({ message: String(body?.message ?? "invalid search"), ...(typeof body?.parameter === "string" ? { parameter: body.parameter } : {}) })
+    : status === 503 ? new Unavailable({ message: String(body?.message ?? "geoid unavailable") })
     : undefined
 
 type Pass = SearchWindowResponse["passes"][number]
@@ -71,11 +70,13 @@ const tally = (xs: ReadonlyArray<string>) => { const m = new Map<string, number>
 export const SearchLive = HttpApiBuilder.group(EphemApi, "search", h => h
   .handle("searchWindow", ({ query: q }) => windowAnswer(q).pipe(Effect.withSpan("search.window")))
   .handle("search", ({ payload: p, request }) => Effect.gen(function* () {
-    const start = yield* parseUtc(p.start), end = yield* parseUtc(p.end)
-    if (end <= start) return yield* new InvalidInput({ message: "end must be after start" })
-    if (end - start > SEARCH.maxSpanDays * 86_400_000) return yield* new InvalidInput({ message: `at most ${SEARCH.maxSpanDays} days per search` })
+    const start = yield* parseUtc(p.start, "start"), end = yield* parseUtc(p.end, "end")
+    if (end <= start) return yield* new InvalidRequest({ parameter: "end", message: `end=${p.end} must be after start=${p.start}` })
+    if (end - start > SEARCH.maxSpanDays * 86_400_000) return yield* new InvalidRequest({ parameter: "end", message: `start…end spans ${((end - start) / 86_400_000).toFixed(1)} days; at most ${SEARCH.maxSpanDays} days per search (split it into several)` })
+    const inc = parseInclude(p.include)
+    if (p.include !== undefined && inc === null) return yield* new InvalidRequest({ parameter: "include", message: `include=${p.include}: comma-separated sun and/or phase`, allowed: ["sun", "phase", "sun,phase"] })
     const reg = parseRegion(p.region)
-    if ("error" in reg) return yield* new InvalidInput({ message: reg.error })
+    if ("error" in reg) return yield* new InvalidRequest({ parameter: "region", message: reg.error })
     const encoding = encodeRegion(reg.ok), edge = yield* Edge
     const headers = forwardHeaders(request.headers)
     const windows = windowsFor(start, end)
@@ -92,9 +93,9 @@ export const SearchLive = HttpApiBuilder.group(EphemApi, "search", h => h
       return { cache, body: body as SearchWindowResponse }
     }).pipe(Effect.withSpan("search.window.fetch", { attributes: { "ephem.window": isoMs(w) } })), { concurrency: "unbounded" })
 
-    const first = results[0]!.body, include = parseInclude(p.include) ?? new Set<string>()
+    const first = results[0]!.body, include: ReadonlySet<string> = inc ?? new Set<string>()
     const all: Pass[] = results.flatMap(r => r.body.passes).filter(x => { const t = Date.parse(x.segments[0]!.enter.time); return t >= start && t < end })
-    if (all.length > MAX_PASSES) return yield* new InvalidInput({ message: `${all.length} passes; at most ${MAX_PASSES}: use a smaller region or window` })
+    if (all.length > MAX_PASSES) return yield* new InvalidRequest({ message: `${all.length} passes; at most ${MAX_PASSES} per search: use a smaller region or a shorter start…end` })
     const kept = all.filter(x => (p.minIlluminated === undefined || x.moon.illuminated >= p.minIlluminated) && (p.maxSunAltitude === undefined || x.sunAlt <= p.maxSunAltitude))
       .map(x => publicPass(x, include))
     const counters: Record<string, number> = {}

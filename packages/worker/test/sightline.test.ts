@@ -42,10 +42,10 @@ describe("sight line", () => {
     const d = await get("lat=40.6935&lon=-74.0017&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&samples=2")
     expect(d.j.observer).toMatchObject({ heightMsl: 0, heightRef: "default" })
     expect((await get(`${PIER6}&obstacles=40.6:-74`)).status).toBe(400)
-    expect((await get(`${PIER6}&obstacles=95:-74:3`)).status).toBe(422)
+    expect((await get(`${PIER6}&obstacles=95:-74:3`)).status).toBe(400)
     expect((await get(`${PIER6}&samples=1`)).status).toBe(400)
-    expect((await get("lat=40&lon=-74&targetLat=42&targetLon=-74&targetHeight=0")).status).toBe(422)   // 222 km
+    expect((await get("lat=40&lon=-74&targetLat=42&targetLon=-74&targetHeight=0")).status).toBe(400)   // 222 km
     const u = await get(`${PIER6}&time=2026-11-17T03:45:00Z`)
-    expect(u.status).toBe(400); expect(u.j.kind).toBe("UnknownParameter")
+    expect(u.status).toBe(400); expect(u.j).toMatchObject({ _tag: "InvalidRequest", parameter: "time" })
   })
 })

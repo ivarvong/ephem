@@ -85,11 +85,13 @@ describe("block loading", () => {
 describe("worker handler", () => {
   const handler = makeHandler(makeBlocks(direct(r2Origin(fakeR2().bucket))))
   const get = async (p: string) => { const r = await handler(new Request("http://x" + p)); return { status: r.status, headers: r.headers, body: await r.json() as any } }
-  it("errors are typed: 400 explained, 422 OutOfRange / InvalidInput", async () => {
-    const s = await get("/position?lat=91&lon=0&time=2026-10-28T11:51:00Z"); expect(s.status).toBe(400); expect(s.body).toMatchObject({ _tag: "InvalidRequest", kind: "Query" }); expect(s.body.message).toMatch(/lat/)
-    const r = await get("/position?lat=0&lon=0&time=1960-01-01T00:00:00Z"); expect(r.status).toBe(422); expect(r.body._tag).toBe("OutOfRange")
-    const d = await get("/day?lat=0&lon=0&date=2026-10-28&tz=Mars/Olympus"); expect(d.status).toBe(422); expect(d.body._tag).toBe("InvalidInput")
-    expect((await get("/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&start=2026-10-29T02:00:00Z&end=2026-10-28T23:45:00Z")).status).toBe(422)
+  it("errors are one shape: 400 InvalidRequest naming the parameter and what is allowed", async () => {
+    const s = await get("/position?lat=91&lon=0&time=2026-10-28T11:51:00Z"); expect(s.status).toBe(400); expect(s.body).toMatchObject({ _tag: "InvalidRequest", parameter: "lat" }); expect(s.body.message).toMatch(/lat=91 .*−90 to 90/)
+    const r = await get("/position?lat=0&lon=0&time=1960-01-01T00:00:00Z"); expect(r.status).toBe(400); expect(r.body).toMatchObject({ _tag: "InvalidRequest", parameter: "time" }); expect(r.body.message).toMatch(/1972-01-01T00:00:00Z to 2149/)
+    const d = await get("/day?lat=0&lon=0&date=2026-10-28&tz=Mars/Olympus"); expect(d.status).toBe(400); expect(d.body).toMatchObject({ _tag: "InvalidRequest", parameter: "tz" })
+    const c = await get("/crossing?lat=0&lon=0&body=venus&altitude=0&date=2026-10-28&tz=UTC"); expect(c.body).toMatchObject({ parameter: "body", allowed: ["sun", "moon"] })
+    const m = await get("/position?lon=0"); expect(m.body.message).toMatch(/^missing required parameter lat: /)
+    expect((await get("/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&start=2026-10-29T02:00:00Z&end=2026-10-28T23:45:00Z")).status).toBe(400)
   })
   it("position without time is the sky now", async () => {
     const before = Date.now(), r = await get("/position?lat=40.7&lon=-74"), after = Date.now()
@@ -98,7 +100,8 @@ describe("worker handler", () => {
   })
   it("unknown query parameters are a 400 naming them and the allowed set, on every endpoint (2026-10-29: they were silently ignored)", async () => {
     const d = await get("/day?lat=40.7&lon=-74&date=2026-10-28&tz=America/New_York&temprature=-20")
-    expect(d.status).toBe(400); expect(d.body).toMatchObject({ _tag: "InvalidRequest", kind: "UnknownParameter", unknown: ["temprature"] })
+    expect(d.status).toBe(400); expect(d.body).toMatchObject({ _tag: "InvalidRequest", parameter: "temprature" }); expect(d.body.message).toMatch(/did you mean temperature\?/)
+    expect((await get("/weather?lat=1&lon=2&n=3")).body.message).toMatch(/n: did you mean count\?/)   // renamed 2026-10-31
     expect(d.body.allowed).toContain("temperature"); expect(d.body.message).toMatch(/temprature.*allowed: lat, lon/)
     for (const p of ["/position?lat=1&lon=2", "/crossing?lat=1&lon=2&body=sun&altitude=0&date=2026-10-28&tz=UTC", "/alignment?body=sun&targetLat=1&targetLon=2&targetHeight=0&start=2026-10-28T00:00:00Z&end=2026-10-28T01:00:00Z", "/magnetic?lat=1&lon=2"])
       expect((await get(p + "&x=1")).status, p).toBe(400)
@@ -134,13 +137,13 @@ describe("worker handler", () => {
   it("track is bounded and grid-aligned (stable cache keys, no CPU bombs)", async () => {
     const base = "/track?lat=40.7&lon=-74"
     const off = await get(`${base}&start=2026-10-28T00:10:00Z&end=2026-10-28T06:00:00Z`)   // not on the 20 min grid
-    expect(off.status).toBe(422); expect(off.body.message).toMatch(/start=2026-10-28T00:00:00Z, end=2026-10-28T06:00:00Z/)
-    expect((await get(`${base}&start=2026-10-28T00:00:00Z&end=2026-10-27T00:00:00Z`)).status).toBe(422)                     // end before start
+    expect(off.status).toBe(400); expect(off.body.message).toMatch(/start=2026-10-28T00:00:00Z, end=2026-10-28T06:00:00Z/)
+    expect((await get(`${base}&start=2026-10-28T00:00:00Z&end=2026-10-27T00:00:00Z`)).status).toBe(400)                     // end before start
     expect((await get(`${base}&start=2026-10-20T00:00:00Z&end=2026-10-29T00:00:00Z`)).body.message).toMatch(/at most 8 days/)
-    expect((await get(`${base}&start=2026-10-28T00:00:00Z&end=2026-10-29T00:01:00Z&stepSeconds=60`)).body.message).toMatch(/at most 1441 samples/)
+    expect((await get(`${base}&start=2026-10-28T00:00:00Z&end=2026-10-29T00:01:00Z&stepSeconds=60`)).body.message).toMatch(/1442 samples; at most 1441 per request/)
     expect((await get(`${base}&start=2026-10-28T00:00:00Z&end=2026-10-29T00:00:00Z&stepSeconds=60`)).body.count).toBe(1441)    // the bound itself is fine
     expect((await get(`${base}&start=2026-10-28T00:00:00Z&end=2026-10-28T01:00:00Z&stepSeconds=59`)).status).toBe(400)
-    expect((await get(`${base}&start=1960-01-01T00:00:00Z&end=1960-01-02T00:00:00Z`)).status).toBe(422)
+    expect((await get(`${base}&start=1960-01-01T00:00:00Z&end=1960-01-02T00:00:00Z`)).status).toBe(400)
     expect((await get(`${base}&start=2026-10-28T00:00:00Z&end=2026-10-28T01:00:00Z&time=x`)).status).toBe(400)                // unknown parameter
   })
   it("serves OpenAPI and docs", async () => {

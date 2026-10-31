@@ -222,7 +222,7 @@ describe("/weather end to end (fake upstream)", () => {
     const feed = makeFeed({ fetch: req => serveFeed(req, { fetch: async () => { throw new Error("down") }, log: () => {} }) })
     const handler = makeHandler(makeBlocks(async () => { throw new Error("no blocks") }), undefined, weatherLive(feed))
     const r = await handler(new Request("http://x/weather?lat=0&lon=0")); expect(r.status).toBe(503)
-    expect(((await r.json()) as any)._tag).toBe("WeatherUnavailable")
+    expect(((await r.json()) as any)._tag).toBe("Unavailable")
   })
   it("/magnetic", async () => {
     const handler = makeHandler(makeBlocks(async () => { throw new Error("no blocks") }))

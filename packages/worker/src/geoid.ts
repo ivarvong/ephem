@@ -2,12 +2,12 @@
 // source; here that source is an in-isolate L1 filled, before each computation, with the ≤ 2 bands the observer's latitude
 // needs (geoidBandsFor), fetched through the BlockStore loopback: Workers Caching (immutable) in front of an exact R2 range
 // read of the one sha-addressed object in bucket ephem-geoid (scripts/geoid-r2.ts). Every band is checked against its
-// sha256 in egm96-bands.ts before it is cached or used; any failure is GeoidUnavailable (503), never a guessed height.
+// sha256 in egm96-bands.ts before it is cached or used; any failure is Unavailable (503), never a guessed height.
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import { EGM96_BANDS, GEOID_BANDS, geoidBandsFor, setGeoidSource } from "@ephem/core"
-import { GeoidUnavailable } from "@ephem/api"
+import { Unavailable } from "@ephem/api"
 import { CACHE_TAG } from "./cache-version.ts"
 import { currentTraceparent } from "./trace.ts"
 import type { R2BucketLike } from "./blocks.ts"
@@ -34,7 +34,7 @@ export type GeoidStats = Record<string, number>
 
 export class Geoid extends Context.Service<Geoid, {
   /** Make the bands a lookup at `lat` reads available to core's geoidUndulation. */
-  readonly load: (lat: number) => Effect.Effect<GeoidStats, GeoidUnavailable>
+  readonly load: (lat: number) => Effect.Effect<GeoidStats, Unavailable>
 }>()("@ephem/worker/Geoid") {}
 
 /** "L1" when the isolate had every band, else fetch statuses with counts ("HIT:1", "MISS:2"). */
@@ -73,7 +73,7 @@ export const makeGeoid = (fetchBand: GeoidFetch) => {
       }))
       return stats
     },
-    catch: e => new GeoidUnavailable({ message: `EGM96 geoid unavailable: ${e instanceof Error ? e.message : String(e)}` }),
+    catch: e => new Unavailable({ message: `EGM96 geoid unavailable: ${e instanceof Error ? e.message : String(e)}` }),
   }))
   return Layer.succeed(Geoid, { load })
 }

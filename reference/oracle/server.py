@@ -422,8 +422,8 @@ class H(BaseHTTPRequestHandler):
         extra = sorted(set(q) - ALLOWED[u.path])
         if extra: return self._send(400, dict(_tag="InvalidRequest", kind="UnknownParameter", unknown=extra, allowed=sorted(ALLOWED[u.path])))
         try: self._send(200, f(q))
-        except BadInput as e: self._send(400, dict(_tag="InvalidInput", message=str(e)))
-        except OutOfRangeErr as e: self._send(422, dict(_tag="OutOfRange", message=str(e)))
+        except BadInput as e: self._send(400, dict(_tag="InvalidRequest", message=str(e)))
+        except OutOfRangeErr as e: self._send(400, dict(_tag="InvalidRequest", message=str(e)))
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(); ap.add_argument("--port", type=int, default=8440); a = ap.parse_args()

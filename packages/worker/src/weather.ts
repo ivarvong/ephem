@@ -5,7 +5,7 @@ import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder"
-import { EphemApi, InvalidInput, OutOfRange, WeatherUnavailable, type WeatherResponse } from "@ephem/api"
+import { EphemApi, InvalidRequest, Unavailable, type WeatherResponse } from "@ephem/api"
 import { SUPPORTED, WMM_VALID, decimalYear, observerHeights, wmm } from "@ephem/core"
 import { Geoid, geoidCache } from "./geoid.ts"
 import { nearest, type Metar } from "./metar.ts"
@@ -23,7 +23,7 @@ const httpDate = (s: string | null) => { if (!s) return null; const t = Date.par
 export const declinationAt = (lat: number, lon: number, utcMs: number, heightM = 0) => wmm(lat, lon, heightM / 1000, decimalYear(utcMs))
 
 export class Weather extends Context.Service<Weather, {
-  readonly nearest: (q: { readonly lat: number; readonly lon: number; readonly count?: number | undefined }) => Effect.Effect<WeatherResponse, WeatherUnavailable>
+  readonly nearest: (q: { readonly lat: number; readonly lon: number; readonly count?: number | undefined }) => Effect.Effect<WeatherResponse, Unavailable>
 }>()("@ephem/worker/Weather") {}
 
 const station = (s: Metar, distanceKm: number, bearing: number, decl: number, now: number) => {
@@ -52,7 +52,7 @@ const logLine = (f: FeedResult | undefined, extra: Record<string, unknown>) => c
 export const weatherLive = (feed: Feed) => Layer.succeed(Weather, {
   nearest: q => Effect.gen(function* () {
     const tp = yield* currentTraceparent
-    const f = yield* Effect.tryPromise({ try: () => feed.get(tp), catch: e => new WeatherUnavailable({ message: `METAR feed unavailable: ${e instanceof Error ? e.message : String(e)}` }) }).pipe(
+    const f = yield* Effect.tryPromise({ try: () => feed.get(tp), catch: e => new Unavailable({ message: `METAR feed unavailable: ${e instanceof Error ? e.message : String(e)}` }) }).pipe(
       Effect.tapError(e => Effect.sync(() => logLine(undefined, { error: e.message }))),
       Effect.tap(r => Effect.annotateCurrentSpan({
         "metar.tier": r.tier, "ephem.feed_cache": r.tier.toUpperCase(), "metar.data_age_s": Math.round(r.dataAgeMs / 1000), "metar.bytes": r.bytes, "metar.parsed": r.parsed,
@@ -81,7 +81,7 @@ export const weatherLive = (feed: Feed) => Layer.succeed(Weather, {
 })
 
 /** No feed (tests that don't need one, the Node dev server without network). */
-export const WeatherNone = Layer.succeed(Weather, { nearest: () => Effect.fail(new WeatherUnavailable({ message: "no METAR feed configured" })) })
+export const WeatherNone = Layer.succeed(Weather, { nearest: () => Effect.fail(new Unavailable({ message: "no METAR feed configured" })) })
 
 export const EarthLive = HttpApiBuilder.group(EphemApi, "earth", h => h
   .handle("magnetic", ({ query: q }) => Effect.gen(function* () {
@@ -89,8 +89,8 @@ export const EarthLive = HttpApiBuilder.group(EphemApi, "earth", h => h
     if (q.time === undefined) ms = yield* Clock.currentTimeMillis
     else {
       ms = Date.parse(q.time)
-      if (!Number.isFinite(ms)) return yield* new InvalidInput({ message: `not a UTC instant: ${q.time}` })
-      if (ms < SUPPORTED.fromMs || ms >= SUPPORTED.toMs) return yield* new OutOfRange({ message: `${q.time} is outside 1972-01-01 … 2149-12-31 UTC` })
+      if (!Number.isFinite(ms)) return yield* new InvalidRequest({ parameter: "time", message: `time=${q.time} is not a real UTC instant: ISO-8601 with a trailing Z, e.g. 2026-11-17T03:45:00Z` })
+      if (ms < SUPPORTED.fromMs || ms >= SUPPORTED.toMs) return yield* new InvalidRequest({ parameter: "time", message: `time=${q.time} is outside the supported range 1972-01-01T00:00:00Z to 2149-12-31T23:59:59Z` })
     }
     const g = yield* (yield* Geoid).load(q.lat).pipe(Effect.withSpan("geoid.load"))
     yield* Effect.annotateCurrentSpan({ "ephem.geoid_cache": geoidCache(g) })

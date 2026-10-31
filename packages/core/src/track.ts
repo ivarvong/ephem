@@ -30,8 +30,8 @@ export const trackWindowError = (startMs: number, endMs: number, stepS: number):
     const iso = (ms: number) => new Date(ms).toISOString().replace(".000Z", "Z")
     return `start and end must lie on the UTC ${stepS} s grid (e.g. start=${iso(Math.floor(startMs / stepMs) * stepMs)}, end=${iso(Math.ceil(endMs / stepMs) * stepMs)})`
   }
-  if (endMs - startMs > TRACK_MAX_SPAN_MS) return `at most ${TRACK_MAX_SPAN_MS / 86_400_000} days per request`
-  if ((endMs - startMs) / stepMs + 1 > TRACK_MAX_POINTS) return `at most ${TRACK_MAX_POINTS} samples per request (span / stepSeconds + 1)`
+  if (endMs - startMs > TRACK_MAX_SPAN_MS) return `start…end spans ${((endMs - startMs) / 86_400_000).toFixed(2)} days; at most ${TRACK_MAX_SPAN_MS / 86_400_000} days per request`
+  if ((endMs - startMs) / stepMs + 1 > TRACK_MAX_POINTS) return `${(endMs - startMs) / stepMs + 1} samples; at most ${TRACK_MAX_POINTS} per request (span / stepSeconds + 1): raise stepSeconds or shorten start…end`
   return undefined
 }
 

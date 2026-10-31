@@ -125,7 +125,7 @@ check("err.invalid_params", "-32602", ip, ip.json?.error?.code === -32602, `code
 const ba = await modern("err.bad_args", "tools/call", { name: "position", arguments: { lat: 91, lon: 0 } })
 check("err.bad_args", "isError=true", ba, ba.json?.result?.isError === true, (ba.json?.result?.content?.[0]?.text ?? "").slice(0, 60).replace(/\n/g, " "))
 const oor = await modern("err.out_of_range", "tools/call", { name: "position", arguments: { lat: 0, lon: 0, time: "1960-01-01T00:00:00Z" } })
-check("err.out_of_range", "isError=true OutOfRange", oor, oor.json?.result?.isError === true && /^OutOfRange/.test(oor.json.result.content[0].text), oor.json?.result?.content?.[0]?.text?.slice(0, 60))
+check("err.out_of_range", "isError=true InvalidRequest naming time", oor, oor.json?.result?.isError === true && /^InvalidRequest: time=/.test(oor.json.result.content[0].text), oor.json?.result?.content?.[0]?.text?.slice(0, 60))
 const ver = await send({ jsonrpc: "2.0", id: `${run}-err.version`, method: "tools/list", params: { _meta: { ...meta, "io.modelcontextprotocol/protocolVersion": "1900-01-01" } } }, { "mcp-protocol-version": "1900-01-01", "mcp-method": "tools/list" })
 check("err.unsupported_version", "400 -32022", ver, ver.status === 400 && ver.json?.error?.code === -32022, `code=${ver.json?.error?.code} supported=${ver.json?.error?.data?.supported}`)
 const hm = await send({ jsonrpc: "2.0", id: `${run}-err.header`, method: "tools/list", params: { _meta: meta } }, { "mcp-protocol-version": LATEST, "mcp-method": "tools/call" })
@@ -137,8 +137,8 @@ check("batch(2025-03-26, no header)", "200 [1 reply]", b03, b03.status === 200 &
 const xa = await modern("err.excess_arg", "tools/call", { name: "day", arguments: { lat: 40.7, lon: -74, date: day, tz: "America/New_York", temprature: -20 } })
 check("err.excess_arg", "isError=true (unknown argument)", xa, xa.json?.result?.isError === true, (xa.json?.result?.content?.[0]?.text ?? "").slice(0, 60).replace(/\n/g, " "))
 const unk = await fetch(`${base}/day?lat=40.7&lon=-74&date=${day}&tz=America/New_York&temprature=-20`), unkBody: any = await unk.json().catch(() => ({}))
-check("rest.unknown_param", "400 UnknownParameter + allowed", { status: unk.status, ms: 0, ray: unk.headers.get("cf-ray") ?? "" },
-  unk.status === 400 && unkBody?.kind === "UnknownParameter" && unkBody?.unknown?.[0] === "temprature" && unkBody?.allowed?.includes("temperature"), `${unkBody?.kind} ${JSON.stringify(unkBody?.unknown)}`)
+check("rest.unknown_param", "400 InvalidRequest naming it, did-you-mean + allowed", { status: unk.status, ms: 0, ray: unk.headers.get("cf-ray") ?? "" },
+  unk.status === 400 && unkBody?._tag === "InvalidRequest" && unkBody?.parameter === "temprature" && /did you mean temperature/.test(unkBody?.message) && unkBody?.allowed?.includes("temperature"), `${unkBody?._tag} ${unkBody?.parameter}`)
 const nullPos: any = await (await fetch(`${base}/position?lat=40.7484&lon=-73.9857&time=2026-10-30T05:00:00Z`)).json()
 check("rest.position_below_horizon", "sun.apparentAltitude null + conventions", { status: 200, ms: 0, ray: "" },
   nullPos?.sun?.apparentAltitude === null && typeof nullPos?.sun?.altitudeRate === "number" && nullPos?.conventions?.horizon?.kind === "sea" && typeof nullPos?.observer?.geoidUndulation === "number",

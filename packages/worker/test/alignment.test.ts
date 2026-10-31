@@ -132,7 +132,7 @@ describe("aim (round-2 #3)", () => {
     const u = (await get(`${ELLIPSOID}&aim=upper`)).j, lo = (await get(`${ELLIPSOID}&aim=lower`)).j
     for (const [t, ang] of [[u, 0], [lo, 180]] as const) for (const p of t.track) { expect(p.aimOffset).toBeCloseTo(p.angularRadius, 12); expect(p.aimAngle).toBe(ang) }
     const s = await get("body=sun&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&start=2026-11-17T21:00:00Z&end=2026-11-17T21:10:00Z&aim=litCentroid")
-    expect(s.status).toBe(422)
+    expect(s.status).toBe(400)
     expect((await get(`${ELLIPSOID}&aim=rim`)).status).toBe(400)
   })
   it("crossing: aim=upper moves the crossing by the radius / rate; litCentroid moves the moonset by offset·cos(angle) / rate; limb is no longer a parameter", async () => {

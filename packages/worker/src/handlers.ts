@@ -3,7 +3,7 @@ import * as Clock from "effect/Clock"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder"
-import { EphemApi, InvalidInput, OutOfRange } from "@ephem/api"
+import { EphemApi, InvalidRequest } from "@ephem/api"
 import { SUPPORTED, TRACK_DEFAULT_STEP_S, alignmentLatRange, alignmentRequest, blocksFor, parseInclude, parseObstacles, sightline, SIGHTLINE_CONVENTIONS, MAX_SIGHTLINE_KM, inverse, K_TERRESTRIAL, GEOID, crossingRequest, crossingWindow, dayRequest, instant, instrumented, isValidZone, localMidnight, nextDate, positionRequest, trackRequest, trackWindowError } from "@ephem/core"
 import { Blocks, blocksCache } from "./blocks.ts"
 import { Geoid, geoidCache } from "./geoid.ts"
@@ -12,12 +12,14 @@ import { EarthLive } from "./weather.ts"
 export const VERSION = "0.1.0"
 export const PROV = { implementation: "@ephem/worker", version: VERSION, ephemeris: "JPL DE440 (linux_p1550p2650.440)" }
 
-export const parseUtc = (s: string) => Effect.gen(function* () {
+/** A UTC instant parameter: the schema checked the shape; this checks it is a real date in the supported range. */
+export const parseUtc = (s: string, parameter = "time") => Effect.gen(function* () {
   const ms = Date.parse(s)
-  if (!Number.isFinite(ms)) return yield* new InvalidInput({ message: `not a UTC instant: ${s}` })
-  if (ms < SUPPORTED.fromMs || ms >= SUPPORTED.toMs) return yield* new OutOfRange({ message: `${s} is outside 1972-01-01 … 2149-12-31 UTC` })
+  if (!Number.isFinite(ms)) return yield* new InvalidRequest({ parameter, message: `${parameter}=${s} is not a real UTC instant: ISO-8601 with a trailing Z, e.g. 2026-11-17T03:45:00Z` })
+  if (ms < SUPPORTED.fromMs || ms >= SUPPORTED.toMs) return yield* new InvalidRequest({ parameter, message: `${parameter}=${s} is outside the supported range 1972-01-01T00:00:00Z to 2149-12-31T23:59:59Z (DE440 with leap seconds)` })
   return ms
 })
+const badZone = (tz: string) => new InvalidRequest({ parameter: "tz", message: `tz=${tz} is not an IANA time zone: use a name like America/New_York, Europe/Oslo or UTC` })
 export const jd = (ms: number) => instant(ms).jdTDB
 
 type Attrs = Record<string, string | number | boolean | undefined>
@@ -62,36 +64,36 @@ export const SkyLive = HttpApiBuilder.group(EphemApi, "sky", h => h
     return { ...out, provenance }
   }).pipe(Effect.withSpan("position")))
   .handle("day", ({ query: q }) => Effect.gen(function* () {
-    if (!isValidZone(q.tz)) return yield* new InvalidInput({ message: `unknown IANA time zone: ${q.tz}` })
+    if (!isValidZone(q.tz)) return yield* badZone(q.tz)
     const t0 = localMidnight(q.date, q.tz), t1 = localMidnight(nextDate(q.date), q.tz)
-    if (t0 < SUPPORTED.fromMs || t1 >= SUPPORTED.toMs) return yield* new OutOfRange({ message: `${q.date} is outside the supported range` })
+    if (t0 < SUPPORTED.fromMs || t1 >= SUPPORTED.toMs) return yield* new InvalidRequest({ parameter: "date", message: `date=${q.date} is outside the supported range 1972-01-01 to 2149-12-31` })
     const { out, provenance } = yield* compute("day", blocksFor(jd(t0), jd(t1)), src =>
       dayRequest(src, { date: q.date, tz: q.tz, lat: q.lat, lon: q.lon, height: q.height, heightRef: q.heightRef, temperature: q.temperature, pressure: q.pressure,
         horizon: q.horizon, horizonProfile: q.horizonProfile, aim: q.aim, dut1: q.dut1 }), o => ("ok" in o ? { "ephem.events": o.ok.events.length } : {}), geoidAt(q.lat))
-    if ("error" in out) return yield* new InvalidInput({ message: out.error })
+    if ("error" in out) return yield* new InvalidRequest({ message: out.error })
     return { ...out.ok, provenance }
   }).pipe(Effect.withSpan("day")))
   .handle("crossing", ({ query: q }) => Effect.gen(function* () {
-    if (q.tz !== undefined && !isValidZone(q.tz)) return yield* new InvalidInput({ message: `unknown IANA time zone: ${q.tz}` })
-    if (q.start !== undefined) yield* parseUtc(q.start)
-    if (q.end !== undefined) yield* parseUtc(q.end)
+    if (q.tz !== undefined && !isValidZone(q.tz)) return yield* badZone(q.tz)
+    if (q.start !== undefined) yield* parseUtc(q.start, "start")
+    if (q.end !== undefined) yield* parseUtc(q.end, "end")
     const w = crossingWindow(q)
-    if ("error" in w) return yield* new InvalidInput({ message: w.error })
+    if ("error" in w) return yield* new InvalidRequest({ message: w.error })
     const { startMs, endMs } = w.ok
-    if (startMs < SUPPORTED.fromMs || endMs >= SUPPORTED.toMs) return yield* new OutOfRange({ message: "the window is outside 1972-01-01 … 2149-12-31 UTC" })
+    if (startMs < SUPPORTED.fromMs || endMs >= SUPPORTED.toMs) return yield* new InvalidRequest({ message: "the window is outside the supported range 1972-01-01 to 2149-12-31 UTC" })
     const { out, provenance } = yield* compute("crossing", blocksFor(jd(startMs), jd(endMs)), src =>
       crossingRequest(src, { startMs, endMs, lat: q.lat, lon: q.lon, height: q.height, heightRef: q.heightRef, body: q.body, altitude: q.altitude, altitudeType: q.altitudeType,
         horizonProfile: q.horizonProfile, direction: q.direction, temperature: q.temperature, pressure: q.pressure, dut1: q.dut1, include: parseInclude(q.include) ?? undefined, aim: q.aim }),
       o => ("ok" in o ? { "ephem.crossings": o.ok.crossings.length } : {}), geoidAt(q.lat))
-    if ("error" in out) return yield* new InvalidInput({ message: out.error })
+    if ("error" in out) return yield* new InvalidRequest({ message: out.error })
     return { ...out.ok, provenance }
   }).pipe(Effect.withSpan("crossing")))
   .handle("alignment", ({ query: q }) => Effect.gen(function* () {
-    const start = yield* parseUtc(q.start), end = yield* parseUtc(q.end), step = q.stepSeconds ?? 60
-    if (end <= start) return yield* new InvalidInput({ message: "end must be after start" })
-    if ((end - start) / 1000 / step > 2000) return yield* new InvalidInput({ message: "at most 2000 steps per request" })
-    if ((q.lat === undefined) !== (q.lon === undefined)) return yield* new InvalidInput({ message: "lat and lon go together (a fixed spot to watch the pass from); omit both for where-to-stand only" })
-    if (q.aim === "litCentroid" && q.body !== "moon") return yield* new InvalidInput({ message: "aim=litCentroid is the Moon's lit-area centroid: body must be moon" })
+    const start = yield* parseUtc(q.start, "start"), end = yield* parseUtc(q.end, "end"), step = q.stepSeconds ?? 60
+    if (end <= start) return yield* new InvalidRequest({ parameter: "end", message: `end=${q.end} must be after start=${q.start}` })
+    if ((end - start) / 1000 / step > 2000) return yield* new InvalidRequest({ parameter: "stepSeconds", message: `${Math.floor((end - start) / 1000 / step)} steps of ${step} s; at most 2000 per request: raise stepSeconds to ≥ ${Math.ceil((end - start) / 1000 / 2000)} or shorten start…end` })
+    if ((q.lat === undefined) !== (q.lon === undefined)) return yield* new InvalidRequest({ parameter: q.lat === undefined ? "lat" : "lon", message: "lat and lon go together (a fixed spot to watch the pass from); omit both for where-to-stand only" })
+    if (q.aim === "litCentroid" && q.body !== "moon") return yield* new InvalidRequest({ parameter: "aim", message: "aim=litCentroid is the Moon's lit-area centroid: it needs body=moon (for the Sun use center, upper or lower)", allowed: ["center", "upper", "lower"] })
     const maxDistanceKm = q.maxDistanceKm ?? 20
     const observer = q.lat !== undefined && q.lon !== undefined ? { lat: q.lat, lon: q.lon } : undefined
     const { out, provenance } = yield* compute("alignment", blocksFor(jd(start), jd(end)), src =>
@@ -105,10 +107,10 @@ export const SkyLive = HttpApiBuilder.group(EphemApi, "sky", h => h
   }).pipe(Effect.withSpan("alignment")))
   .handle("sightline", ({ query: q }) => Effect.gen(function* () {
     const obstacles = parseObstacles(q.obstacles)
-    if (typeof obstacles === "string") return yield* new InvalidInput({ message: obstacles })
+    if (typeof obstacles === "string") return yield* new InvalidRequest({ parameter: "obstacles", message: obstacles })
     const km = inverse(q.lat, q.lon, q.targetLat, q.targetLon).distanceM / 1000
-    if (km > MAX_SIGHTLINE_KM) return yield* new InvalidInput({ message: `observer and target are ${km.toFixed(1)} km apart; at most ${MAX_SIGHTLINE_KM} km` })
-    if (km < 0.001) return yield* new InvalidInput({ message: "observer and target are at the same place" })
+    if (km > MAX_SIGHTLINE_KM) return yield* new InvalidRequest({ message: `the eye (lat, lon) and the target (targetLat, targetLon) are ${km.toFixed(1)} km apart; at most ${MAX_SIGHTLINE_KM} km` })
+    if (km < 0.001) return yield* new InvalidRequest({ message: "the eye (lat, lon) and the target (targetLat, targetLon) are at the same place (< 1 m apart)" })
     // Geoid bands for every latitude the line and the obstacles touch.
     const lats = [q.lat, q.targetLat, ...obstacles.map(o => o.lat)], lo = Math.min(...lats), hi = Math.max(...lats)
     const { out, provenance } = yield* compute("sightline", [], () => sightline({
@@ -119,9 +121,9 @@ export const SkyLive = HttpApiBuilder.group(EphemApi, "sky", h => h
     return { ...out, observer, conventions: { ...SIGHTLINE_CONVENTIONS, terrestrialRefractionK: K_TERRESTRIAL, geoid: { model: GEOID.model, source: GEOID.source, interpolationErrorM: GEOID.interpolationErrorM } }, provenance }
   }).pipe(Effect.withSpan("sightline")))
   .handle("track", ({ query: q }) => Effect.gen(function* () {
-    const start = yield* parseUtc(q.start), end = yield* parseUtc(q.end), step = q.stepSeconds ?? TRACK_DEFAULT_STEP_S
+    const start = yield* parseUtc(q.start, "start"), end = yield* parseUtc(q.end, "end"), step = q.stepSeconds ?? TRACK_DEFAULT_STEP_S
     const bad = trackWindowError(start, end, step)
-    if (bad) return yield* new InvalidInput({ message: bad })
+    if (bad) return yield* new InvalidRequest({ message: bad })
     const { out, provenance } = yield* compute("track", blocksFor(jd(start), jd(end)), src =>
       trackRequest(src, { lat: q.lat, lon: q.lon, height: q.height, heightRef: q.heightRef, startMs: start, endMs: end, stepSeconds: step,
         temperature: q.temperature, pressure: q.pressure, horizon: q.horizon, dut1: q.dut1 }), o => ({ "ephem.instants": o.count }), geoidAt(q.lat))

@@ -543,31 +543,34 @@ export const SearchResponse = S.Struct({
 })
 
 // ─────────────────────────────── errors ───────────────────────────────
-export class OutOfRange extends S.TaggedError<OutOfRange>()("OutOfRange", { message: S.String }, { httpApiStatus: 422 }) {}
-export class InvalidInput extends S.TaggedError<InvalidInput>()("InvalidInput", { message: S.String }, { httpApiStatus: 422 }) {}
-/** The EGM96 geoid band an observer's height needs could not be loaded (fail closed: no guessed height). */
-export class GeoidUnavailable extends S.TaggedError<GeoidUnavailable>()("GeoidUnavailable", { message: S.String }, { httpApiStatus: 503 }) {}
-export class WeatherUnavailable extends S.TaggedError<WeatherUnavailable>()("WeatherUnavailable", { message: S.String }, { httpApiStatus: 503 }) {}
+/** Every problem with a request (unknown, missing, malformed or out-of-range parameter; an impossible combination): what was
+ *  wrong and what is allowed. `parameter` names the parameter when one is to blame; `allowed` lists the allowed parameter names
+ *  (unknown parameter) or values (a choice). */
+export class InvalidRequest extends S.TaggedError<InvalidRequest>()("InvalidRequest", {
+  message: S.String, parameter: S.optionalKey(S.String), allowed: S.optionalKey(S.Array(S.String)),
+}, { httpApiStatus: 400 }) {}
+/** A data source (the EGM96 geoid bands, the METAR feed) failed: fail closed, never a guessed answer. Retry later. */
+export class Unavailable extends S.TaggedError<Unavailable>()("Unavailable", { message: S.String }, { httpApiStatus: 503 }) {}
 
 // ─────────────────────────────── the API value ───────────────────────────────
 export const SkyGroup = HttpApiGroup.make("sky").add(
-  HttpApiEndpoint.get("position", "/position", { query: PositionQuery, success: PositionResponse, error: [OutOfRange, InvalidInput, GeoidUnavailable] }),
-  HttpApiEndpoint.get("day", "/day", { query: DayQuery, success: DayResponse, error: [OutOfRange, InvalidInput, GeoidUnavailable] }),
-  HttpApiEndpoint.get("crossing", "/crossing", { query: CrossingQuery, success: CrossingResponse, error: [OutOfRange, InvalidInput, GeoidUnavailable] }),
-  HttpApiEndpoint.get("alignment", "/alignment", { query: AlignmentQuery, success: AlignmentResponse, error: [OutOfRange, InvalidInput, GeoidUnavailable] }),
-  HttpApiEndpoint.get("sightline", "/sightline", { query: SightlineQuery, success: SightlineResponse, error: [InvalidInput, GeoidUnavailable] }),
-  HttpApiEndpoint.get("track", "/track", { query: TrackQuery, success: TrackResponse, error: [OutOfRange, InvalidInput, GeoidUnavailable] }),
+  HttpApiEndpoint.get("position", "/position", { query: PositionQuery, success: PositionResponse, error: [InvalidRequest, Unavailable] }),
+  HttpApiEndpoint.get("day", "/day", { query: DayQuery, success: DayResponse, error: [InvalidRequest, Unavailable] }),
+  HttpApiEndpoint.get("crossing", "/crossing", { query: CrossingQuery, success: CrossingResponse, error: [InvalidRequest, Unavailable] }),
+  HttpApiEndpoint.get("alignment", "/alignment", { query: AlignmentQuery, success: AlignmentResponse, error: [InvalidRequest, Unavailable] }),
+  HttpApiEndpoint.get("sightline", "/sightline", { query: SightlineQuery, success: SightlineResponse, error: [InvalidRequest, Unavailable] }),
+  HttpApiEndpoint.get("track", "/track", { query: TrackQuery, success: TrackResponse, error: [InvalidRequest, Unavailable] }),
 )
 /** Unknown body fields are rejected like unknown query parameters. */
 export const SearchGroup = HttpApiGroup.make("search").add(
-  HttpApiEndpoint.post("search", "/alignment/search", { payload: SearchPayload, success: SearchResponse, error: [OutOfRange, InvalidInput, GeoidUnavailable] })
+  HttpApiEndpoint.post("search", "/alignment/search", { payload: SearchPayload, success: SearchResponse, error: [InvalidRequest, Unavailable] })
     .annotate(HttpApi.PayloadParseOptions, { onExcessProperty: "error" }),
-  HttpApiEndpoint.get("searchWindow", "/internal/alignment-search-window", { query: SearchWindowQuery, success: SearchWindowResponse, error: [OutOfRange, InvalidInput, GeoidUnavailable] })
+  HttpApiEndpoint.get("searchWindow", "/internal/alignment-search-window", { query: SearchWindowQuery, success: SearchWindowResponse, error: [InvalidRequest, Unavailable] })
     .annotate(OpenApi.Exclude, true),   // internal: the Api's cache unit, reached only over ctx.exports (the front door 404s it)
 )
 export const EarthGroup = HttpApiGroup.make("earth").add(
-  HttpApiEndpoint.get("magnetic", "/magnetic", { query: MagneticQuery, success: MagneticResponse, error: [OutOfRange, InvalidInput, GeoidUnavailable] }),
-  HttpApiEndpoint.get("weather", "/weather", { query: WeatherQuery, success: WeatherResponse, error: [WeatherUnavailable] }),
+  HttpApiEndpoint.get("magnetic", "/magnetic", { query: MagneticQuery, success: MagneticResponse, error: [InvalidRequest, Unavailable] }),
+  HttpApiEndpoint.get("weather", "/weather", { query: WeatherQuery, success: WeatherResponse, error: [Unavailable] }),
 )
 export const MetaGroup = HttpApiGroup.make("meta").add(
   HttpApiEndpoint.get("health", "/healthz", { success: S.Struct({ ok: S.Literal(true), implementation: S.String, version: S.String }) }),

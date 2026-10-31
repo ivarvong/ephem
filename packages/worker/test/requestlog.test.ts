@@ -129,9 +129,9 @@ describe("request rows (through the app)", () => {
     }
     expect((await handler(new Request("http://x/trak"))).status).toBe(404)
   })
-  it("error_tag carries the typed error: OutOfRange 422, InvalidRequest 400, RouteNotFound 404", async () => {
+  it("error_tag carries the typed error: InvalidRequest 400 (handler and schema), NotFound 404", async () => {
     const oor = await run("/position?lat=0&lon=0&time=1960-01-01T00:00:00Z")
-    expect(oor.res.status).toBe(422); expect(oor.rows[0]).toMatchObject({ status: 422, ok: false, error_tag: "OutOfRange", route: "/position" })
+    expect(oor.res.status).toBe(400); expect(oor.rows[0]).toMatchObject({ status: 400, ok: false, error_tag: "InvalidRequest", route: "/position" })
     const bad = await run("/position?lat=91&lon=0")
     expect(bad.res.status).toBe(400); expect(bad.rows[0]).toMatchObject({ status: 400, error_tag: "InvalidRequest", route: "/position" })
     const nf = await run("/no/such/path?secret=1")

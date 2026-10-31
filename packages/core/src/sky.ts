@@ -78,7 +78,7 @@ export interface DayRequest extends SkyObserverInput {
 type HorizonChoice = { kind: "sea" | "geometric" | "custom"; altitude: number; dip: number | null } | { kind: "profile"; profile: HorizonProfile }
 const resolveHorizon = (spec: HorizonSpec | undefined, profile: string | undefined, hMsl: number): SkyResult<HorizonChoice> => {
   if (profile !== undefined) {
-    if (spec !== undefined) return { error: "pass horizon or horizonProfile, not both" }
+    if (spec !== undefined) return { error: "give horizon (sea, geometric or degrees) or horizonProfile (a skyline), not both" }
     const p = parseProfile(profile)
     return typeof p === "string" ? { error: p } : { ok: { kind: "profile", profile: p } }
   }
@@ -126,25 +126,25 @@ export interface CrossingRequest extends SkyObserverInput {
 /** Window from start/end or from a local date + tz; validation messages are the API's. */
 export const crossingWindow = (q: { start?: string | undefined; end?: string | undefined; date?: string | undefined; tz?: string | undefined }): SkyResult<{ startMs: number; endMs: number }> => {
   const byTime = q.start !== undefined || q.end !== undefined, byDate = q.date !== undefined || q.tz !== undefined
-  if (byTime === byDate) return { error: "give either start and end, or date and tz" }
+  if (byTime === byDate) return { error: "give the window as start and end (UTC, at most 31 days) or as date and tz (one local day): exactly one of the two" }
   if (byTime) {
-    if (q.start === undefined || q.end === undefined) return { error: "start and end go together" }
+    if (q.start === undefined || q.end === undefined) return { error: "start and end go together (UTC ISO-8601 with Z, at most 31 days apart)" }
     const a = Date.parse(q.start), b = Date.parse(q.end)
-    if (!(b > a)) return { error: "end must be after start" }
-    if (b - a > MAX_CROSSING_WINDOW_MS) return { error: "the window may be at most 31 days" }
+    if (!(b > a)) return { error: `end=${q.end} must be after start=${q.start}` }
+    if (b - a > MAX_CROSSING_WINDOW_MS) return { error: `start…end spans ${((b - a) / 86_400_000).toFixed(1)} days; at most 31 days per request` }
     return { ok: { startMs: a, endMs: b } }
   }
-  if (q.date === undefined || q.tz === undefined) return { error: "date and tz go together" }
+  if (q.date === undefined || q.tz === undefined) return { error: "date and tz go together (YYYY-MM-DD and an IANA zone such as America/New_York)" }
   return { ok: { startMs: localMidnight(q.date, q.tz), endMs: localMidnight(nextDate(q.date), q.tz) } }
 }
 export const crossingRequest = (src: BlockSource, q: CrossingRequest): SkyResult<ReturnType<typeof crossingOut>> => {
-  if (q.aim === "litCentroid" && q.body !== "moon") return { error: "aim=litCentroid is the Moon's lit-area centroid: body must be moon" }
+  if (q.aim === "litCentroid" && q.body !== "moon") return { error: "aim=litCentroid is the Moon's lit-area centroid: it needs body=moon (for the Sun use center, upper or lower)" }
   const { h, geo } = geoOf(q), T = q.temperature ?? T_DEFAULT, P = q.pressure ?? P_DEFAULT
   const limb: Limb = q.aim === undefined || q.aim === "litCentroid" ? "center" : q.aim
-  if ((q.altitude === undefined) === (q.horizonProfile === undefined)) return { error: "give altitude or horizonProfile (exactly one)" }
+  if ((q.altitude === undefined) === (q.horizonProfile === undefined)) return { error: "give the altitude to cross (altitude, degrees) or a skyline (horizonProfile): exactly one" }
   let target: Parameters<typeof crossing>[1]["target"], profile: HorizonProfile | undefined
   if (q.horizonProfile !== undefined) {
-    if (q.altitudeType !== undefined) return { error: "altitudeType goes with altitude; a horizonProfile is always apparent" }
+    if (q.altitudeType !== undefined) return { error: "altitudeType goes with altitude; a horizonProfile is always apparent (drop altitudeType)" }
     const p = parseProfile(q.horizonProfile); if (typeof p === "string") return { error: p }
     profile = p; target = { kind: "profile", profile: p, temperature: T, pressure: P }
   } else if ((q.altitudeType ?? "true") === "apparent") {

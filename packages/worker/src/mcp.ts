@@ -21,6 +21,7 @@ import {
   paramDoc, MagneticQuery, MagneticResponse, AlignmentQuery, AlignmentResponse, SightlineQuery, SightlineResponse, SearchPayload, SearchResponse, CrossingQuery, CrossingResponse, DayQuery, DayResponse, PositionQuery, PositionResponse, TrackQuery, TrackResponse, WeatherQuery, WeatherResponse,
 } from "@ephem/api"
 import { VERSION } from "./handlers.ts"
+import { explainIssue } from "./router.ts"
 import { VERSION_OVERRIDES } from "./responses.ts"
 import { IN_PROCESS_ORIGIN } from "./clienttrace.ts"
 
@@ -136,7 +137,12 @@ const callTool = (params: Record<string, unknown> | undefined, ctx: Ctx, version
   const tool = toolCodecs.get(p.name)
   if (!tool) return yield* new InvalidParams({ message: `Unknown tool: ${p.name}`, data: { tools: TOOLS.map(t => t.name) } })
   const args = yield* tool.decodeArgs(p.arguments ?? {}, { errors: "all", onExcessProperty: "error" }).pipe(Effect.result)
-  if (args._tag === "Failure") return toolText(`Invalid arguments for ${p.name}: ${issue(args.failure)}`, true)
+  if (args._tag === "Failure") {   // the REST 400's words (src/router.ts explainIssue), about the argument
+    const raw = issue(args.failure), given = (p.arguments ?? {}) as Record<string, unknown>
+    const e = explainIssue(tool.def.path, raw, k => (k in given ? (typeof given[k] === "string" ? given[k] as string : JSON.stringify(given[k])) : undefined))
+    const unexpected = /unexpected|excess/i.test(raw) && e.parameter
+    return toolText(`Invalid arguments for ${p.name}: ${unexpected ? `unknown argument ${e.parameter}; allowed: ${Object.keys(tool.def.payload ? (tool.def.payload as unknown as { fields: object }).fields : tool.def.query).join(", ")}` : e.message}`, true)
+  }
   const query = yield* tool.encodeQuery(args.success).pipe(Effect.mapError(e => new InternalError({ message: `could not encode ${p.name} arguments: ${issue(e)}` })))
   const res = yield* (tool.def.payload ? ctx.rest(tool.def.path, {}, query) : ctx.rest(tool.def.path, query))
   yield* Effect.annotateCurrentSpan({ "mcp.rest_status": res.status })

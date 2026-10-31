@@ -50,16 +50,16 @@ describe("POST /alignment/search", () => {
     const a = await post(local, { ...BODY, aim: "litCentroid" })
     expect(a.status).toBe(200); expect(a.j.conventions.aim.point).toBe("litCentroid")
     expect(Date.parse(a.j.passes[0].segments[0].enter.time)).toBeLessThan(Date.parse("2026-11-17T03:45:00Z"))
-    expect((await post(local, { ...BODY, body: "sun", aim: "litCentroid" })).status).toBe(422)
+    expect((await post(local, { ...BODY, body: "sun", aim: "litCentroid" })).status).toBe(400)
   }, 30_000)
   it("rejects bad input with the reason", async () => {
     const bad = async (patch: object, status: number, msg: RegExp) => { const r = await post(local, { ...BODY, ...patch }); expect(r.status, JSON.stringify(patch)).toBe(status); expect(r.j.message).toMatch(msg) }
-    await bad({ end: BODY.start }, 422, /end must be after start/)
-    await bad({ end: "2028-01-01T00:00:00Z" }, 422, /at most 400 days/)
-    await bad({ region: [-74.05, 40.68, -74.04, 40.70] }, 422, /target is inside the region/)
-    await bad({ region: [-74, 40, -73, 41] }, 422, /km across/)
-    await bad({ height: 200 }, 422, /above the eye/)
-    await bad({ start: "1960-01-01T00:00:00Z" }, 422, /outside/)
+    await bad({ end: BODY.start }, 400, /end=.* must be after start=/)
+    await bad({ end: "2028-01-01T00:00:00Z" }, 400, /at most 400 days/)
+    await bad({ region: [-74.05, 40.68, -74.04, 40.70] }, 400, /target is inside the region/)
+    await bad({ region: [-74, 40, -73, 41] }, 400, /km across/)
+    await bad({ height: 200 }, 400, /above the eye/)
+    await bad({ start: "1960-01-01T00:00:00Z" }, 400, /outside/)
     expect((await post(local, { ...BODY, nope: 1 })).status).toBe(400)
   }, 30_000)
 })
@@ -72,8 +72,8 @@ describe("GET /internal/alignment-search-window", () => {
     const r = await local(new Request("http://x" + W)); const j = await r.json() as any
     expect(r.status).toBe(200); expect(j.start).toBe("2026-11-03T00:00:00.000Z"); expect(j.end).toBe("2026-12-03T00:00:00.000Z")
     expect(j.passes.length).toBeGreaterThan(3); expect(j.passes.every((p: any) => p.sun && p.phase)).toBe(true)
-    expect((await local(new Request("http://x" + W.replace("2026-11-03", "2026-11-04")))).status).toBe(422)
-    expect((await local(new Request("http://x" + W.replace(enc, enc.slice(0, -3))))).status).toBe(422)
+    expect((await local(new Request("http://x" + W.replace("2026-11-03", "2026-11-04")))).status).toBe(400)
+    expect((await local(new Request("http://x" + W.replace(enc, enc.slice(0, -3))))).status).toBe(400)
   }, 30_000)
 })
 
@@ -106,15 +106,15 @@ describe("front door → Api windows (fake Workers Caching)", () => {
 })
 
 describe("geoid unavailable", () => {
-  it("is a 503 GeoidUnavailable from the window and from the POST, never a guessed height", async () => {
+  it("is a 503 Unavailable from the window and from the POST, never a guessed height", async () => {
     const h = makeHandler(blocks(), undefined, undefined, makeGeoid(async () => { throw new Error("R2 down") }))
     try {
       const r = await post(h, BODY)
-      expect(r.status).toBe(503); expect(r.j._tag).toBe("GeoidUnavailable")
+      expect(r.status).toBe(503); expect(r.j._tag).toBe("Unavailable")
       const apiH = makeHandler(blocks(), { role: "api" }, undefined, makeGeoid(async () => { throw new Error("R2 down") }))
       const front = makeHandler(blocks(), { role: "front", api: (pq, init) => apiH(new Request("https://api.internal" + pq, init)) })
       const f = await post(front, BODY)
-      expect(f.status).toBe(503); expect(f.j._tag).toBe("GeoidUnavailable")
+      expect(f.status).toBe(503); expect(f.j._tag).toBe("Unavailable")
     } finally { setGeoidSource(bundledGeoidBand) }
   }, 30_000)
 })
