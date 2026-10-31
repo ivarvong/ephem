@@ -323,15 +323,23 @@ function srvCls(n) {
   return x.ep !== "default" ? "int2" : "eff";
 }
 const ZERO = "Workers' clock only advances on I/O: compute reads 0 ms. Read the invocation's CPU instead.";
+/* Workers' clock only advances on I/O: a span's wall is the I/O it waited on. Runtime spans (fetch, jsRpc, r2_*) are that
+   I/O and print it; an Effect span with I/O below it (or 0 ms) prints "—"; CPU only on invocation rows. The detail keeps the value. */
+const isIO = x => !x.root && !x.a["effect.span_id"];
+const ioBelow = n => n.kids.reduce((m, c) => Math.max(m, c.kind === "srv" && isIO(c.x) ? c.e - c.s : 0, ioBelow(c)), 0);
+const ms0 = d => fmt(d, d >= 1000 ? undefined : 0);
+const frozen = n => { const d = n.e - n.s; return d < 0.5 || (!isIO(n.x) && !n.x.root && ioBelow(n) > 0); };
 function srvLabel(n) {
   const x = n.x, d = n.e - n.s;
   if (x.root && x.ep === "default") {
     const r = reqByI.get(x.ri), cpu = r && r.front ? r.front.cpu : x.a.cpu_time_ms;
-    if (x.respEnd == null) return fmt(d) + ' <span class="c">· cpu ' + fmt(cpu) + "</span>";
-    return (x.bodyEnd != null ? "headers " + fmt(x.respEnd - x.s) + " · body " + fmt(x.bodyEnd - x.s) : "resp " + fmt(x.respEnd - x.s)) + ' <span class="c">· cpu ' + fmt(cpu) + " · wall " + fmt(d) + "</span>";
+    if (x.respEnd == null) return ms0(d) + ' <span class="c">· cpu ' + ms0(cpu) + "</span>";
+    return (x.bodyEnd != null ? "headers " + ms0(x.respEnd - x.s) + " · body " + ms0(x.bodyEnd - x.s) : "resp " + ms0(x.respEnd - x.s)) + ' <span class="c">· cpu ' + ms0(cpu) + " · wall " + ms0(d) + "</span>";
   }
-  if (x.root) { const v = internalOf(x); return fmt(d) + (v ? ' <span class="c">· cpu ' + fmt(v.cpu) + "</span>" : ""); }
-  return d < 0.5 ? '<span class="z">0 ms</span>' : fmt(d);
+  if (x.root) { const v = internalOf(x); return ms0(d) + (v ? ' <span class="c">· cpu ' + ms0(v.cpu) + "</span>" : ""); }
+  if (n.after) return ms0(d);
+  if (isIO(x)) return d < 0.5 ? '<span class="z">—</span>' : '<span class="c">i/o</span> ' + ms0(d);
+  return frozen(n) ? '<span class="z">—</span>' : ms0(d);
 }
 
 /* ---------- view ---------- */
@@ -445,10 +453,10 @@ function trackCell(n) {
   if (x.root && PM) t += bar(n.s - PM, n.e + PM, "wh", "± " + fmt(PM, 1) + " clock offset");
   const respDone = x.bodyEnd != null ? x.bodyEnd : x.respEnd;
   if (x.root && x.ep === "default" && x.respEnd != null && !n.after) {
-    t += bar(n.s, x.respEnd, "front", "headers: first byte " + fmt(x.respEnd - x.s));
+    t += bar(n.s, x.respEnd, "front", "headers: first byte " + ms0(x.respEnd - x.s));
     if (x.bodyEnd != null) t += bar(x.respEnd, x.bodyEnd, "body", "streaming body until " + fmt(x.bodyEnd, 1) + " (" + x.bodyEndFrom + ")");
     t += bar(respDone, n.e, "alive", "invocation alive after the response (waitUntil below)");
-  } else t += bar(n.s, n.e, srvCls(n) + (n.e - n.s < 0.5 ? " zero" : ""), n.e - n.s < 0.5 ? ZERO : "");
+  } else t += bar(n.s, n.e, srvCls(n) + (n.e - n.s < 0.5 ? " zero" : ""), frozen(n) ? ZERO : "");
   if (n.crit) t += bar(n.s, x.root && respDone != null ? respDone : n.e, "cl");
   t += lab(n.s, n.e, srvLabel(n) + (x.cache ? ' <span class="mc">· ' + esc(x.cache) + "</span>" : ""), x.root ? PM : 0);
   return '<div class="tk">' + t + "</div>";
@@ -608,6 +616,7 @@ function detailHtml(n) {
     "<h3 class=cap>timing (browser clock)</h3>" + kv([["start", fmt(x.s, 1)], ["end", fmt(x.e, 1)], ["duration", d < 0.5 ? "0 ms · " + ZERO : fmt(d, 1)],
       ["headers", x.respEnd != null ? fmt(x.respEnd - x.s, 1) + " to first byte (runtime time_to_first_byte_ms)" : null],
       ["body", x.bodyEnd != null ? "streams until " + fmt(x.bodyEnd, 1) + " (" + fmt(x.bodyEnd - x.s, 1) + " after the start); end from the " + x.bodyEndFrom + ": the model has no span for the last chunk" : null],
+      ["frozen clock", !x.root && frozen(n) ? "this wall time is the frozen-clock artefact: " + (d < 0.5 ? "no I/O inside it" : "its wall is the I/O below it (longest subrequest " + fmt(ioBelow(n), 1) + ")") + "; its compute is in the invocation's CPU" : null],
       ["cpu", x.root && x.ep === "default" && r && r.front ? fmt(r.front.cpu) : v ? fmt(v.cpu) : null],
       ["clock", PM ? "server − client θ = " + fmt(off.thetaMs, 1) + " ± " + fmt(PM, 1) + " (" + off.agree + "/" + off.n + " bounds agree)" : null]]) +
     "<h3 class=cap>span</h3>" + kv([["name", x.name], ["entrypoint", x.ep], ["request", r ? '<a data-go="r' + r.i + '">' + esc(r.method + " " + r.path) + "</a>" : null, 0, 1], ["cf-ray", r && r.ray, 1], ["trace id", x.trace, 1], ["span id", x.id, 1], ["parent", x.parent, 1]]) +
