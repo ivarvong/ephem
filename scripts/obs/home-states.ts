@@ -38,7 +38,7 @@ try {
         await p.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: scheme }, { name: "prefers-reduced-motion", value: "reduce" }] })
         await p.send("Network.setExtraHTTPHeaders", { headers: { "x-ephem-smoke": "1" } })
         await navigate(p, url)
-        await waitForFn(p, `window.__sky && window.__sky.labels && performance.getEntriesByName("ephem:track").length && document.getElementById("next").textContent.trim().length > 2 && document.getElementById("liveT").textContent === "Fixed time"`, 30_000)
+        await waitForFn(p, `window.__sky && window.__sky.labels && performance.getEntriesByName("ephem:track").length && document.getElementById("next").textContent.trim().length > 2 && document.getElementById("liveT").textContent === "Fixed time" && /MAG/i.test(document.getElementById("bodies").textContent)`, 30_000)
         await new Promise(r => setTimeout(r, 600))
         const file = `${out}/${id}-${w}x${h}-${scheme}.png`
         await screenshot(p, file)

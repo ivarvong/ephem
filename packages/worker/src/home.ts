@@ -53,6 +53,7 @@ export const initialQueries = (v: Visitor, now: number) => {
     "ephem-position": ["/v1/position", q],
     "ephem-track": ["/v1/track", { ...q, start: iso(t0), end: iso(t0 + 72 * 3600e3) }],
     "ephem-day": ["/v1/day", { ...q, date: today, tz: v.tz }],
+    "ephem-magnetic": ["/v1/magnetic", q],   // the declination, so MAG shows with the first numbers (it used to wait for weather)
   } as const satisfies Record<string, readonly [string, Record<string, string>]>
 }
 
@@ -442,8 +443,9 @@ function compass16(az) { return ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE
 // evs [{body, kind, t}], sun [{t, alt}] (the day's samples), s0/span the local day, w px, next {body, kind, t}|null,
 // name(e) → caps name, time(t) → "HH:MM", meas(text, "name"|"time") → px.
 var TL_NODE = { sun: { rise: 1, transit: 1, set: 1 }, moon: { rise: 1, set: 1 } };
-function timelineLayout(evs, sun, s0, span, w, now, next, name, time, meas) {
-  var pad = 10, mid = 46, gap = 9, lh = 13, X = function (t) { return pad + Math.max(0, Math.min(1, (t - s0) / span)) * (w - 2 * pad); };
+function timelineLayout(evs, sun, s0, span, w, now, next, name, time, meas, k) {
+  k = k || 1;
+  var pad = 10, mid = Math.round(46 * k), gap = Math.round(9 * k), lh = Math.round(13 * k), X = function (t) { return pad + Math.max(0, Math.min(1, (t - s0) / span)) * (w - 2 * pad); };
   var out = { mid: mid, h: mid + gap + 2 * lh + 4, segs: [], nodes: [], labels: [], leaders: [] };
   function phase(a) { return a >= -0.833 ? "day" : a >= -6 ? "civil" : a >= -12 ? "nautical" : a >= -18 ? "astro" : "night"; }
   for (var i = 1; i < sun.length; i++) {
@@ -453,16 +455,20 @@ function timelineLayout(evs, sun, s0, span, w, now, next, name, time, meas) {
   }
   var isNext = function (e) { return next && next.body === e.body && next.kind === e.kind && Math.abs(next.t - e.t) < 60e3; };
   var pick = evs.filter(function (e) { return (TL_NODE[e.body] && TL_NODE[e.body][e.kind]) || isNext(e); }).sort(function (a, b) { return a.t - b.t; });
+  // events within 10 minutes of each other share one node and one stacked label ("SOLAR NOON · MOONSET" over "12:39 · 12:42")
+  var groups = [];
+  pick.forEach(function (e) { var g = groups[groups.length - 1]; if (g && e.t - g[g.length - 1].t <= 10 * 60e3) g.push(e); else groups.push([e]); });
   var rows = [[], []], side = 0;
-  pick.forEach(function (e) {
-    var x = X(e.t), nm = name(e), tm = time(e.t), bw = Math.max(meas(nm, "name"), meas(tm, "time")), placed = null;
-    out.nodes.push({ x: x, body: e.body, kind: e.kind, past: e.t <= now, next: !!isNext(e) });
+  groups.forEach(function (gp) {
+    var t = gp[0].t, x = X(t), nm = gp.map(name).join(" \u00b7 "), tm = gp.map(function (e) { return time(e.t); }).join(" \u00b7 ");
+    var nx = gp.some(isNext), past = gp[gp.length - 1].t <= now, bw = Math.max(meas(nm, "name"), meas(tm, "time")), placed = null;
+    out.nodes.push({ x: x, body: gp[0].body, bodies: gp.map(function (e) { return e.body; }), kind: gp[0].kind, past: past, next: nx });
     for (var tries = 0; tries < 2 && !placed; tries++) {
       var r = (side + tries) % 2, bx = Math.max(0, Math.min(w - bw, x - bw / 2)), y = r === 0 ? mid - gap - 2 * lh : mid + gap;
       var box = { x: bx, y: y, w: bw, h: 2 * lh };
       if (rows[r].some(function (o) { return box.x < o.x + o.w + 8 && o.x < box.x + box.w + 8; })) continue;
       rows[r].push(box); placed = box; side = 1 - r;
-      out.labels.push({ x: bx, y: y, w: bw, h: 2 * lh, name: nm, time: tm, cx: x, past: e.t <= now, next: !!isNext(e), body: e.body });
+      out.labels.push({ x: bx, y: y, w: bw, h: 2 * lh, name: nm, time: tm, cx: x, past: past, next: nx, body: gp[0].body });
       if (x >= bx + 2 && x <= bx + bw - 2) out.leaders.push(r === 0 ? [x, mid - 5, x, y + 2 * lh + 1] : [x, mid + 5, x, y - 1]);
     }
   });
@@ -603,6 +609,10 @@ footer.tel2 i{font-style:normal;color:var(--faint);margin-right:8px}
 .err{color:var(--alert)}
 @media (max-width:760px){.hood .in{grid-template-columns:minmax(0,1fr)}.wxg{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
 @media (min-width:760px){.tel{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+/* wide screens: bigger type, a taller chart (still full bleed), the content in a ~1100 px column */
+@media (min-width:900px){.cap{font-size:12px}.ro .v{font-size:44px}.ro .u{font-size:14px}.cdh .t{font-size:96px}.cdh .ev{font-size:15px}
+.clock{font-size:20px}.brand{font-size:15px}h1{font-size:14px}.sky{height:min(56vh,45vw)}.kv dt{font-size:12px}.kv dd{font-size:17px}
+.wxg .v{font-size:22px}.wx .temp .v{font-size:56px}}
 </style>
 </head><body>
 <header class="hd gut" id="top">
@@ -737,7 +747,7 @@ function resize() {
 }
 function defaultCenter(p) { return S.pose ? S.pose.az : chartCenter(loc.lat, [p.sun.azimuth, p.moon.azimuth]); }
 var mw = {};
-function meas(t) { if (mw[t] == null) { ctx.font = LABEL_FONT; if ("letterSpacing" in ctx) ctx.letterSpacing = "1.6px"; mw[t] = Math.ceil(ctx.measureText(t).width) + 2; } return mw[t]; }
+function meas(t) { var f = wide() ? LABEL_FONT.replace("10.5px", "12.5px") : LABEL_FONT, k = f + t; if (mw[k] == null) { ctx.font = f; if ("letterSpacing" in ctx) ctx.letterSpacing = "1.6px"; mw[k] = Math.ceil(ctx.measureText(t).width) + 2; } return mw[k]; }
 // The live position: the last answer moved on by its own rates (deg/min) to now; the readouts keep the answer's numbers.
 function livePos(now) {
   var p = S.to; if (!p) return null;
@@ -786,6 +796,7 @@ function trackInfo(nowMs) {
 function nextEvent(now) { var up = upcoming(now); return up.length ? { body: up[0].body, kind: up[0].kind, t: Date.parse(up[0].time) } : null; }
 var PERIOD = { sun: 864e5, moon: 89428e3 };   // a solar day; a mean lunar day, 24 h 50 min 28 s
 var COLOR = { sun: "#f5b860", moon: "#c9d1de" }, DIN = "'Ephem DIN', 'DIN Alternate', Bahnschrift, -apple-system, system-ui, sans-serif", LABEL_FONT = "700 10.5px " + DIN;
+function wide() { return W >= 900; }   // desktop: canvas type a size up (labels 12.5 px, compass 12 px)
 function draw() {
   if (!W) return;
   var p = S.to, nowMs = tNow(), live = livePos(nowMs), r = 5, c = S.center == null ? (loc.lat >= 0 ? 180 : 0) : S.center;
@@ -797,8 +808,9 @@ function draw() {
     return { key: o[0], name: o[1], az: L.az, alt: L.alt, r: o[0] === "moon" ? 6 : r, pts: S.track.length ? pts : [], nowIdx: at, period: PERIOD[o[0]] };
   }) : [];
   var sunAlt = live ? live.sun.alt : -30;
-  var m = skyModel({ W: W, H: H, insetL: insetL, insetR: insetR, center: c, now: nowMs, ctl: ctlR, pose: S.pose, lh: 17, bodies: bodies,
+  var m = skyModel({ W: W, H: H, insetL: insetL, insetR: insetR, center: c, now: nowMs, ctl: ctlR, pose: S.pose, lh: wide() ? 20 : 17, bodies: bodies,
     meas: function (t) { return meas(t.toUpperCase()) + 10; } });
+  if (wide()) m.items.forEach(function (it) { it.h = 20; });
   var g = m.g, hy = g.hy;
   drawnAt = nowMs; drawnPx = bodies.map(function (b) { return [chX(b.az, g, c), chY(b.alt, g)]; });
   // the sky: its real colour, a subtle vertical gradient; below the horizon a darker, flat ground
@@ -811,7 +823,7 @@ function draw() {
   ctx.strokeStyle = "rgba(242,244,247,.32)"; ctx.beginPath(); ctx.moveTo(0, Math.round(hy) + 0.5); ctx.lineTo(W, Math.round(hy) + 0.5); ctx.stroke();
   for (var az = 0; az < 360; az += 30) chXs(az, g, c).forEach(function (x) { if (x < 0 || x > W) return; x = Math.round(x) + 0.5; ctx.beginPath(); ctx.moveTo(x, hy); ctx.lineTo(x, hy + (az % 90 ? 3 : 6)); ctx.stroke(); });
   // N E S W, small caps, along the bottom
-  ctx.font = "700 10px " + DIN; if ("letterSpacing" in ctx) ctx.letterSpacing = "1.6px"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = "rgba(242,244,247,.45)";
+  ctx.font = "700 " + (wide() ? 12 : 10) + "px " + DIN; if ("letterSpacing" in ctx) ctx.letterSpacing = "1.6px"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = "rgba(242,244,247,.45)";
   ["N", "E", "S", "W"].forEach(function (t, i) { chXs(i * 90, g, c).forEach(function (x) { if (x > g.x0 + 8 && x < g.x1 - 8) ctx.fillText(t, x, g.bot + CH_AXIS / 2); }); });
   // tracks: one polyline per body, past ~70 %, future ~35 %, sharing the vertex at now
   Object.keys(m.lines).forEach(function (key) {
@@ -848,7 +860,7 @@ function draw() {
     var t = pl.id.toUpperCase();
     // a small dark pill at 60 % behind the name: legible on any sky, no outlined text
     ctx.fillStyle = "rgba(6,7,8,.6)"; ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(pl.x, pl.y, pl.w, pl.h, 3); else ctx.rect(pl.x, pl.y, pl.w, pl.h); ctx.fill();
-    ctx.font = LABEL_FONT; if ("letterSpacing" in ctx) ctx.letterSpacing = "1.6px"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    ctx.font = wide() ? LABEL_FONT.replace("10.5px", "12.5px") : LABEL_FONT; if ("letterSpacing" in ctx) ctx.letterSpacing = "1.6px"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
     ctx.fillStyle = pl.id === "Sun" ? "#f5b860" : "#d7deeb"; ctx.fillText(t, pl.x + 5, pl.y + pl.h / 2 + 0.5);
   });
   window.__sky = { labels: placed, hard: m.hard, lines: m.lines, W: W, H: H, draws: (window.__sky ? window.__sky.draws : 0) + 1,
@@ -1018,7 +1030,8 @@ function drawStrip() {
   var w = Math.max(300, Math.round(svg.getBoundingClientRect().width || 1000)), s0 = Date.parse(S.day.start), span = Date.parse(S.day.end) - s0, now = tNow();
   var evs = S.day.events.map(function (e) { return { body: e.body, kind: e.kind, t: Date.parse(e.time), e: e }; });
   var sun = S.track.filter(function (x) { return x.t >= s0 - 20 * 60e3 && x.t <= s0 + span + 20 * 60e3; }).map(function (x) { return { t: x.t, alt: x.sun.altitude }; });
-  var L = timelineLayout(evs, sun, s0, span, w, now, nextEvent(now), function (e) { return evName(e).toUpperCase(); }, hm, function (t, k) { return Math.ceil(t.length * (k === "name" ? 6.4 : 6.6)) + 4; });
+  var k = w >= 700 ? 1.25 : 1;
+  var L = timelineLayout(evs, sun, s0, span, w, now, nextEvent(now), function (e) { return evName(e).toUpperCase(); }, hm, function (t, kind) { return Math.ceil(t.length * (kind === "name" ? 6.4 : 6.6) * k) + 4; }, k);
   svg.setAttribute("viewBox", "0 0 " + w + " " + L.h);
   var SH = { day: "rgba(242,244,247,.75)", civil: "rgba(242,244,247,.42)", nautical: "rgba(242,244,247,.26)", astro: "rgba(242,244,247,.15)", night: "rgba(242,244,247,.07)" };
   L.segs.forEach(function (sg) { svg.appendChild(el("rect", { x: sg.x0, y: L.mid - 1.5, width: Math.max(0.5, sg.x1 - sg.x0), height: 3, fill: SH[sg.kind] })); });
@@ -1026,12 +1039,17 @@ function drawStrip() {
   L.nodes.forEach(function (n) {
     var col = n.body === "sun" ? "#f5b860" : "#c9d1de";
     if (n.next) svg.appendChild(el("circle", { cx: n.x, cy: L.mid, r: 7, fill: "none", stroke: "#6fd8f2", "stroke-width": 1.25 }));
-    svg.appendChild(el("circle", { cx: n.x, cy: L.mid, r: 3.5, fill: n.past ? col : "#060708", stroke: col, "stroke-width": 1.5 }));
+    var two = n.bodies.length > 1 && n.bodies.some(function (b) { return b !== n.bodies[0]; });
+    if (two) {   // a merged node of both bodies: half amber, half silver
+      var c2 = n.bodies.find(function (b) { return b !== n.bodies[0]; }) === "sun" ? "#f5b860" : "#c9d1de";
+      svg.appendChild(el("path", { d: "M" + n.x + "," + (L.mid - 4) + "a4,4 0 0 0 0,8z", fill: col }));
+      svg.appendChild(el("path", { d: "M" + n.x + "," + (L.mid - 4) + "a4,4 0 0 1 0,8z", fill: c2 }));
+    } else svg.appendChild(el("circle", { cx: n.x, cy: L.mid, r: 3.5, fill: n.past ? col : "#060708", stroke: col, "stroke-width": 1.5 }));
   });
   L.labels.forEach(function (lb) {
     var cx = lb.x + lb.w / 2, c1 = lb.next ? "#6fd8f2" : lb.past ? "#555b64" : "#8d939c", c2 = lb.next ? "#6fd8f2" : lb.past ? "#555b64" : "#f2f4f7";
-    svg.appendChild(el("text", { x: cx, y: lb.y + 10, "text-anchor": "middle", "font-size": 9.5, "letter-spacing": "1.2", fill: c1 }, lb.name));
-    svg.appendChild(el("text", { x: cx, y: lb.y + 24, "text-anchor": "middle", "font-size": 12, "letter-spacing": "0.4", fill: c2 }, lb.time));
+    svg.appendChild(el("text", { x: cx, y: lb.y + 10 * k, "text-anchor": "middle", "font-size": 9.5 * k, "letter-spacing": "1.2", fill: c1 }, lb.name));
+    svg.appendChild(el("text", { x: cx, y: lb.y + 24 * k, "text-anchor": "middle", "font-size": 12 * k, "letter-spacing": "0.4", fill: c2 }, lb.time));
   });
   var nowG = el("g", {}); nowG.appendChild(el("line", { x1: 0, x2: 0, y1: L.mid - 7, y2: L.mid + 7, stroke: "#6fd8f2", "stroke-width": 1.5 })); nowG.appendChild(el("title", {}, "Now"));
   svg.appendChild(nowG); TL = { g: nowG, X: function (t) { return 10 + Math.max(0, Math.min(1, (t - s0) / span)) * (w - 20); }, s0: s0, span: span, x: null };
@@ -1176,6 +1194,7 @@ function boot() {
   if (pos) { S.posAt = Date.now(); S.posErr = null; S.last = { url: "/v1/position?" + new URLSearchParams(q()).toString(), ms: null, prov: pos.provenance }; setPos(pos); } else loadPos();
   if (tr) applyTrack(tr); else loadTrack();
   if (dy && dy.date === localDate(tNow())) applyDay(dy); else loadDay();
+  var mg = AT == null ? __embed("ephem-magnetic") : null; if (mg && mg.magnetic) setDecl(mg.magnetic.declination);
   loadWx();
   if (window.performance && performance.mark) performance.mark(pos && tr && dy ? "ephem:embedded" : "ephem:fetched");
 }
