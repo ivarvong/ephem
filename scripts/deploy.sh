@@ -197,6 +197,7 @@ if [ "${EPHEM_DEPLOY_LIVE:-}" = 1 ]; then
     echo "LIVE CHECK FAILED on $NEW: $R" >&2
     notify "ephem deploy rolled back" "$SHA ${NEW:0:8}: $why"
   fi
+  for m in canary live; do cp "$WT/.manifest-$m" "$LIVEDIR/$SHA-$m.manifest" 2>/dev/null || true; done   # for a postmortem
   printf '%s live %s %s %s%s watched=%ss\n' "$(iso_now)" "$SHA" "${NEW:0:8}" "$R" "$TAILR" "$W" | tee "$LIVEDIR/$SHA.result"
   [ -n "${EPHEM_SHIP_LOG:-}" ] && cat "$LIVEDIR/$SHA.result" >> "$EPHEM_SHIP_LOG"
   [ "$R" = ok ] || exit 1

@@ -70,6 +70,16 @@ loop() {
     head=$(short refs/heads/main); dep=$(deployed); failed=$(cat "$ST/failed" 2>/dev/null || true)
     # rolled back by its live watcher after promotion (its deployed/ tag is gone): failed too, not to be redeployed
     [ -n "$head" ] && grep -qE 'ROLLED-BACK|FAILED' "$GITDIR/ephem-live/$head.result" 2>/dev/null && failed=$head
+    # ...except once, automatically, when nothing reported an error: telemetry that never arrived (a single-request check's
+    # invocation lost at ingest, 3 of ~790 smoke requests on 2026-10-31) or an o11y API failure. Every gate runs again.
+    if [ -n "$head" ] && [ "$failed" = "$head" ] && [ "$(cat "$ST/retried" 2>/dev/null)" != "$head" ] \
+       && { cat "$GITDIR/ephem-live/$head.result" "$(ls -t "$ST"/logs/*-"$head".log 2>/dev/null | head -1)" 2>/dev/null || true; } \
+          | grep -qE 'GATE FAILED: 0 errors, [0-9]+ missing|no invocation or root span|query failed' \
+       && ! { cat "$(ls -t "$GITDIR"/ephem-live/"$head"-*.log 2>/dev/null | head -1)" "$(ls -t "$ST"/logs/*-"$head".log 2>/dev/null | head -1)" 2>/dev/null || true; } \
+          | grep -qE 'GATE FAILED: [1-9][0-9]* errors|SMOKE FAILED|^   FAIL  (error log|5xx|outcome|status|version|live):'; then
+      echo "$head" > "$ST/retried"; rm -f "$ST/failed" "$GITDIR/ephem-live/$head.result"; failed=""
+      echo "$(iso) $head failed on missing telemetry / o11y API only (no error): retrying it once" | tee -a "$SHIP_LOG"
+    fi
     if [ -n "$head" ] && [ "$head" != "$dep" ] && [ "$head" != "$failed" ] && ! { [ -n "$dep" ] && git -C "$ROOT" merge-base --is-ancestor "$head" "$dep"; } \
        && [ ! -d "$GITDIR/ephem-deploy.lock" ]; then
       deploy_one "$head" "$dep"; rc=$?
