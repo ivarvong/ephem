@@ -7,6 +7,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/http/HttpServerResponse"
 import { isValidZone } from "@ephem/core"
 import { RUM_JS } from "./rum.ts"
+import { ICON_LINK } from "./favicon.ts"
 import { CLIENT_TRACE_JS, documentTrace, documentTraceHeaders, traceparentMeta, type DocumentTrace } from "./clienttrace.ts"
 
 interface CfLocation {
@@ -198,6 +199,7 @@ ${traceparentMeta(trace)}
 <title>ephem · the sky over ${v.city.replace(/[<>&"]/g, "")}</title>
 <meta name="description" content="Where the Sun and the Moon are right now, from JPL DE440, computed on Cloudflare's edge.">
 <meta name="theme-color" content="#05070b">
+${ICON_LINK}
 <style>
 /* Mission-ops idiom: near-black, 1px hairlines, a strict grid, uppercase tracked labels, tabular mono readouts,
    one accent (--accent) plus status colours (--ok, --caution, --alert). System fonts only: no web-font bytes. */

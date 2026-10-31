@@ -2,6 +2,7 @@
 // endpoint table. Parameter lists come from QUERY_PARAMS and definitions from CONVENTIONS (both @ephem/api), so they cannot
 // drift from the contract; test/docs.test.ts checks every parameter of every route is listed (round-2 feedback #7).
 import { CONVENTIONS, QUERY_PARAMS } from "@ephem/api"
+import { ICON_LINK } from "./favicon.ts"
 
 export const BASE = "https://ephem.ivar.workers.dev"
 export const SCALAR = "https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.74.0"
@@ -74,7 +75,7 @@ export const llmsTxt = (): string => [
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
 /** /docs: readable without JavaScript; links the spec, llms.txt, MCP and the interactive reference. */
-export const docsHtml = (): string => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ephem API</title>
+export const docsHtml = (): string => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${ICON_LINK}<title>ephem API</title>
 <style>body{font:15px/1.5 system-ui,sans-serif;max-width:52rem;margin:2rem auto;padding:0 1rem;color:#111;background:#fff}code{font:13px ui-monospace,monospace;background:#f3f3f3;padding:0 .2em;overflow-wrap:anywhere}h2{margin-top:2rem}dt{margin-top:1rem;font-weight:600}dd{margin:.2rem 0 0 1rem}@media(prefers-color-scheme:dark){body{color:#eee;background:#111}code{background:#222}a{color:#8bf}}</style></head><body>
 <h1>ephem API</h1>
 <p>Sun and Moon positions, day events, crossings and landmark alignments from JPL DE440. JSON over HTTPS, CORS open, no key.</p>
@@ -90,4 +91,4 @@ export const docsHtml = (): string => `<!doctype html><html lang="en"><head><met
 <h2>Conventions</h2><dl>${CONVENTION_KEYS.map(k => `<dt>${k}</dt><dd>${esc(CONVENTIONS[k])}</dd>`).join("")}</dl>
 </body></html>`
 
-export const SCALAR_HTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ephem API reference</title></head><body><noscript>This page needs JavaScript; <a href="/docs">/docs</a> is plain HTML and <a href="/openapi.json">/openapi.json</a> the spec.</noscript><script id="api-reference" data-url="/openapi.json"></script><script src="${SCALAR}"></script></body></html>`
+export const SCALAR_HTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${ICON_LINK}<title>ephem API reference</title></head><body><noscript>This page needs JavaScript; <a href="/docs">/docs</a> is plain HTML and <a href="/openapi.json">/openapi.json</a> the spec.</noscript><script id="api-reference" data-url="/openapi.json"></script><script src="${SCALAR}"></script></body></html>`

@@ -23,6 +23,7 @@ import { ASSETS, TOKENS_CSS } from "./instrument-ds.ts"
 import { ENGINE_JS } from "./instrument-engine.ts"
 import { declinationAt } from "./weather.ts"
 import { RUM_JS } from "./rum.ts"
+import { ICON_LINK } from "./favicon.ts"
 import { CLIENT_TRACE_JS, documentTrace, documentTraceHeaders, traceparentMeta, type DocumentTrace } from "./clienttrace.ts"
 
 /** The immutable URL of a vendored file (fonts, OFL licences). */
@@ -503,7 +504,7 @@ ${traceparentMeta(trace)}
 <meta name="description" content="The live Sun and Moon from JPL DE440 on a working RPN calculator: the soft keys push real values onto the stack.">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#121416" media="(prefers-color-scheme: dark)"><meta name="theme-color" content="#eae9e6" media="(prefers-color-scheme: light)">
-<link rel="icon" href="data:,">
+${ICON_LINK}
 ${fonts.map(f => `<link rel="preload" href="${assetUrl(f)}" as="font" type="font/woff2" crossorigin>`).join("\n")}
 <script>(function(){var m=matchMedia("(prefers-color-scheme: dark)");var s=function(){document.documentElement.setAttribute("data-theme",m.matches?"dark":"light")};s();m.addEventListener&&m.addEventListener("change",s)})();</script>
 <style>${fontFace("RPN Dot", "RPNDot-Regular.woff2", "block")}${fontFace("RPN Dot Small", "RPNDotSmall-Regular.woff2", "block")}${fontFace("Sofia Sans Condensed", "SofiaSansCondensed-Legend.woff2", "swap", "400 800")}</style>

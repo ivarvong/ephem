@@ -19,6 +19,7 @@ import { makeFeed, serveFeed } from "./metar-feed.ts"
 import { weatherLive } from "./weather.ts"
 import { pipelineSink, type PipelineLike, type RequestRow, type RequestRowV2 } from "./requestlog.ts"
 import { rumPipelineSink, type RumRow } from "./rum.ts"
+import { favicon } from "./favicon.ts"
 export { Admin } from "./admin.ts"
 export { Api, BlockStore } from "./compute.ts"   // cache ON (cloudflare.config.ts); called over ctx.exports
 
@@ -63,6 +64,7 @@ const withErrors = (r: Response, request: Request): Response => {
 
 export default {
   async fetch(request: Request, env: Env, ctx: Ctx): Promise<Response> {
+    const icon = favicon(request); if (icon) return withVersion(icon, env.VERSION?.id)   // before the app: no router, no request row
     loop = ctx.exports
     front ??= makeHandler(blocks, { role: "front", api: lb.api }, weather, geoid)
     const wu = (p: Promise<unknown>) => ctx.waitUntil(p)
