@@ -30,8 +30,8 @@ const Sky = HttpApiBuilder.group(EphemApi, "sky", h => h
     conventions: { refraction: posConv.refraction, horizon, geoid }, provenance: prov })))
 const Earth = HttpApiBuilder.group(EphemApi, "earth", h => h
   .handle("magnetic", ({ query }) => Effect.succeed({ time: "2026-10-28T11:51:00Z", observer: obs(query),
-    magnetic: { model: "WMM2025" as const, declination: -12.5, inclination: 66, horizontalIntensityNt: 2e4, totalIntensityNt: 5e4, decimalYear: 2026.8, inValidityWindow: true },
-    conventions: { model: "", declination: "", height: "", geoid }, provenance: prov }))
+    magnetic: { model: "WMM2025" as const, declination: -12.5, inclination: 66, horizontalIntensityNt: 2e4, totalIntensityNt: 5e4, decimalYear: 2026.8, inValidityWindow: true, compass: "ok" as const },
+    conventions: { model: "", declination: "", compass: "", height: "", geoid }, provenance: prov }))
   .handle("weather", ({ query }) => Effect.succeed({ time: "2026-10-28T11:51:00Z", observer: { lat: query.lat, lon: query.lon, magneticDeclination: -12.5 }, stations: [],
     feed: { source: "stub", fetchedAt: "2026-10-28T11:51:00Z", ageSeconds: query.count ?? 1, lastModified: null, upstreamAgeSeconds: null, stale: false, tier: "hit" as const, stations: 0 },
     conventions: { definition: "", distance: "", bearing: "", magneticDeclination: "" }, provenance: prov })))

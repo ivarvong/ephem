@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder"
 import { EphemApi, InvalidRequest, Unavailable, type WeatherResponse } from "@ephem/api"
-import { GEOID, SUPPORTED, WMM_VALID, decimalYear, observerHeights, wmm } from "@ephem/core"
+import { COMPASS_ZONES, GEOID, SUPPORTED, WMM_VALID, compassZone, decimalYear, observerHeights, wmm } from "@ephem/core"
 import { Geoid, geoidCache } from "./geoid.ts"
 import { SOURCES, prov } from "./provenance.ts"
 import { CONVENTIONS } from "@ephem/api"
@@ -31,6 +31,7 @@ const WEATHER_CONVENTIONS = {
 const MAGNETIC_CONVENTIONS = {
   model: CONVENTIONS.magnetic,
   declination: "East positive: magnetic bearing = true bearing − declination. Inclination down positive.",
+  compass: `WMM2025 compass zones by horizontal intensity H: blackout below ${COMPASS_ZONES.blackoutBelowNt} nT (the declination is unreliable and a compass does not work), caution below ${COMPASS_ZONES.cautionBelowNt} nT, else ok (WMM2025 technical report).`,
   height: "height (heightRef ellipsoid or msl) sets the WMM evaluation height (above the ellipsoid); omitted: on the geoid (sea level), as every endpoint.",
   geoid: { model: GEOID.model, source: GEOID.source, interpolationErrorM: GEOID.interpolationErrorM },
 }
@@ -114,7 +115,7 @@ export const EarthLive = HttpApiBuilder.group(EphemApi, "earth", h => h
     return {
       time: iso(ms), observer: { lat: q.lat, lon: q.lon, height: h.heightEllipsoid, ...h },
       magnetic: { model: "WMM2025" as const, declination: m.declination, inclination: m.inclination, horizontalIntensityNt: m.h, totalIntensityNt: m.f,
-        decimalYear: year, inValidityWindow: year >= WMM_VALID.from && year < WMM_VALID.to },
+        decimalYear: year, inValidityWindow: year >= WMM_VALID.from && year < WMM_VALID.to, compass: compassZone(m.h) },
       conventions: MAGNETIC_CONVENTIONS,
       provenance: prov(SOURCES.wmm, SOURCES.egm96),
     }

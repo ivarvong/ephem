@@ -369,9 +369,10 @@ export const Magnetic = S.Struct({
   horizontalIntensityNt: S.Finite, totalIntensityNt: S.Finite,
   decimalYear: S.Finite,
   inValidityWindow: S.Boolean.annotate(d("WMM2025 is valid 2025.0–2030.0; outside it the secular variation is extrapolated.")),
+  compass: S.Literals(["ok", "caution", "blackout"]).annotate(d("WMM2025's compass zones by horizontal intensity H: blackout (H < 2000 nT, around the dip poles: the declination is unreliable and a compass does not work), caution (2000 ≤ H < 6000 nT: degraded), ok.")),
 })
 export const MagneticResponse = S.Struct({ time: UtcString, observer: SkyObserver, magnetic: Magnetic,
-  conventions: S.Struct({ model: S.String, declination: S.String, height: S.String, geoid: GeoidConventions }), provenance: Provenance })
+  conventions: S.Struct({ model: S.String, declination: S.String, compass: S.String, height: S.String, geoid: GeoidConventions }), provenance: Provenance })
 
 export const WeatherQuery = {
   lat: num(Lat), lon: num(Lon),

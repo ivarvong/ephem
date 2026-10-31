@@ -5004,6 +5004,15 @@
             "inValidityWindow": {
              "type": "boolean",
              "description": "WMM2025 is valid 2025.0–2030.0; outside it the secular variation is extrapolated."
+            },
+            "compass": {
+             "type": "string",
+             "enum": [
+              "ok",
+              "caution",
+              "blackout"
+             ],
+             "description": "WMM2025's compass zones by horizontal intensity H: blackout (H < 2000 nT, around the dip poles: the declination is unreliable and a compass does not work), caution (2000 ≤ H < 6000 nT: degraded), ok."
             }
            },
            "required": [
@@ -5013,7 +5022,8 @@
             "horizontalIntensityNt",
             "totalIntensityNt",
             "decimalYear",
-            "inValidityWindow"
+            "inValidityWindow",
+            "compass"
            ],
            "additionalProperties": false
           },
@@ -5024,6 +5034,9 @@
              "type": "string"
             },
             "declination": {
+             "type": "string"
+            },
+            "compass": {
              "type": "string"
             },
             "height": {
@@ -5073,6 +5086,7 @@
            "required": [
             "model",
             "declination",
+            "compass",
             "height",
             "geoid"
            ],

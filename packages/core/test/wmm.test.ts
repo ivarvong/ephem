@@ -3,7 +3,8 @@
 import { describe, expect, it } from "vitest"
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
-import { WMM_COF_ROWS, decimalYear, wmm } from "../src/wmm.ts"
+import { WMM_COF_ROWS, compassZone, decimalYear, wmm } from "../src/wmm.ts"
+const DEG_ = Math.PI / 180
 
 const DIR = resolve(__dirname, "fixtures/wmm2025")
 const rows = readFileSync(`${DIR}/WMM2025_TestValues.txt`, "utf8").split("\n").filter(l => l.trim() && !l.startsWith("#")).map(l => l.trim().split(/\s+/).map(Number))
@@ -29,4 +30,22 @@ describe("WMM2025 official test values", () => {
     expect(decimalYear(Date.UTC(2026, 6, 2, 12))).toBeCloseTo(2026.5, 3)
   })
   it("report worst deviations", () => { process.stderr.write(`\nWMM2025 vs official test values (n=${rows.length}): |ΔD| ${worst.D.toExponential(2)}°  |ΔD vs atan2(Y,X)| ${worst.Dxy.toExponential(2)}°  |ΔI| ${worst.I.toExponential(2)}°  |Δ XYZHF| ${worst.nT.toExponential(2)} nT\n`) })
+})
+
+// Near the poles (sweep 2026-10-31): pygeomag (independent code on NOAA's WMM_2025.COF), frozen by reference/oracle/wmm_poles.py:
+// lat ±80…±90 (90 exactly) every 30° of longitude, the dip poles, epochs 2025.0 / 2026.826 / 2029.99, 0 and 5 km.
+describe("WMM2025 near the poles vs pygeomag", () => {
+  const P = JSON.parse(readFileSync(`${DIR}/poles.json`, "utf8")) as { rows: Array<{ year: number; altKm: number; lat: number; lon: number; d: number; i: number; h: number; f: number; x: number; y: number; z: number; zone: string }> }
+  it(`${P.rows.length} points: X, Y, Z, H, F within 0.01 nT (the official test's bar); declination within the bar it implies, 0.01 nT / H`, () => {
+    let wnT = 0, wD = 0, wI = 0
+    for (const r of P.rows) {
+      const m = wmm(r.lat, r.lon, r.altKm, r.year), ctx = `${r.year} ${r.lat},${r.lon} ${r.altKm} km`
+      for (const [a, b] of [[m.x, r.x], [m.y, r.y], [m.z, r.z], [m.h, r.h], [m.f, r.f]] as const) { wnT = Math.max(wnT, Math.abs(a - b)); expect(Math.abs(a - b), ctx).toBeLessThan(0.01) }
+      const dD = Math.abs(((m.declination - r.d + 540) % 360) - 180); wD = Math.max(wD, dD); wI = Math.max(wI, Math.abs(m.inclination - r.i))
+      expect(dD, ctx).toBeLessThanOrEqual(Math.min(0.01, 0.01 / r.h / DEG_))
+      expect(Math.abs(m.inclination - r.i), ctx).toBeLessThan(1e-4)
+      expect(compassZone(m.h), ctx).toBe(r.zone)   // pygeomag's in_blackout_zone / in_caution_zone
+    }
+    process.stderr.write(`\nWMM2025 near the poles vs pygeomag (n=${P.rows.length}): |Δ XYZHF| ${wnT.toExponential(2)} nT  |ΔD| ${wD.toExponential(2)}°  |ΔI| ${wI.toExponential(2)}°\n`)
+  })
 })

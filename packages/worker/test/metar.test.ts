@@ -232,4 +232,13 @@ describe("/weather end to end (fake upstream)", () => {
     expect(r.headers.get("cache-control")).toBe("public, max-age=31536000, immutable")   // with a time: deterministic
     expect((await handler(new Request("http://x/magnetic?lat=40.7&lon=-74"))).headers.get("cache-control")).toBe("public, max-age=3600")
   })
+  it("/magnetic says when the compass is unusable: the North Pole is in WMM2025's blackout zone (H 1 796 nT < 2 000), Resolute Bay in caution (sweep 2026-10-31)", async () => {
+    // Before: a plain declination (17.84° at 90°N) with nothing saying WMM calls it unreliable there.
+    const handler = makeHandler(makeBlocks(async () => { throw new Error("no blocks") }))
+    const at = async (lat: number, lon: number) => (await (await handler(new Request(`http://x/magnetic?lat=${lat}&lon=${lon}&time=2026-10-29T12:00:00Z`))).json() as any)
+    const pole = await at(90, 0), resolute = await at(74.7, -94.83), nyc = await at(40.7, -74)
+    expect(pole.magnetic.horizontalIntensityNt).toBeLessThan(2000); expect(pole.magnetic.compass).toBe("blackout")
+    expect(resolute.magnetic.horizontalIntensityNt).toBeGreaterThanOrEqual(2000); expect(resolute.magnetic.compass).toBe("caution")
+    expect(nyc.magnetic.compass).toBe("ok"); expect(nyc.conventions.compass).toMatch(/blackout below 2000 nT/)
+  })
 })

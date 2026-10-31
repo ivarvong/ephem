@@ -183,5 +183,10 @@ export const wmm = (latDeg: number, lonDeg: number, heightKm: number, year: numb
 }
 
 /** The model's coefficient rows as embedded (n m g h ġ ḣ), for the provenance test against WMM.COF. */
+/** WMM2025 technical report §4.4: where the horizontal field H is under 2000 nT (the blackout zones around the dip poles)
+ *  the declination is unreliable and a compass does not work; 2000–6000 nT is the caution zone. */
+export const COMPASS_ZONES = { blackoutBelowNt: 2000, cautionBelowNt: 6000 } as const
+export const compassZone = (hNt: number): "ok" | "caution" | "blackout" =>
+  hNt < COMPASS_ZONES.blackoutBelowNt ? "blackout" : hNt < COMPASS_ZONES.cautionBelowNt ? "caution" : "ok"
 export const WMM_COF_ROWS = COF
 
