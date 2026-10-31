@@ -11,7 +11,7 @@
 // (max-age=60, x-ephem-og: fallback) and the render runs on in waitUntil, so glyph's own cache has it for the next request.
 import type { Loopback } from "./loopback.ts"
 import { OG_DPR, ogApiQueries, parseOgQuery, ogQueryString, BUCKET_MS, type OgData, type OgQuery } from "./og.ts"
-import { fontBytes, fontPath } from "./og-fonts.ts"
+import { servedFont } from "./og-fonts.ts"
 import { FALLBACK_PNG_B64, ICON_PNG_B64 } from "./og-png.generated.ts"
 import type { Tracing } from "./trace.ts"
 
@@ -37,8 +37,8 @@ export const ogFront = async (request: Request, lb: Loopback, tracing?: Tracing,
   const url = new URL(request.url), p = url.pathname, head = request.method === "HEAD"
   if (p === "/apple-touch-icon.png" || p === "/apple-touch-icon-precomposed.png")
     return new Response(head ? null : iconPng(), { headers: { "content-type": "image/png", "cache-control": "public, max-age=86400", "x-content-type-options": "nosniff" } })
-  for (const w of ["regular", "bold"] as const) if (p === fontPath(w))
-    return new Response(head ? null : fontBytes(w), { headers: { "content-type": "font/woff2", "cache-control": IMMUTABLE, "access-control-allow-origin": "*" } })
+  const font = p.startsWith("/assets/") ? servedFont(p) : null
+  if (font) return new Response(head ? null : font, { headers: { "content-type": "font/woff2", "cache-control": IMMUTABLE, "access-control-allow-origin": "*" } })
   if (p !== "/og.png") return undefined
   const cf = (request as { cf?: Cf }).cf, lat = Number(cf?.latitude), lon = Number(cf?.longitude)
   const here = cf?.latitude && cf.longitude && Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon, place: cf.city ?? "", tz: cf.timezone ?? "UTC" } : DEFAULT_PLACE

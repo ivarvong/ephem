@@ -8,8 +8,7 @@
 // are ported here, and test/og.test.ts runs both over the same inputs: the preview cannot drift from the page.
 // Privacy: everything that keys or names an image is rounded to 0.01° (≈1 km); no IP, no exact location in any URL we mint.
 import { isValidZone } from "@ephem/core"
-import { DIN_ADV } from "./din.ts"
-import { NOTO_FONTS, notoHas } from "./og-fonts.ts"
+import { NOTO_FONTS, OG_DIN_ADV, notoHas } from "./og-fonts.ts"
 
 // ---------- the homepage's projection, ported from CORE_JS (test/og.test.ts checks them against it) ----------
 export const wrap360 = (x: number) => ((x % 360) + 360) % 360
@@ -225,9 +224,11 @@ export const ogHead = ({ origin, v, now, live }: OgHeadInput) => {
 }
 
 // ---------- the glyph scene ----------
-/** Ephem DIN's characters and advances (1000 units/em), generated with the font (scripts/fonts/din.py → src/din.ts), for layout. */
-const ADV_R = DIN_ADV.r, ADV_B = DIN_ADV.b
+/** Ephem DIN's characters and advances (1000 units/em), generated with the font (scripts/fonts/din.py → src/din.ts), for layout and face choice. */
+const ADV_R = OG_DIN_ADV.r, ADV_B = OG_DIN_ADV.b
 export const DIN_CHARS: ReadonlySet<string> = new Set(Object.keys(ADV_R))
+/** The page's minus where the OG font has it (the previous font, during a font change, had only the en dash). */
+const MINUS = DIN_CHARS.has("−") ? "−" : "–"
 /** A text as the card shows it: NFC, caps (what the page's text-transform does), whitespace runs as one space. It never folds,
  *  swaps or drops a character: Tromsø is TROMSØ (2026-10-31: the card said TROMSO). */
 export const din = (s: string) => s.normalize("NFC").toUpperCase().replace(/\s+/g, " ").trim()
@@ -343,7 +344,7 @@ export const ogScene = (d: OgData, fonts: { readonly regular: GlyphFont; readonl
   const nx = nextEvent(d.events, at), sa = altOf(d.sun)
   if (nx) {
     const t = Date.parse(nx.time), tomorrow = localDate(t, d.tz) !== localDate(at, d.tz)
-    text(`T−${hhmmss(t - at)}`, PAD - 4, 494, 118, INK, { tracking: 1 })
+    text(`T${MINUS}${hhmmss(t - at)}`, PAD - 4, 494, 118, INK, { tracking: 1 })
     text(`${evName(nx)} · ${hm(t, d.tz)}${tomorrow ? " TOMORROW" : ""}`, PAD, 540, 24, INK, { bold: true, tracking: 4.8, fit: 560 })
   } else {
     text("NO RISE OR SET", PAD - 2, 486, 72, INK, { tracking: 1 })
@@ -359,7 +360,7 @@ export const ogScene = (d: OgData, fonts: { readonly regular: GlyphFont; readonl
   }
   for (const [i, key] of (["sun", "moon"] as const).entries()) {
     const b = d[key], a = altOf(b), app = b.apparentAltitude != null
-    readout(col[0]!, row[i]!, key === "sun" ? SUN : MOON, `${key === "sun" ? "Sun" : "Moon"} · Altitude`, `${a < 0 ? "−" : ""}${Math.abs(a).toFixed(2)}`, `° ${app ? "APP" : "TRUE"}`)
+    readout(col[0]!, row[i]!, key === "sun" ? SUN : MOON, `${key === "sun" ? "Sun" : "Moon"} · Altitude`, `${a < 0 ? MINUS : ""}${Math.abs(a).toFixed(2)}`, `° ${app ? "APP" : "TRUE"}`)
     readout(col[1]!, row[i]!, null, "Azimuth", wrap360(b.azimuth).toFixed(2), `° T ${compass(b.azimuth)}`)
   }
   items.push({ line: [PAD, 372.5, W - PAD, 372.5], stroke: { width: 1 }, paint: rgba(INK, 0.06) })

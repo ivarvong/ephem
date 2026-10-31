@@ -1,22 +1,47 @@
 // Ephem DIN for glyph: glyph fetches fonts by https URL, pinned by sha256, so the front door serves the page's own inline font
 // (src/din.ts) at immutable, content-addressed paths: /assets/<sha256[0:16]>/ephem-din-{regular,bold}.woff2.
 // test/og.test.ts checks these hashes against the bytes, so regenerating src/din.ts without updating them fails the gate.
-import { DIN_BOLD_B64, DIN_REGULAR_B64 } from "./din.ts"
+// A font change is TWO deploys: glyph fetches from the public host, i.e. the live (100 %) version, never the canary whose spec
+// names the font (2026-10-31: 352678e named a path only the canary served; the canary smoke got the fallback card and removed
+// it). Deploy 1 serves the new font beside the previous one (src/din-prev.ts) with OG_DIN = "prev"; deploy 2 sets "current"
+// and deletes din-prev.ts.
+import { DIN_ADV, DIN_BOLD_B64, DIN_REGULAR_B64 } from "./din.ts"
+import { DIN_PREV_ADV, DIN_PREV_BOLD_B64, DIN_PREV_REGULAR_B64 } from "./din-prev.ts"
 
-export const OG_ORIGIN = "https://ephem.ivar.workers.dev"   // glyph fetches from the public host (any version serves these bytes)
+type W = "regular" | "bold"
+export const OG_ORIGIN = "https://ephem.ivar.workers.dev"   // glyph fetches from the public host: the live version must serve the font
 export const DIN_SHA256 = {
   regular: "316a72622a0926ee85e3db60007e0347aede4005a56d197a624d8910a3292d50",
   bold: "13667defdc54a0cd8716d8afc8214a513971739e55af58093265439886a2cf71",
 } as const
-export const fontPath = (w: "regular" | "bold") => `/assets/${DIN_SHA256[w].slice(0, 16)}/ephem-din-${w}.woff2`
-export const OG_FONTS = {
-  regular: { url: OG_ORIGIN + fontPath("regular"), sha256: DIN_SHA256.regular },
-  bold: { url: OG_ORIGIN + fontPath("bold"), sha256: DIN_SHA256.bold },
+export const DIN_PREV_SHA256 = {
+  regular: "7dd8d6ff43f63a1500c8d03b603ec1a544077fb0fe8c235078f70e4a1e88b52c",
+  bold: "be98805c53d4c9f9079c66579c17882fbf5b0c29327731c31ee2c3ecbdb805e8",
 } as const
-const B64 = { regular: DIN_REGULAR_B64, bold: DIN_BOLD_B64 } as const
-let bytes: Partial<Record<"regular" | "bold", Uint8Array<ArrayBuffer>>> = {}
-export const fontBytes = (w: "regular" | "bold"): Uint8Array<ArrayBuffer> => (bytes[w] ??= Uint8Array.from(atob(B64[w]), c => c.charCodeAt(0)) as Uint8Array<ArrayBuffer>)
+const path = (sha: string, w: W) => `/assets/${sha.slice(0, 16)}/ephem-din-${w}.woff2`
+export const fontPath = (w: W) => path(DIN_SHA256[w], w)
+export const prevFontPath = (w: W) => path(DIN_PREV_SHA256[w], w)
+const B64 = { regular: DIN_REGULAR_B64, bold: DIN_BOLD_B64, "prev-regular": DIN_PREV_REGULAR_B64, "prev-bold": DIN_PREV_BOLD_B64 } as const
+type K = keyof typeof B64
+let bytes: Partial<Record<K, Uint8Array<ArrayBuffer>>> = {}
+const dec = (k: K): Uint8Array<ArrayBuffer> => (bytes[k] ??= Uint8Array.from(atob(B64[k]), c => c.charCodeAt(0)) as Uint8Array<ArrayBuffer>)
+export const fontBytes = (w: W) => dec(w)
+export const prevFontBytes = (w: W) => dec(`prev-${w}`)
 export const resetFontBytes = () => { bytes = {} }
+/** The bytes the front door serves at an /assets path: the current font, and the previous one (see the header). */
+export const servedFont = (p: string): Uint8Array<ArrayBuffer> | null => {
+  for (const w of ["regular", "bold"] as const) { if (p === fontPath(w)) return fontBytes(w); if (p === prevFontPath(w)) return prevFontBytes(w) }
+  return null
+}
+/** Which Ephem DIN the OG card names: "prev" while the current font's path is not yet live (deploy 1 of a font change). */
+export const OG_DIN = "prev" as "prev" | "current"
+const ogSha = OG_DIN === "prev" ? DIN_PREV_SHA256 : DIN_SHA256
+export const OG_FONTS = {
+  regular: { url: OG_ORIGIN + path(ogSha.regular, "regular"), sha256: ogSha.regular },
+  bold: { url: OG_ORIGIN + path(ogSha.bold, "bold"), sha256: ogSha.bold },
+} as const
+/** The OG font's characters and advances (src/og.ts lays out and picks faces with these). */
+export const OG_DIN_ADV = OG_DIN === "prev" ? DIN_PREV_ADV : DIN_ADV
 
 // The OG card's fallback face: a text item with any character Ephem DIN lacks (Cyrillic, Greek, Vietnamese, Ŋ…) is set whole
 // in Noto Sans (OFL), so no letter is dropped or swapped (glyph refuses a missing glyph and has no per-glyph fallback).
