@@ -916,8 +916,12 @@ scratchpad `journey/`):
   whether a live marker, moved on by the answer's own rates, has moved half a pixel; at most once a minute otherwise). No
   rAF loop. `window.__sky.draws` counts frames. Idle cost from a journey: `python3 -I scripts/obs/journey-idle.py <name>.model.json`
   (top-level main-thread task time after data drawn + 6 s).
-- **Labels:** one layout (`chartModel` + `layoutLabels` in CORE_JS) over bodies, events, bands and the scale;
-  test/home.test.ts runs it over every sky state from the API's own answers (fixture blocks) at both phone sizes.
+- **Chart model (CORE_JS, pure):** `skyModel` (tracks via `trackSpan`: one azimuth revolution cut at the frame's seam,
+  so both ends sit on the edges; altitude via `altU`: linear above the horizon, 36·tanh(alt/36) below, C2), `layoutLabels`
+  (each body's name, clear of every track, disc and button). test/home.test.ts runs them over 13 sky states from the API's own
+  answers at 390 and 375: zero label crossings, one connected track per body with both ends on the edges, no kinks.
+- **Font:** "Ephem DIN" (D-DIN subset, OFL, renamed; src/din.ts, built by scripts/fonts/din.py) inline in the streamed tail;
+  licence at /licenses/din.txt. No font requests.
 
 ## Request logs (Basin)
 
