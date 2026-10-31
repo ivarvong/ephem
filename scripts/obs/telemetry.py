@@ -1,9 +1,12 @@
 """Shared helper: run a Workers Observability query through the cf CLI and return the parsed JSON."""
-import json, os, subprocess, time
+import json, os, subprocess, threading, time
 
 # The Worker queried: "ephem" (front door, MetarFeed) or "ephem-compute" (Api, BlockStore; since the compute split). Scripts
 # take --service; EPHEM_SERVICE sets the default.
 SERVICE = os.environ.get("EPHEM_SERVICE", "ephem")
+# At most this many cf queries at once per process: canary-gate.py's concurrent polls (+ events_all's 8 slices) hit
+# "[10500] Internal authentication error" 500s twice in 3 live gates (2026-10-31); the sequential gate never did in 25.
+_SEM = threading.BoundedSemaphore(int(os.environ.get("EPHEM_O11Y_CONCURRENCY", "6")))
 
 
 def query(view: str, minutes: float, filters: list | None = None, limit: int = 1000, extra: dict | None = None, window: tuple[int, int] | None = None, service: str | None = None) -> dict:
@@ -15,7 +18,8 @@ def query(view: str, minutes: float, filters: list | None = None, limit: int = 1
     # 3 attempts: a transient API 500 ("[10500] Internal authentication error") failed a live gate and rolled back a good
     # version (53b208a8, 2026-10-31). Still fails closed after the last attempt.
     for attempt in range(3):
-        out = subprocess.run(["cf", "o11y", "telemetry", "query", "--body", json.dumps(body)], capture_output=True, text=True)
+        with _SEM:
+            out = subprocess.run(["cf", "o11y", "telemetry", "query", "--body", json.dumps(body)], capture_output=True, text=True)
         if out.returncode == 0: break
         time.sleep(1 + 2 * attempt)
     if out.returncode != 0:
