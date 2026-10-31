@@ -644,21 +644,26 @@ The latest measurement of each, with its version. Older and superseded numbers: 
 
 Measured on prod 7c99bb80 with `abort-probe.ts` + `abort-read.py` (2026-10-31):
 
-| client leaves | runtime records (before src/abort.ts) |
+| client leaves | the runtime records (7c99bb80; unchanged on 7b486e71) |
 | --- | --- |
 | before the response exists (`/track`, `/mcp` tools/call track: forwarded to the Api) | outcome `canceled`, no status, no log |
 | after the response exists, while the body is written (`/mcp` position at +5–15 ms, streamed `/` after the head, `/position`) | outcome **ok**, no status, root span level error `Network connection lost.`, an **error-level log** `{"message":"Network connection lost.","exception":{"name":"Error"}}` |
 | `POST /mcp` with half the body sent | nothing: the edge never invokes the Worker |
 
 `request.signal` does not fire on a disconnect at our compatibility date (lab Worker, 2026-10-31), so Effect's
-`ClientAbort` (499) never triggers. src/abort.ts `deliver()`: the runtime never gets a JS stream. Known length
-(Content-Length, no content-encoding: the JSON answers): read and sent as bytes. A FixedLengthStream written from
-waitUntil does not work: a client with all N bytes hangs up before the runtime sees our close, which records outcome
-canceled and no status on a delivered 200 (canaries a2d91cc3, 7e2a3a79). Unknown length (streamed `/`, forwarded Api
-streams): an IdentityTransformStream pumped chunk by chunk from waitUntil. A failed write is the client leaving → span `client.abort` (`client.aborted=true`,
+`ClientAbort` (499) never triggers. **The runtime's error log is not ours to change**: it appeared with a native byte body and
+with a native stream alike (7b486e71: `/position` ray a5305629298c43e7, `/` ray a5305628a94843e7), so the telemetry gate
+classifies it (`gate_rules.py`: a client abort when the ray's invocation shows no server error). src/abort.ts `deliver()`
+adds our own record for streamed bodies (no Content-Length or a content-encoding: `/`, forwarded Api streams): an
+IdentityTransformStream pumped chunk by chunk from waitUntil (chunked framing ends with our close, so a client cannot
+finish first). Known-length bodies go out untouched: a FixedLengthStream written from waitUntil let a client with all N
+bytes hang up before the runtime saw our close, recorded as outcome canceled with no status on a delivered 200 (canaries
+a2d91cc3, 7e2a3a79, failed by the gate, never served). A failed write is the client leaving → span `client.abort` (`client.aborted=true`,
 `ephem.outcome=canceled`), log `{"evt":"client_aborted","phase":"body",…}` at info, request row `error_tag = ClientAbort`
 (the row waits for delivery). A failed read of our own body is still a server error: `{"response_stream_failed":…}` at
-error level. Count them: o11y `source.evt = client_aborted`; Basin `error_tag = 'ClientAbort'`.
+error level. Count them: o11y `source.evt = client_aborted` (ours) or `$metadata.message = "Network connection lost."`
+(the runtime's, every route); Basin `error_tag = 'ClientAbort'` (streamed bodies only; the edge buffers small answers, so
+a client leaving early often still gets a 200 recorded).
 
 ## Gotchas
 

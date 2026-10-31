@@ -72,15 +72,14 @@ export default {
     loop = ctx.exports
     const wu = (p: Promise<unknown>) => ctx.waitUntil(p)
     const path = new URL(request.url).pathname, route = ROUTES.has(path) ? path : undefined
-    const og = await ogFront(request, lb, tracing); if (og) return (await deliver(withErrors(withVersion(og, env.VERSION?.id), request), wu, route, tracing)).response   // /og.png, its font, the touch icon
+    const og = await ogFront(request, lb, tracing); if (og) return deliver(withErrors(withVersion(og, env.VERSION?.id), request), wu, route, tracing).response   // /og.png, its font, the touch icon
     front ??= makeHandler(blocks, { role: "front", api: lb.api }, weather, geoid)
     // The request row waits for the body to be delivered (src/abort.ts): a client that leaves mid-body is error_tag ClientAbort.
     const sink = logs(env, wu, "front"), row = sink && afterDelivery(sink.emit, wu)
     let res: Response
     try { res = withErrors(withVersion(await front(request, sink && row ? { ...sink, emit: row.emit } : undefined, env.RUM && env.REQUEST_LOGS !== "off" ? rumPipelineSink(env.RUM, wu, env.VERSION?.id) : undefined), env.VERSION?.id), request) }
     catch (e) { row?.settle(Promise.resolve(false)); throw e }
-    let d: Awaited<ReturnType<typeof deliver>>
-    try { d = await deliver(res, wu, route, tracing) } catch (e) { row?.settle(Promise.resolve(false)); throw e }
+    const d = deliver(res, wu, route, tracing)
     row?.settle(d.aborted)
     return d.response
   },

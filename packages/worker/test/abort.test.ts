@@ -14,14 +14,14 @@ const chunks = (n: number, fail?: Error) => { let i = 0; return new ReadableStre
 
 describe("deliver", () => {
   it("delivers the body unchanged, with status and headers; not an abort", async () => {
-    const d = await deliver(new Response(chunks(3), { status: 201, headers: { "x-a": "1" } }), wu, "/", tracing)
+    const d = deliver(new Response(chunks(3), { status: 201, headers: { "x-a": "1" } }), wu, "/", tracing)
     expect(d.response.status).toBe(201); expect(d.response.headers.get("x-a")).toBe("1")
     expect(await d.response.text()).toBe("chunk0;chunk1;chunk2;")
     expect(await d.aborted).toBe(false); expect(spans).toEqual([])
   })
   it("a client that leaves mid-body: client_aborted at info, span client.aborted=true / ephem.outcome=canceled, no error", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {}), err = vi.spyOn(console, "error").mockImplementation(() => {})
-    const d = await deliver(new Response(chunks(1000)), wu, "/", tracing)
+    const d = deliver(new Response(chunks(1000)), wu, "/", tracing)
     const r = d.response.body!.getReader(); await r.read(); await r.cancel(new Error("Network connection lost."))
     expect(await d.aborted).toBe(true)
     expect(err).not.toHaveBeenCalled()
@@ -30,21 +30,18 @@ describe("deliver", () => {
   })
   it("our own body failing is a server error: response_stream_failed at error level, not an abort", async () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {})
-    const d = await deliver(new Response(chunks(1, new Error("boom"))), wu, "/", tracing)
+    const d = deliver(new Response(chunks(1, new Error("boom"))), wu, "/", tracing)
     await expect(d.response.text()).rejects.toThrow()
     expect(await d.aborted).toBe(false)
     expect(JSON.parse(err.mock.calls[0]![0] as string)).toMatchObject({ response_stream_failed: { route: "/", error: "Error: boom" } })
     expect(spans).toEqual([])
   })
-  it("a known-length body keeps its bytes and Content-Length; a failed read of it is a server error (rethrown)", async () => {
-    const d = await deliver(new Response("{\"a\":1}", { headers: { "content-length": "7", "content-type": "application/json" } }), wu, "/day", tracing)
-    expect(d.response.headers.get("content-length")).toBe("7"); expect(await d.response.text()).toBe('{"a":1}'); expect(await d.aborted).toBe(false)
-    const err = vi.spyOn(console, "error").mockImplementation(() => {})
-    await expect(deliver(new Response(chunks(1, new Error("boom")), { headers: { "content-length": "99" } }), wu, "/day", tracing)).rejects.toThrow("boom")
-    expect(JSON.parse(err.mock.calls[0]![0] as string)).toMatchObject({ response_stream_failed: { route: "/day" } })
+  it("a known-length body is returned untouched (the runtime sends it)", async () => {
+    const res = new Response('{"a":1}', { headers: { "content-length": "7" } }), d = deliver(res, wu, "/day", tracing)
+    expect(d.response).toBe(res); expect(await d.aborted).toBe(false)
   })
   it("no body: returned as is", async () => {
-    const res = new Response(null, { status: 204 }), d = await deliver(res, wu, undefined, tracing)
+    const res = new Response(null, { status: 204 }), d = deliver(res, wu, undefined, tracing)
     expect(d.response).toBe(res); expect(await d.aborted).toBe(false)
   })
 })

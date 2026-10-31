@@ -3,9 +3,10 @@
 // router response re-wrapped by toHandler) made the runtime log `Network connection lost.` at level error with an
 // exception, mark the root span error, outcome ok, no response status. The live gate rolled ac16823e back on four of them.
 //
-// deliver(): the runtime never gets a JS stream. A known-length body is read and sent as bytes. A streamed body goes through
-// an IdentityTransformStream we pump ourselves (in waitUntil): a failed write is then ours to see, the client went away,
-// recorded as a countable event, never at error level:
+// The runtime's own record of it (that error log, the root span's error) is not ours to change: it appeared with a native
+// byte body and with a native stream alike (7b486e71). The telemetry gate classifies it (scripts/obs/gate_rules.py).
+// deliver(): a streamed body goes through an IdentityTransformStream we pump ourselves (in waitUntil): a failed write is
+// then ours to see, the client went away, recorded as a countable event, never at error level:
 //   - span `client.abort`: client.aborted=true, ephem.outcome=canceled, client.abort_phase=body, client.abort_bytes
 //   - log  {"evt":"client_aborted","phase":"body","route","bytes","error"} (console.log: level info)
 //   - the request row (Basin ephem_requests) gets error_tag "ClientAbort" (its schema is immutable: no new column)
@@ -32,22 +33,17 @@ const recordAbort = (e: unknown, route: string | undefined, bytes: number, traci
 const streamFailed = (e: unknown, route: string | undefined, bytes: number) =>
   console.error(JSON.stringify({ response_stream_failed: { route: route ?? null, bytes, error: errText(e) } }))
 
-/** Known length (Content-Length, no content-encoding: every JSON answer): read it and answer with the bytes, which the
- *  runtime sends natively (no JS stream: a client leaving is not an exception; lab Worker, 2026-10-31). A FixedLengthStream
- *  written from waitUntil does not work: a client that has all N bytes hangs up before the runtime sees our close, and the
- *  runtime records outcome canceled, no status, on a delivered 200 (canaries a2d91cc3 and 7e2a3a79: 1 then 10 smoke
- *  requests). Unknown length (the streamed homepage, forwarded Api streams): IdentityTransformStream, chunk by chunk (the
- *  client cannot finish before our close: chunked framing ends with it). */
-export const deliver = async (res: Response, waitUntil: (p: Promise<unknown>) => void, route: string | undefined, tracing: Tracing | undefined): Promise<Delivery> => {
+/** Streams only (no Content-Length, or a content-encoding: the streamed homepage, forwarded Api streams): an
+ *  IdentityTransformStream pumped chunk by chunk, so a write to a departed client fails in our hands. Chunked framing ends
+ *  with our close, so a client cannot finish before it. A known-length body is returned untouched: a FixedLengthStream
+ *  written from waitUntil lets a client with all N bytes hang up before the runtime sees our close, and the runtime records
+ *  outcome canceled, no status, on a delivered 200 (canaries a2d91cc3, 7e2a3a79); sending the bytes natively did not stop
+ *  the runtime's own `Network connection lost.` log either (7b486e71, /position ray a5305629298c43e7). */
+export const deliver = (res: Response, waitUntil: (p: Promise<unknown>) => void, route: string | undefined, tracing: Tracing | undefined): Delivery => {
   if (!res.body || res.webSocket) return { response: res, aborted: Promise.resolve(false) }
   const headers = new Headers(res.headers), init = { status: res.status, statusText: res.statusText, headers }
   const len = headers.get("content-length")
-  if (len !== null && /^\d+$/.test(len) && !headers.has("content-encoding")) {
-    let buf: ArrayBuffer
-    try { buf = await res.arrayBuffer() } catch (e) { streamFailed(e, route, 0); throw e }   // a server error: the runtime answers 500
-    headers.set("content-length", String(buf.byteLength))
-    return { response: new Response(buf, init), aborted: Promise.resolve(false) }
-  }
+  if (len !== null && /^\d+$/.test(len) && !headers.has("content-encoding")) return { response: res, aborted: Promise.resolve(false) }
   headers.delete("content-length")
   const { readable, writable } = native ? new IdentityTransformStream() : new TransformStream<Uint8Array, Uint8Array>()
   const src = res.body.getReader(), out = writable.getWriter()
