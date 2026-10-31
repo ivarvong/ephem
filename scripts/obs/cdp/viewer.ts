@@ -104,7 +104,8 @@ button.ic{width:30px;padding:0;font-size:14px;letter-spacing:0}
 .lb{position:absolute;top:0;line-height:var(--rh);font:400 11px/var(--rh) var(--din);letter-spacing:.06em;color:var(--ink2);white-space:nowrap;text-transform:uppercase;pointer-events:none;font-variant-numeric:tabular-nums}
 .row.req .lb{line-height:28px}
 .lb{text-shadow:0 0 2px var(--bg),0 0 2px var(--bg)}.lb .c{color:var(--muted)}.lb .z{color:var(--faint)}.lb .mc{display:none;color:var(--ok)}
-.lb.in{text-shadow:0 0 3px #000,0 0 3px #000}
+.lb.in{color:#060708;text-shadow:none;overflow:hidden}.lb.in .c,.lb.in .z,.lb.in .mc{color:rgba(6,7,8,.75)}
+.lb.cut{overflow:hidden;text-overflow:ellipsis}
 .edge{position:absolute;top:0;font:500 10px/var(--rh) var(--din);letter-spacing:.08em;color:var(--faint);white-space:nowrap;text-transform:uppercase;pointer-events:none}
 .row.req .edge{line-height:28px}
 .edge.r{right:6px}.edge.l{left:6px}
@@ -351,14 +352,32 @@ function bar(s, e, cls, title) {
   if (b > 100.2 && !/\b(cl|wh|base)\b/.test(cls)) cls += " cr";
   return '<i class="b ' + cls + '" style="left:' + f3(l) + "%;width:" + f3(r - l) + '%"' + (title ? ' title="' + esc(title) + '"' : "") + "></i>";
 }
-function lab(s, e, html, pad) {
+/* Labels never clip: after the bar if it fits, else before it; else the short form (the part before the muted details) after
+   or before; else inside a solid span bar (dark text); else ellipsised on the roomier side. Widths measured in Ephem DIN. */
+let TW = 1000;
+const mctx = document.createElement("canvas").getContext("2d");
+const textW = html => {
+  const narrow = matchMedia("(max-width:720px)").matches;
+  const t = html.replace(narrow ? /<[^>]+>/g : /<span class="mc">.*?<\/span>|<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").toUpperCase();
+  mctx.font = "400 11px 'Ephem DIN', 'DIN Alternate', system-ui, sans-serif";
+  return mctx.measureText(t).width + t.length * 0.66 + 2;
+};
+function lab(s, e, html, pad, solid) {
   pad = pad || 0;
   const a = P(s - pad), b = P(e + pad);
   if (b < 0) return '<span class="edge l">← ' + esc(fmt(e)) + "</span>";
   if (a > 100) return '<span class="edge r">' + esc(fmt(s)) + " →</span>";
-  if (b <= 78) return '<span class="lb" style="left:calc(' + f3(Math.max(b, 0)) + '% + 6px)">' + html + "</span>";
-  if (a >= 24) return '<span class="lb" style="right:calc(' + f3(100 - a) + '% + 6px)">' + html + "</span>";
-  return '<span class="lb in" style="right:calc(' + f3(100 - Math.min(b, 100)) + '% + 6px)">' + html + "</span>";
+  const A = Math.max(a, 0) / 100 * TW, B = Math.min(b, 100) / 100 * TW, G = 6;
+  const right = TW - B - G, left = A - G, inside = B - A - 2 * G;
+  const short = html.split(' <span class="c">')[0];
+  const place = (h, w) => w <= right ? '<span class="lb" style="left:' + (B + G).toFixed(1) + 'px">' + h + "</span>"
+    : w <= left ? '<span class="lb" style="right:' + (TW - A + G).toFixed(1) + 'px">' + h + "</span>" : "";
+  const full = place(html, textW(html)); if (full) return full;
+  const sh = short !== html ? place(short, textW(short)) : ""; if (sh) return sh;
+  if (solid && textW(short) <= inside) return '<span class="lb in" style="left:' + (A + G).toFixed(1) + "px;width:" + inside.toFixed(1) + 'px;text-align:right">' + short + "</span>";
+  const room = Math.max(right, left, 0);
+  if (room < 24) return "";
+  return '<span class="lb cut" style="' + (right >= left ? "left:" + (B + G).toFixed(1) : "right:" + (TW - A + G).toFixed(1)) + "px;max-width:" + room.toFixed(1) + 'px">' + short + "</span>";
 }
 function flat() {
   const out = [];
@@ -456,7 +475,7 @@ function trackCell(n) {
     t += bar(respDone, n.e, "alive", "invocation alive after the response (waitUntil below)");
   } else t += bar(n.s, n.e, srvCls(n) + (n.e - n.s < 0.5 ? " zero" : ""), frozen(n) ? ZERO : "");
   if (n.crit) t += bar(n.s, x.root && respDone != null ? respDone : n.e, "cl");
-  t += lab(n.s, n.e, srvLabel(n) + (x.cache ? ' <span class="mc">· ' + esc(x.cache) + "</span>" : ""), x.root ? PM : 0);
+  t += lab(n.s, n.e, srvLabel(n) + (x.cache ? ' <span class="mc">· ' + esc(x.cache) + "</span>" : ""), x.root ? PM : 0, !x.root && !n.after);
   return '<div class="tk">' + t + "</div>";
 }
 function rowHtml(n) {
@@ -471,7 +490,7 @@ function rowHtml(n) {
 let VIS = [];
 function render() {
   const wf = $("wf"), tw = trackW();
-  VIS = flat();
+  TW = tw; VIS = flat();
   let h = axisHtml(tw);
   for (const n of VIS) h += rowHtml(n);
   wf.innerHTML = h + markLayer(tw);
