@@ -126,7 +126,9 @@ export function buildModel(c: Client, srvIn: Server, meta: Record<string, unknow
     for (let guard = 0; guard < 12; guard++) {
       const tk = tasks.find(x => x[0] <= cursor + 0.01 && x[0] + x[1] >= cursor - 0.01); if (tk) crit.main.push(c.main.indexOf(tk))
       const before = tk ? tk[0] : cursor
-      const r = reqModel.filter(q => q.end != null && q.end <= before + 0.5 && !crit.req.includes(q.i) && q.join !== "external").toSorted((a, b) => b.end! - a.end!)[0]
+      // Only requests the page can wait on: not the browser's own (favicon, type Other) nor RUM beacons. Before this, a
+      // /favicon.ico that ended 0.5 ms after the data fetches was named the top critical-path cost (J20261031T000045Z-y64q).
+      const r = reqModel.filter(q => q.end != null && q.end <= before + 0.5 && !crit.req.includes(q.i) && q.join !== "external" && q.type !== "Other" && q.type !== "Ping" && q.path !== "/rum").toSorted((a, b) => b.end! - a.end!)[0]
       if (!r) break
       crit.req.push(r.i)
       for (const x of srv) if (x.req === r.i && x.track !== "waituntil") crit.srv.push(x.k)
@@ -142,7 +144,8 @@ export function buildModel(c: Client, srvIn: Server, meta: Record<string, unknow
   for (const [cat, ms] of Object.entries(c.byCatToData)) if (cat !== "other" && cat !== "task" && cat !== "net") costs.push({ what: `main thread: ${cat}`, ms: +ms.toFixed(1), detail: `self time before data drawn (${(c.byCat[cat] ?? 0).toFixed(0)} ms over the whole view)` })
   if (longTasks.length) { const top = longTasks.toSorted((a, b) => b[1] - a[1])[0]!
     costs.push({ what: "long tasks (≥ 50 ms)", ms: +longTasks.reduce((a, t) => a + t[1], 0).toFixed(1), detail: `${longTasks.length} tasks, longest ${top[1].toFixed(0)} ms at ${top[0].toFixed(0)} ms` }) }
-  for (const r of crit.req.map(i => reqModel[i]!).filter(r => r.type !== "Document")) if (r.ph.wait)
+  // a browser-cache hit has no network wait: CDP's phases on a memory-cache hit are the original request's (stale)
+  for (const r of crit.req.map(i => reqModel[i]!).filter(r => r.type !== "Document" && !r.fromCache)) if (r.ph.wait)
     costs.push({ what: `network wait on the critical path: ${r.path}`, ms: +(r.ph.wait[1] - r.ph.wait[0]).toFixed(1), detail: `send → first byte; server cpu ${r.front?.cpu ?? "?"} ms, wall ${r.front?.wall ?? "?"} ms incl. waitUntil` })
   costs.sort((a, b) => b.ms - a.ms)   // oxlint-disable-line unicorn/no-array-sort
 
