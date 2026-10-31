@@ -1,11 +1,11 @@
-// Production RUM (POST /rum → ephem_rum), the rich Server-Timing, ephem_requests_v2 rows and loopback trace propagation.
+// Production RUM (POST /rum → ephem_rum), the rich Server-Timing, request rows with trace ids and loopback trace propagation.
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { describe, expect, it } from "vitest"
 import { makeHandler } from "../src/app.ts"
 import { REC, direct, makeBlocks } from "../src/blocks.ts"
 import { RUM_JS, RUM_LIMITS, makeLimiter, targetOf, validateRum, type RumRow, type RumSinkI } from "../src/rum.ts"
-import { buildRowV2, type RequestLogSink, type RequestRowV2 } from "../src/requestlog.ts"
+import { buildRow, type RequestLogSink, type RequestRow } from "../src/requestlog.ts"
 import { makeLoopback } from "../src/loopback.ts"
 
 const FIX = resolve(__dirname, "../../core/test/fixtures/blocks")
@@ -122,21 +122,22 @@ describe("Server-Timing", () => {
   })
 })
 
-describe("ephem_requests_v2 rows", () => {
-  it("v1 + trace ids (validated hex) + synthetic; matches the stream schema", async () => {
-    const rows: RequestRowV2[] = []
-    const sink: RequestLogSink = { version: "v", emit: (_r, v2) => { rows.push(v2) } }
+describe("request rows carry the trace", () => {
+  it("trace ids (validated hex) + synthetic; matches the stream schema", async () => {
+    const rows: RequestRow[] = []
+    const sink: RequestLogSink = { version: "v", emit: r => { rows.push(r) } }
     await makeHandler(makeBlocks(origin))(new Request("http://x/v1/day?date=2026-10-28&tz=America/New_York&lat=40.6892&lon=-74.0445", { headers: { traceparent: TP, tracestate: "ephem=1234567890abcdef", "x-ephem-load": "J1" } }), sink)
-    expect(rows[0]).toMatchObject({ schema: 2, synthetic: true, trace_id: TID, client_span_id: SID, client_parent_id: "1234567890abcdef", route: "/v1/day" })
+    expect(rows[0]).toMatchObject({ synthetic: true, trace_id: TID, client_span_id: SID, client_parent_id: "1234567890abcdef", route: "/v1/day" })
     expect(rows[0]!.span_id).toMatch(/^[0-9a-f]{16}$/)
-    const schema = JSON.parse(readFileSync(resolve(__dirname, "../ops/basin/requests_v2.schema.json"), "utf8")) as Array<{ name: string; required: boolean }>
+    const schema = JSON.parse(readFileSync(resolve(__dirname, "../ops/basin/requests.schema.json"), "utf8")) as Array<{ name: string; required: boolean }>
     for (const k of Object.keys(rows[0]!)) expect(schema.some(f => f.name === k), k).toBe(true)
     for (const f of schema) if (f.required) expect(rows[0], f.name).toHaveProperty(f.name)
   })
   it("ids that are not hex never reach a row", () => {
-    const row = buildRowV2({ ts: "t", role: "front", method: "GET", status: 200, ok: true, wall_ms: 1, ua_family: "curl" },
-      { headers: {}, spans: [new Map<string, unknown>([["client.trace_id", "<script>"], ["client.span_id", "zz"], ["client.trace_origin", "evil"]])], spanId: "nothex" })
-    expect(row).toEqual({ ts: "t", role: "front", method: "GET", status: 200, ok: true, wall_ms: 1, ua_family: "curl", schema: 2, synthetic: false })
+    const row = buildRow({ now: 0, method: "GET", url: new URL("http://x/nope"), headers: {}, status: 200, wallMs: 1, spanId: "nothex",
+      spans: [new Map<string, unknown>([["client.trace_id", "<script>"], ["client.span_id", "zz"], ["client.trace_origin", "evil"]])] })
+    for (const k of ["trace_id", "span_id", "client_span_id", "client_parent_id", "trace_origin"]) expect(row, k).not.toHaveProperty(k)
+    expect(row.synthetic).toBe(false)
   })
 })
 

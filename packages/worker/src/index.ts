@@ -17,7 +17,7 @@ import { loopbackGeoid, makeGeoid } from "./geoid.ts"
 import { makeLoopback, resolveBindings, type Bindings } from "./loopback.ts"
 import { makeFeed, serveFeed } from "./metar-feed.ts"
 import { weatherLive } from "./weather.ts"
-import { pipelineSink, type PipelineLike, type RequestRow, type RequestRowV2 } from "./requestlog.ts"
+import { pipelineSink, type PipelineLike, type RequestRow } from "./requestlog.ts"
 import { rumPipelineSink, type RumRow } from "./rum.ts"
 import { favicon } from "./favicon.ts"
 import { ogFront, setOgTracing } from "./og-render.ts"
@@ -26,9 +26,8 @@ export { Og } from "./og-entry.ts"   // cache ON: the link-preview PNG (src/og.t
 export { Api, BlockStore } from "./compute.ts"   // cache ON (cloudflare.config.ts); called over ctx.exports
 
 // LOGS: Basin stream ephem_requests (one row per request, src/requestlog.ts); VERSION: this Worker version's id for the row;
-// REQUEST_LOGS: "off" disables rows (the logging-overhead A/B).
-// LOGS_V2: ephem_requests_v2 (v1 + trace ids; dual-written until readers move); RUM: ephem_rum (POST /rum, src/rum.ts).
-interface Env { readonly LOGS?: PipelineLike<RequestRow>; readonly LOGS_V2?: PipelineLike<RequestRowV2>; readonly RUM?: PipelineLike<RumRow>; readonly VERSION?: { readonly id: string }; readonly REQUEST_LOGS?: string }
+// REQUEST_LOGS: "off" disables rows (the logging-overhead A/B). RUM: ephem_rum (POST /rum, src/rum.ts).
+interface Env { readonly LOGS?: PipelineLike<RequestRow>; readonly RUM?: PipelineLike<RumRow>; readonly VERSION?: { readonly id: string }; readonly REQUEST_LOGS?: string }
 interface Ctx { waitUntil(p: Promise<unknown>): void; readonly exports: Bindings }
 
 setTracing(tracing)
@@ -76,7 +75,7 @@ export default {
   },
 }
 const logs = (env: Env, waitUntil: (p: Promise<unknown>) => void, role: string) =>
-  env.LOGS && env.REQUEST_LOGS !== "off" ? pipelineSink(env.LOGS, waitUntil, env.VERSION?.id, role, env.LOGS_V2) : undefined
+  env.LOGS && env.REQUEST_LOGS !== "off" ? pipelineSink(env.LOGS, waitUntil, env.VERSION?.id, role) : undefined
 
 export class MetarFeed extends WorkerEntrypoint<Env> {
   async fetch(request: Request): Promise<Response> { recordLoopbackTrace(request); return serveFeed(request, { fetch: (u, i) => fetch(u, i) }) }

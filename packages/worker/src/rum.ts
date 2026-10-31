@@ -1,7 +1,7 @@
 // Production RUM: the page's own spans (navigation, every resource with its serverTiming, paints, LCP, CLS, INP, long animation
 // frames, every fetch with its traceparent ids, app spans: boot, data-ready, first-sky-draw, key presses, drags), batched by the
 // browser (RUM_JS) to POST /rum, validated here and written to the Basin stream `ephem_rum` (ops/basin/rum.schema.json; Iceberg
-// ephem.rum), one row per span, keyed by trace_id + span_id. ephem.requests_v2 has the same trace_id, so SQL joins client spans
+// ephem.rum), one row per span, keyed by trace_id + span_id. ephem.requests has the same trace_id, so SQL joins client spans
 // to server request rows (scripts/obs/trace-view.ts).
 // Privacy (hard rule; test/rum.test.ts): no IP, no user agent (family only), no URL or query: targets are route ids (ROUTES,
 // `/fonts/<known file>`, "other", "external"), names and details from fixed patterns, ids hex only. DNT or GPC (header or

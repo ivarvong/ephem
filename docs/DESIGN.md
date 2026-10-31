@@ -501,8 +501,7 @@ One trace id per page view, from the browser through every server entrypoint, fo
 - **RUM** (`src/rum.ts`): an inline client on both pages (6.9 KB, 2.6 KB gzip; trace glue 1.7 KB) (navigation + resource timing with serverTiming, FCP, LCP,
   CLS, INP, long animation frames, every fetch with its ids, app spans) batched to `POST /rum` (uncached; ≤ 64 KiB, ≤ 300
   spans, per-trace and per-isolate limits), validated to route ids and fixed patterns, stored in Basin `ephem_rum` →
-  `ephem.rum`. Request rows gained trace ids in a new stream, `ephem_requests_v2` (dual-written with `ephem_requests`;
-  stream schemas are immutable). DNT/GPC and unsampled traceparents send and store nothing; synthetic traffic is flagged.
+  `ephem.rum`. Request rows (`ephem.requests`) carry the trace ids. DNT/GPC and unsampled traceparents send and store nothing; synthetic traffic is flagged.
 - Tools: `scripts/obs/journey.ts` (CDP lab instrument, checks RUM against Chrome's ground truth) and
   `scripts/obs/trace-view.ts <trace-id>` (a real view from RUM + server telemetry); guide: "Unified client+server traces".
 

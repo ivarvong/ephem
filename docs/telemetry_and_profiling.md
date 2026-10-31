@@ -34,7 +34,7 @@ Every number you report carries its version id (and trace id or profile file). L
 | `python3 scripts/obs/tail-check.py [--minutes 10] [--version <id>] [--wait 90] [--require /v1/track,…]` | ephem-tail from its own o11y events (no Basin token needed): invocations by (version, outcome), `basin_send_failed` lines, and the route labels summed from its `tail_batch` log lines. Exit 1 on a non-ok outcome, a send failure or a missing required label. deploy.sh runs it after a tail deploy. |
 | `python3 scripts/obs/trace.py --jsonrpc-id <id>` | The trace of one MCP message (the probe's ids are `<run>-<step>`). |
 | `node --experimental-strip-types scripts/obs/journey.ts <url> [--device iphone\|desktop] [--net fast3g\|4g\|none] [--cpu 4] [--cold\|--warm] [--script home-drag\|none] [--duration 70] [--out dir]` | **Unified client+server trace** of one page view, driven by our CDP client (scripts/obs/cdp/): Chrome timeline + network, every request joined to its invocations and spans, clock offset, the page's own RUM checked against Chrome. Single-file viewer + Perfetto JSON. `--rebuild <name>.raw.json` after a model/viewer change. See "Unified client+server traces". |
-| `node --experimental-strip-types scripts/obs/trace-view.ts <trace-id>\|--latest [--real]` | A real page view rebuilt from production RUM (Basin `ephem.rum`), `ephem.requests_v2` and o11y by trace id; same viewer. |
+| `node --experimental-strip-types scripts/obs/trace-view.ts <trace-id>\|--latest [--real]` | A real page view rebuilt from production RUM (Basin `ephem.rum`), `ephem.requests` and o11y by trace id; same viewer. |
 | `python3 scripts/obs/symbolize.py in.pb [out.pb]` | Replaces minified function names in a prod pprof with names read from the source (see "Source maps"). |
 
 All of them shell out to the `cf` CLI (OAuth as ivar). Reading profiles needs `go` (`go tool pprof`).
@@ -301,7 +301,7 @@ and plan used to re-send the last run's keys; they came back as HITs (L20261030T
 against 318 ms). `--seed` drives only the schedule and the kind picks.
 
 **Tagging.** Every request carries `x-ephem-load: <run>` and `user-agent: ephem-load/1 (run <run>)`. In o11y, filter
-`$workers.event.request.headers.x-ephem-load = <run>`. Request rows have `ua_family = 'synthetic'` ("Request logs"). The
+`$workers.event.request.headers.x-ephem-load = <run>`. Request rows have `synthetic = true` ("Request logs"). The
 canary gate's live phase still counts load traffic as traffic (an error under load is an error).
 
 **Safety limits** (packages/load/src/workload.ts `LIMITS`, enforced by the Worker; test/workload.test.ts):
@@ -787,7 +787,7 @@ src/rum.ts, scripts/obs/cdp/, scripts/obs/journey.ts, scripts/obs/trace-view.ts.
 | never | the raw header beyond the two ids, tracestate other than `ephem=<16 hex>`, anything malformed (tests: test/clienttrace.test.ts) |
 
 Query: spans with `client.trace_id = <id>` (o11y key `client.trace_id`) give every trace of the view; Basin
-`ephem.requests_v2.trace_id` and `ephem.rum.trace_id` join by SQL.
+`ephem.requests.trace_id` and `ephem.rum.trace_id` join by SQL.
 
 **Server-Timing** (every front-door response; src/servertiming.ts): `trace` (documents first), `ray;desc="<cf-ray>"`, `api;desc="HIT";dur=`
 (Api loopback), `api-blocks` / `api-geoid` (a fresh Api run only: a cached answer would replay another request's numbers),
@@ -810,15 +810,13 @@ visibilitychange hidden, keepalive fetch every 15 s and 2 s after data-ready).
 | synthetic | `x-ephem-load`, `x-ephem-smoke`, `navigator.webdriver`, or the document's `<meta name="ephem-synthetic">` → `synthetic = true` |
 | storage | Basin stream `ephem_rum` (3f7057f2…) → `ephem.rum`, one row per span (`trace_id`, `span_id`, `parent_id`, `kind`, `name`, `target`, `start_ms`, `dur_ms`, `value`, phases, `server_timing`, `cache`, `ray`, …: ops/basin/rum.schema.json) |
 
-Request rows with trace ids: new stream `ephem_requests_v2` (82c448ef…, `ephem.requests_v2`: v1 columns + `schema`, `synthetic`,
-`trace_id`, `span_id`, `client_span_id`, `client_parent_id`, `trace_origin`), dual-written with `ephem_requests` until
-readers have moved. Streams/sinks/pipelines: `basin.py create-streams <stream>` then `basin.py provision <stream>` (before the
-Worker binds them).
+Request rows carry the trace: `ephem.requests` has `synthetic`, `trace_id`, `span_id`, `client_span_id`, `client_parent_id`,
+`trace_origin` ("Request logs").
 
 ```sql
 -- client spans joined to server request rows
 SELECT r.kind, r.name, r.target, r.start_ms, r.dur_ms, q.route, q.status, q.api_cache, q.wall_ms
-FROM ephem.rum r LEFT JOIN ephem.requests_v2 q ON q.trace_id = r.trace_id AND q.client_span_id = r.span_id AND q.role = 'front'
+FROM ephem.rum r LEFT JOIN ephem.requests q ON q.trace_id = r.trace_id AND q.client_span_id = r.span_id AND q.role = 'front'
 WHERE r.trace_id = '<id>' ORDER BY r.start_ms
 ```
 
@@ -1011,13 +1009,19 @@ R2 bucket `ephem-logs`, warehouse `5ad2236b39de4c8bd8f6270ea63f3ea9_ephem-logs`,
 
 | Resource | Name / id | Notes |
 | --- | --- | --- |
-| stream | `ephem_requests` `d43e9589a2784812afda39033b6792eb` | schema `packages/worker/ops/basin/requests.schema.json`; Worker binding on, HTTP off; binding `LOGS` |
+| stream | `ephem_requests` `09e37fce23fb4357ac54dff083a02f87` | schema `packages/worker/ops/basin/requests.schema.json`; Worker binding on, HTTP off; binding `LOGS` (one send per request, front and Api roles) |
 | stream | `ephem_invocations` `2d45db937f214e5cae5c19ba4c099779` | schema `ops/basin/invocations.schema.json`; written by `ephem-tail` (binding `INVOCATIONS`) |
 | Tail Worker | `ephem-tail` (packages/tail) | attached via `tailConsumers` in packages/worker/cloudflare.config.ts; deploy `scripts/deploy.sh main "…" tail` (auto when packages/tail or src/routes.ts changed); route labels from packages/worker/src/routes.ts (shared with the request row) |
-| bucket / catalog | `ephem-logs`, catalog enabled | `credential_status: absent` until the R2 admin token exists |
-| sinks, pipelines | `ephem_{requests,invocations}_sink`, `…_pipeline` → tables `ephem.requests`, `ephem.invocations`, roll 60 s | **not created yet**: they need an R2 Account API token (Admin Read & Write) at `~/.config/ephem/r2-admin-token` (chmod 600), then `python3 scripts/obs/basin.py provision` |
+| bucket / catalog | `ephem-logs`, catalog enabled | credential present (R2 admin token, `~/.config/ephem/r2-admin-token`) |
+| sinks, pipelines | `ephem_{requests,invocations,rum}_sink`, `…_pipeline` → tables `ephem.requests`, `ephem.invocations`, `ephem.rum`, roll 60 s | `python3 scripts/obs/basin.py provision [<stream>]` (needs the R2 token); `basin.py status` lists them |
 
-Stream schemas cannot change after creation; a new column means a new stream (and binding id). `basin.py types` regenerates
+Stream schemas cannot change after creation, and stream names are unique (a second `ephem_requests` is refused, 1003), so
+a column change replaces the stream in place, same name, no `_v2` (prerelease: the table's rows are dropped; ivar,
+2026-10-31): (1) `basin.py teardown <stream> --drop-table` (pipeline, sink, stream, Iceberg table; prints the row count),
+(2) `basin.py create-streams <stream>` (writes ops/basin/created-<stream>.json), (3) `basin.py provision <stream>` (sink +
+pipeline; the sink creates the table), (4) put the new id in cloudflare.config.ts, `basin.py types`, commit (ship.sh
+deploys it). Between (1) and the deploy the live version's sends fail (`basin_send_failed`): do it when no deploy or live
+watcher is running (`scripts/ship.sh status`), and quickly. Done that way 2026-10-31 for `ephem_requests` (trace ids). `basin.py types` regenerates
 `src/basin.generated.ts` from the live schemas with `wrangler types`; the tests assert our row types are assignable to it and
 check every key and type against the schema file. **A structured stream accepts a non-matching row and drops it later**
 (`send()` still resolves), so those tests are the only guard; dropped rows show in `events.pipelinesUserErrors` once a
@@ -1051,7 +1055,9 @@ Workers Caching miss or revalidation), with the work counts. It gets the front's
 | `block_reads`, `iterations` | `ephem.block_reads`, `ephem.iterations` | work counts (api rows) |
 | `weather_tier`, `data_age_s` | `metar.tier`, `metar.data_age_s` | `/v1/weather` |
 | `mcp_method`, `mcp_tool` | `mcp.method`, `mcp.tool` | `/mcp` |
-| `ua_family` | user agent / `mcp.client` / `x-ephem-load` | `curl`, `browser`, `mcp:<client name>`, `other`; `synthetic` for ephem-load traffic (header `x-ephem-load`; since 2026-10-30, ephem 5d347f60). The stream schema is immutable, so this is the synthetic flag instead of a new column. Synthetic rows' `country`/`city` are the Workers egress address's (US/New York), not the region's; `colo` is right |
+| `ua_family` | user agent / `mcp.client` | `curl`, `browser`, `mcp:<client name>`, `other` |
+| `synthetic` | `x-ephem-load` or `x-ephem-smoke` | ephem-load, the smoke, the journey harness. Synthetic rows' `country`/`city` are the Workers egress address's (US/New York), not the region's; `colo` is right |
+| `trace_id`, `span_id`, `client_span_id`, `client_parent_id`, `trace_origin` | `client.trace_id` / `client.span_id` / `client.parent_id` / `client.trace_origin` span attributes (src/clienttrace.ts), the request span's id | validated hex only; joins `ephem.rum` |
 | `lat_r`, `lon_r` | `lat`/`lon` (or `targetLat`/`targetLon`; MCP tool arguments) | rounded to 0.01° (~1 km) |
 
 **Privacy rules** (tested): no IP, no raw path or query string, no full user agent, coordinates rounded to 0.01°. MCP client

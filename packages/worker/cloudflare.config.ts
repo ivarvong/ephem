@@ -29,10 +29,8 @@ export default defineConfig({
 		env: {
 			EPH: bindings.r2({ name: "ephem-de440" }),   // BlockStore range reads; Admin (ingest)
 			GEOID: bindings.r2({ name: "ephem-geoid" }), // EGM96 bands, BlockStore (src/geoid.ts)
-			// Basin stream ephem_requests (schema ops/basin/requests.schema.json); request rows, src/requestlog.ts.
-			LOGS: bindings.pipeline({ name: "d43e9589a2784812afda39033b6792eb" }),
-			// ephem_requests_v2 (ops/basin/requests_v2.schema.json): v1 + trace ids, dual-written until readers move.
-			LOGS_V2: bindings.pipeline({ name: "82c448efe29b4e61ad0a7c8f9593f747" }),
+			// Basin stream ephem_requests (schema ops/basin/requests.schema.json): one row per request, with its trace ids (src/requestlog.ts).
+			LOGS: bindings.pipeline({ name: "09e37fce23fb4357ac54dff083a02f87" }),
 			// ephem_rum (ops/basin/rum.schema.json): browser RUM spans from POST /rum (src/rum.ts).
 			RUM: bindings.pipeline({ name: "3f7057f2350a4c7695ac6046305ac339" }),
 			VERSION: bindings.versionMetadata(),

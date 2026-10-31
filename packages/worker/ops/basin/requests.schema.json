@@ -148,5 +148,35 @@
   "name": "lon_r",
   "type": "float64",
   "required": false
+ },
+ {
+  "name": "synthetic",
+  "type": "bool",
+  "required": true
+ },
+ {
+  "name": "trace_id",
+  "type": "string",
+  "required": false
+ },
+ {
+  "name": "span_id",
+  "type": "string",
+  "required": false
+ },
+ {
+  "name": "client_span_id",
+  "type": "string",
+  "required": false
+ },
+ {
+  "name": "client_parent_id",
+  "type": "string",
+  "required": false
+ },
+ {
+  "name": "trace_origin",
+  "type": "string",
+  "required": false
  }
 ]

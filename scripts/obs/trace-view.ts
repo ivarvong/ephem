@@ -1,5 +1,5 @@
 // A real page view, reconstructed from production telemetry alone, by trace id: the page's own RUM rows (Basin ephem.rum),
-// the server's request rows (ephem.requests_v2, same trace_id) and every invocation and span in Workers Observability (spans
+// the server's request rows (ephem.requests, same trace_id) and every invocation and span in Workers Observability (spans
 // with client.trace_id, rays from the RUM's `ray;desc` Server-Timing). No harness, no CDP. Same viewer as scripts/obs/journey.ts.
 //   node --experimental-strip-types scripts/obs/trace-view.ts <trace-id> [--out dir] [--name base] [--origin https://ephem.ivar.workers.dev] [--wait 60]
 //   node --experimental-strip-types scripts/obs/trace-view.ts --latest [--real]   # newest RUM trace (--real: synthetic = false)
@@ -28,8 +28,8 @@ mkdirSync(outDir, { recursive: true })
 // ---------- Basin ----------
 const rows = basin(`SELECT * FROM ephem.rum WHERE trace_id = '${traceId}' ORDER BY seq, start_ms`)
 if (!rows.length) throw new Error(`no ephem.rum rows for ${traceId} (rows land in Iceberg about every 60 s)`)
-const v2 = basin(`SELECT ts, route, status, ray, role, api_cache, blocks_cache, span_id, client_span_id, client_parent_id, trace_origin, synthetic FROM ephem.requests_v2 WHERE trace_id = '${traceId}'`)
-log(`${rows.length} RUM rows, ${v2.length} requests_v2 rows`)
+const srv = basin(`SELECT ts, route, status, ray, role, api_cache, blocks_cache, span_id, client_span_id, client_parent_id, trace_origin, synthetic FROM ephem.requests WHERE trace_id = '${traceId}'`)
+log(`${rows.length} RUM rows, ${srv.length} request rows`)
 const n = (v: unknown) => v == null || v === "" ? null : Number(v)
 // One row per span; a span id can appear twice (a fetch's app-level "fetch" row and its Resource Timing row): keep both kinds.
 const seen = new Set<string>(), R = rows.filter(r => { const k = r.kind + r.span_id; if (seen.has(k)) return false; seen.add(k); return true })
@@ -83,7 +83,7 @@ const last = Math.max(...R.map(r => (n(r.start_ms) ?? 0) + (n(r.dur_ms) ?? 0)))
 const server = await pullServer({ from: t0Wall - 60_000, to: t0Wall + last + 120_000, clientTraceId: traceId, rays, waitS, log })
 const synthetic = R.some(r => r.synthetic === "true")
 const model = buildModel(client, server, { page: page === "/instrument" ? "instrument" : "home", url: page, client: `${R[0]!.ua_family}, ${R[0]!.vw} px @${R[0]!.dpr}x, ${R[0]!.colo ?? "?"}${synthetic ? ", synthetic" : ", real user"}`,
-  started: new Date(t0Wall).toISOString(), durationS: Math.round(last / 1000), basin: { rum: rows.length, requestsV2: v2.length, v2Routes: v2.map(x => x.route) } })
+  started: new Date(t0Wall).toISOString(), durationS: Math.round(last / 1000), basin: { rum: rows.length, requests: srv.length, routes: srv.map(x => x.route) } })
 const name = opt("name", `rum-${page === "/" ? "home" : "instrument"}-${traceId.slice(0, 8)}`)
 writeFileSync(join(outDir, `${name}.model.json`), JSON.stringify(model, null, 1))
 writeFileSync(join(outDir, `${name}.html`), viewerHtml(model, name))
@@ -94,5 +94,5 @@ console.log(`\n${name}  trace ${traceId}  ${page}  ${(model.meta as any).client}
 console.log(`TTFB ${f(kpi.ttfb)}  FCP ${f(kpi.fcp)}  LCP ${f(kpi.lcp)}  data ready ${f(kpi.data)}  INP ${f(kpi.inp)}  CLS ${kpi.cls ?? "–"}  requests ${kpi.requests}  server CPU ${kpi.serverCpu} ms / ${kpi.invocations} invocations`)
 console.log(`clock offset θ = ${offset.thetaMs} ± ${offset.plusMinusMs} ms from ${offset.n} requests; server spans inside their request: ${model.inside.ok}/${model.inside.n}`)
 console.log(`coverage: ${coverage.joined} of ${coverage.total} requests joined (${coverage.byTrace} by trace id)${coverage.unjoined.length ? "; unjoined: " + coverage.unjoined.map(u => `#${u.i} ${u.url} (${u.reason})`).join("; ") : ""}`)
-console.log(`Basin: ${rows.length} RUM rows, ${v2.length} requests_v2 rows (${[...new Set(v2.map(x => x.route))].join(", ")})`)
+console.log(`Basin: ${rows.length} RUM rows, ${srv.length} request rows (${[...new Set(srv.map(x => x.route))].join(", ")})`)
 console.log(`→ ${join(outDir, name)}.{html,perfetto.json,model.json}`)

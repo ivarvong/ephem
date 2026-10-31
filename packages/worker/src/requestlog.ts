@@ -17,7 +17,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/http/HttpServerResponse"
 import { ROUTES } from "./routes.ts"
 import { serverTimingEntries } from "./servertiming.ts"
-import type { EphemRequestsV2Record } from "./basin.generated.ts"
+import type { EphemRequestsRecord } from "./basin.generated.ts"
 
 declare const __EPHEM_BUILD__: string
 const BUILD = typeof __EPHEM_BUILD__ === "string" ? __EPHEM_BUILD__ : "dev"
@@ -29,32 +29,21 @@ export interface RequestRow {
   api_cache?: string; blocks_cache?: string; feed_cache?: string
   blocks?: number; blocks_mem?: number; origin_reads?: number; origin_bytes?: number; block_reads?: number; iterations?: number
   weather_tier?: string; data_age_s?: number; mcp_method?: string; mcp_tool?: string; ua_family: string; lat_r?: number; lon_r?: number
+  /** ephem-load (x-ephem-load), the smoke (x-ephem-smoke), the journey harness. */
+  synthetic: boolean
+  /** The page's trace (src/clienttrace.ts), so `ephem.rum` joins by trace_id; only validated hex. */
+  trace_id?: string; span_id?: string; client_span_id?: string; client_parent_id?: string; trace_origin?: string
 }
+const _assignable: (r: RequestRow) => EphemRequestsRecord = r => r   // the row type matches the live stream
+void _assignable
 
 /** Where a row goes. Provided per request (makeHandler's second argument); absent → nothing is logged. `role` is which entrypoint
  *  logged it: "front" (the uncached front door: one row for every request) or "api" (the cached Api entrypoint: one row per
  *  execution, i.e. per cache miss or revalidation, carrying the work counts). */
-export interface RequestLogSink { readonly version?: string | undefined; readonly role?: string | undefined; readonly emit: (row: RequestRow, v2: RequestRowV2) => void }
+export interface RequestLogSink { readonly version?: string | undefined; readonly role?: string | undefined; readonly emit: (row: RequestRow) => void }
 
-/** One `ephem_requests_v2` row (ops/basin/requests_v2.schema.json): the v1 row plus the trace ids, so `ephem.rum` joins it by
- *  trace_id. Dual-written with ephem_requests until readers have moved (stream schemas are immutable). */
-export interface RequestRowV2 extends RequestRow {
-  schema: 2; synthetic: boolean; trace_id?: string; span_id?: string; client_span_id?: string; client_parent_id?: string; trace_origin?: string
-}
-const _assignable: (r: RequestRowV2) => EphemRequestsV2Record = r => r   // the row type matches the live stream
-void _assignable
 const HEX = (n: number) => new RegExp(`^[0-9a-f]{${n}}$`)
 const H32 = HEX(32), H16 = HEX(16)
-/** Pure: the v2 row = v1 + trace ids (only validated hex) + the synthetic flag (ephem-load, smoke, journey harness). */
-export const buildRowV2 = (row: RequestRow, i: { headers: RowInput["headers"]; spans: ReadonlyArray<Attrs>; spanId?: string | undefined }): RequestRowV2 => {
-  const hex = (k: string, re: RegExp) => { const v = firstStr(i.spans, k); return v && re.test(v) ? v : undefined }
-  const out: Record<string, unknown> = { ...row, schema: 2, synthetic: !!(i.headers["x-ephem-load"] || i.headers["x-ephem-smoke"]),
-    trace_id: hex("client.trace_id", H32), span_id: i.spanId && H16.test(i.spanId) ? i.spanId : undefined,
-    client_span_id: hex("client.span_id", H16), client_parent_id: hex("client.parent_id", H16),
-    trace_origin: (v => v === "adopted" || v === "minted" ? v : undefined)(firstStr(i.spans, "client.trace_origin")) }
-  for (const k of Object.keys(out)) if (out[k] === undefined) delete out[k]
-  return out as unknown as RequestRowV2
-}
 export class RequestLog extends Context.Service<RequestLog, RequestLogSink>()("@ephem/worker/RequestLog") {}
 
 /** Span attributes → columns. The cache statuses are set by the cache layer (cf-cache-status of the internal fetch). */
@@ -119,6 +108,8 @@ export interface RowInput {
   readonly errorTag?: string | undefined
   /** URLs of in-process sub-requests (MCP tools/call → /v1/*), for lat/lon. */
   readonly inner?: ReadonlyArray<URL>
+  /** The request span's id. */
+  readonly spanId?: string | undefined
 }
 
 /** Pure: the row for one request. */
@@ -128,6 +119,7 @@ export const buildRow = (i: RowInput): RequestRow => {
   const loc = [i.url, ...(i.inner ?? [])].map(u => ({ lat: coord(u.searchParams.get("lat") ?? u.searchParams.get("targetLat"), 90), lon: coord(u.searchParams.get("lon") ?? u.searchParams.get("targetLon"), 180) }))
     .find(l => l.lat !== undefined && l.lon !== undefined)
   const rpc = firstNum(s, ATTR.mcpErrorCode)
+  const hex = (k: string, re: RegExp) => { const v = firstStr(s, k); return v && re.test(v) ? v : undefined }
   const row: Record<string, unknown> = {
     ts: new Date(i.now).toISOString(), ray: str(i.headers["cf-ray"]) ?? str(i.headers["x-ephem-ray"]) /* the Api gets the front's ray as x-ephem-ray */, version: i.version, build: BUILD, role: i.role ?? "front",
     colo: str(i.cf?.colo), country: str(i.cf?.country), city: str(i.cf?.city),
@@ -139,10 +131,12 @@ export const buildRow = (i: RowInput): RequestRow => {
     block_reads: sum(s, ATTR.blockReads), iterations: sum(s, ATTR.iterations),
     weather_tier: firstStr(s, ATTR.weatherTier), data_age_s: firstNum(s, ATTR.dataAge),
     mcp_method: firstStr(s, ATTR.mcpMethod), mcp_tool: firstStr(s, ATTR.mcpTool),
-    // synthetic: ephem-load (packages/load) tags every request with x-ephem-load: <run>; the stream schema is immutable, so the flag
-    // rides in ua_family (a free string) instead of a new column.
-    ua_family: i.headers["x-ephem-load"] ? "synthetic" : uaFamily(i.headers["user-agent"], firstStr(s, ATTR.mcpClient)),
+    ua_family: uaFamily(i.headers["user-agent"], firstStr(s, ATTR.mcpClient)),
     lat_r: loc?.lat, lon_r: loc?.lon,
+    synthetic: !!(i.headers["x-ephem-load"] || i.headers["x-ephem-smoke"]),
+    trace_id: hex("client.trace_id", H32), span_id: i.spanId && H16.test(i.spanId) ? i.spanId : undefined,
+    client_span_id: hex("client.span_id", H16), client_parent_id: hex("client.parent_id", H16),
+    trace_origin: (v => v === "adopted" || v === "minted" ? v : undefined)(firstStr(s, "client.trace_origin")),
   }
   for (const k of Object.keys(row)) if (row[k] === undefined) delete row[k]
   return row as unknown as RequestRow
@@ -180,8 +174,9 @@ export const RequestLogging = HttpRouter.middleware(http => Effect.gen(function*
         now: Date.now(), method: req.method, url: new URL(req.originalUrl, "http://localhost"), headers,
         cf: source?.cf, status, wallMs, version: sink.value.version, role: sink.value.role, spans: attrs,
         errorTag: Exit.isFailure(exit) ? causeTag(exit.cause) ?? failedTag(spans) : failedTag(spans), inner: mine.inner,
+        spanId: Option.isSome(reqSpan) ? reqSpan.value.spanId : undefined,
       })
-      sink.value.emit(row, buildRowV2(row, { headers, spans: attrs, spanId: Option.isSome(reqSpan) ? reqSpan.value.spanId : undefined }))
+      sink.value.emit(row)
     } catch (e) { console.error(JSON.stringify({ request_log_failed: String(e) })) }
   })
   if (Exit.isFailure(exit)) return yield* exit
@@ -201,8 +196,7 @@ export const RequestLogging = HttpRouter.middleware(http => Effect.gen(function*
 export interface PipelineLike<T> { send(records: ReadonlyArray<T>): Promise<void> }
 
 /** The prod sink: send from waitUntil, never awaited by the response; a failed send is one countable error line. */
-export const pipelineSink = (logs: PipelineLike<RequestRow>, waitUntil: (p: Promise<unknown>) => void, version?: string, role = "front", logsV2?: PipelineLike<RequestRowV2>): RequestLogSink => {
-  const send = <T extends RequestRow>(p: PipelineLike<T>, stream: string, row: T) => waitUntil(p.send([row]).catch((e: unknown) =>
-    console.error(JSON.stringify({ basin_send_failed: { stream, role, route: row.route ?? null, status: row.status, ray: row.ray ?? null, error: e instanceof Error ? `${e.name}: ${e.message}` : String(e) } }))))
-  return { version, role, emit: (row, v2) => { send(logs, "ephem_requests", row); if (logsV2) send(logsV2, "ephem_requests_v2", v2) } }
-}
+export const pipelineSink = (logs: PipelineLike<RequestRow>, waitUntil: (p: Promise<unknown>) => void, version?: string, role = "front"): RequestLogSink => ({
+  version, role, emit: row => waitUntil(logs.send([row]).catch((e: unknown) =>
+    console.error(JSON.stringify({ basin_send_failed: { stream: "ephem_requests", role, route: row.route ?? null, status: row.status, ray: row.ray ?? null, error: e instanceof Error ? `${e.name}: ${e.message}` : String(e) } })))),
+})

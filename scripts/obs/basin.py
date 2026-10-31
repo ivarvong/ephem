@@ -5,6 +5,7 @@
     python3 scripts/obs/basin.py provision                    # sinks + pipelines + catalog credential (needs the R2 admin token)
     python3 scripts/obs/basin.py sql <name> [--hours 1]       # a canned query (see QUERIES), or: sql --raw "SELECT ..."
     python3 scripts/obs/basin.py crosscheck --from <iso> --to <iso>   # Basin rows vs Workers Observability invocations
+    python3 scripts/obs/basin.py teardown <stream> [--drop-table]   # delete its pipeline + sink + stream (+ Iceberg table)
     python3 scripts/obs/basin.py types                        # regenerate packages/worker/src/basin.generated.ts (wrangler types)
 
 The R2 Account API token (Admin Read & Write) is read from ~/.config/ephem/r2-admin-token and only ever passed on stdin or in
@@ -23,18 +24,14 @@ BUCKET = "ephem-logs"
 WAREHOUSE = f"{ACCOUNT}_{BUCKET}"
 NAMESPACE = "ephem"
 TOKEN_FILE = os.path.expanduser("~/.config/ephem/r2-admin-token")
-# stream name → (stream id, Iceberg table, sink name, pipeline name, schema file)
-STREAMS = {
-    "ephem_requests": ("d43e9589a2784812afda39033b6792eb", "requests", "ephem_requests_sink", "ephem_requests_pipeline", "requests.schema.json"),
-    "ephem_invocations": ("2d45db937f214e5cae5c19ba4c099779", "invocations", "ephem_invocations_sink", "ephem_invocations_pipeline", "invocations.schema.json"),
-    # 2026-10-30, unified client+server tracing: requests + trace ids (dual-written with ephem_requests until migrated), and
-    # browser RUM spans (POST /rum). Ids are read from ops/basin/created-<stream>.json once `create-streams` has run.
-    "ephem_requests_v2": (None, "requests_v2", "ephem_requests_v2_sink", "ephem_requests_v2_pipeline", "requests_v2.schema.json"),
-    "ephem_rum": (None, "rum", "ephem_rum_sink", "ephem_rum_pipeline", "rum.schema.json"),
-}
+# stream name → (stream id, Iceberg table, sink name, pipeline name, schema file). The id is read from ops/basin/created-<stream>.json,
+# written by `create-streams`. Stream schemas are immutable: a schema change is `teardown <stream>` (pipeline, sink, stream, table:
+# the rows are gone), then `create-streams`, deploy the Worker bound to the new id, `provision <stream>`.
+STREAMS = {n: (None, n.removeprefix("ephem_"), f"{n}_sink", f"{n}_pipeline", f"{n.removeprefix('ephem_')}.schema.json")
+           for n in ("ephem_requests", "ephem_invocations", "ephem_rum")}
 for _n, _v in list(STREAMS.items()):
     _f = os.path.join(OPS, f"created-{_n.removeprefix('ephem_')}.json")
-    if _v[0] is None and os.path.exists(_f):
+    if os.path.exists(_f):
         STREAMS[_n] = (json.load(open(_f))["id"], *_v[1:])
 ROLL_S = 60
 
@@ -139,6 +136,59 @@ def provision(a) -> None:
         print(f"pipeline {pipeline}:", json.loads(r.stdout).get("id") if r.returncode == 0 else (r.stderr or r.stdout)[:400])
 
 
+def _listed(kind: str) -> list[tuple[str, str]]:
+    out = cf("pipelines", *([kind, "list"] if kind != "pipelines" else ["list"]))
+    rows = json.loads(out.stdout or "[]") if out.returncode == 0 else []
+    rows = rows if isinstance(rows, list) else rows.get("result", rows.get(kind, []))
+    return [(r.get("name"), r.get("id")) for r in rows]
+
+
+def _iceberg(method: str, path: str) -> tuple[int, str]:
+    """Iceberg REST catalog call with the R2 token (Authorization header only; never printed)."""
+    import urllib.request, urllib.error  # noqa: E401
+    tok = token()
+    if not tok:
+        raise SystemExit(f"no token at {TOKEN_FILE}")
+    base = f"https://catalog.cloudflarestorage.com/{ACCOUNT}/{BUCKET}"
+    def call(m: str, u: str) -> tuple[int, str]:
+        req = urllib.request.Request(u, method=m, headers={"Authorization": f"Bearer {tok}", "User-Agent": "ephem-basin.py"})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.status, r.read().decode()
+        except urllib.error.HTTPError as e:
+            return e.code, e.read().decode().replace(tok, "<redacted>")
+    st, cfg = call("GET", f"{base}/v1/config?warehouse={WAREHOUSE}")
+    prefix = json.loads(cfg).get("overrides", {}).get("prefix", "") if st == 200 else ""
+    return call(method, f"{base}/v1/{prefix + '/' if prefix else ''}{path}")
+
+
+def teardown(a) -> None:
+    """Delete a stream's pipeline, sink and stream (every one with its name, except the stream id in created-<stream>.json, so
+    the replacement created under the same name survives), then with --drop-table its Iceberg table (row count printed first).
+    Irreversible: data in the table is gone."""
+    for stream in a.stream:
+        keep, failed = (STREAMS[stream][0] if stream in STREAMS else None), False
+        table = stream.removeprefix("ephem_")
+        for kind, name in (("pipelines", f"{stream}_pipeline"), ("sinks", f"{stream}_sink"), ("streams", stream)):
+            hits = [rid for n, rid in _listed(kind) if n == name and not (kind == "streams" and rid == keep)]
+            if not hits:
+                print(f"{kind} {name}: none to delete{f' (kept {keep})' if kind == 'streams' and keep else ''}")
+            for rid in hits:
+                r = cf("pipelines", *([kind, "delete", rid] if kind != "pipelines" else ["delete", rid]), "--force")
+                print(f"{kind} {name} {rid}:", "deleted" if r.returncode == 0 else (r.stderr or r.stdout)[:300])
+                failed |= r.returncode != 0
+        if failed:
+            raise SystemExit(f"{stream}: a delete failed; table kept")
+        if a.drop_table:
+            try:
+                n = table_rows(basin_sql(f"SELECT COUNT(*) AS n FROM {NAMESPACE}.{table}"))
+            except SystemExit:
+                n = []
+            print(f"table {NAMESPACE}.{table}: {n[0]['n'] if n else '?'} rows before the drop")
+            st, body = _iceberg("DELETE", f"namespaces/{NAMESPACE}/tables/{table}?purgeRequested=true")
+            print(f"table {NAMESPACE}.{table}:", "dropped" if st in (200, 204) else f"{st} {body[:300]}")
+
+
 def basin_sql(q: str) -> str:
     tok = token()
     if not tok:
@@ -223,5 +273,6 @@ p_cs = sub.add_parser("create-streams"); p_cs.add_argument("stream", nargs="+", 
 p = sub.add_parser("sql"); p.add_argument("name", nargs="?", choices=sorted(QUERIES), default="by-route"); p.add_argument("--hours", type=float, default=1); p.add_argument("--raw"); p.add_argument("--json", action="store_true", help="rows as a JSON array (for scripts/obs/trace-view.ts, journey.ts)"); p.set_defaults(f=sql)
 p = sub.add_parser("crosscheck"); p.add_argument("--from", dest="frm", required=True); p.add_argument("--to", required=True); p.set_defaults(f=crosscheck)
 sub.add_parser("types").set_defaults(f=types)
+p = sub.add_parser("teardown"); p.add_argument("stream", nargs="+"); p.add_argument("--drop-table", action="store_true"); p.set_defaults(f=teardown)
 a = ap.parse_args()
 a.f(a)

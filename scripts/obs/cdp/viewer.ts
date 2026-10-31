@@ -824,7 +824,7 @@ const sec = (title, body) => "<section><h3 class=cap>" + esc(title) + "</h3>" + 
 $("rdg").innerHTML =
   sec("Run", kv([["page", meta.url || page, 1], ["device", meta.device], ["network", meta.net], ["cpu", meta.cpu ? meta.cpu + "×" : null], ["cache", meta.mode], ["script", meta.script], ["browser", rumSrc ? meta.client : meta.chrome],
     ["started", meta.started], ["duration", meta.durationS ? meta.durationS + " s" : null], ["run id", meta.run, 1], ["ephem", (meta.versions || []).join(", "), 1],
-    ["trace id", M.meta.traceId + (meta.pageTraceFrom ? " (page read it from " + meta.pageTraceFrom + ")" : ""), 1], ["source", rumSrc ? "Basin ephem.rum + ephem.requests_v2 + Workers Observability" : "Chrome DevTools Protocol + Workers Observability"]])) +
+    ["trace id", M.meta.traceId + (meta.pageTraceFrom ? " (page read it from " + meta.pageTraceFrom + ")" : ""), 1], ["source", rumSrc ? "Basin ephem.rum + ephem.requests + Workers Observability" : "Chrome DevTools Protocol + Workers Observability"]])) +
   sec("Clock offset", kv([["θ", o.thetaMs != null ? "server − client = " + fmt(o.thetaMs, 1) + " ± " + fmt(o.plusMinusMs, 1) : null], ["interval", o.lo != null ? fmt(o.lo, 1) + " … " + fmt(o.hi, 1) : null],
     ["bounds", o.n != null ? o.agree + " of " + o.n + " agree" : null, 0], ["tightest", o.tightest ? o.tightest.path + " (" + fmt(o.tightest.widthMs, 1) + " wide)" : null],
     ["outliers", (o.outliers || []).map(x => x.path).join(", ") || null], ["sntp", meta.sntp ? fmt(meta.sntp.offsetMs, 1) + " ± " + fmt(meta.sntp.errMs, 1) + " (" + meta.sntp.host + ")" : null],
