@@ -93,6 +93,16 @@ describe("worker handler", () => {
     const m = await get("/position?lon=0"); expect(m.body.message).toMatch(/^missing required parameter lat: /)
     expect((await get("/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&start=2026-10-29T02:00:00Z&end=2026-10-28T23:45:00Z")).status).toBe(400)
   })
+  it("a date that is not on the calendar, or that the zone skipped, is a 400, not another day's answer (sweep 2026-10-31)", async () => {
+    // Before: 2026-02-30 answered for 2026-03-02 under the label 2026-02-30; Pacific/Apia's skipped 2011-12-30 was a 200 with an empty day.
+    for (const [date, tz, re] of [["2026-02-30", "America/New_York", /not a calendar date/], ["2026-13-01", "UTC", /not a calendar date/], ["2026-04-31", "UTC", /not a calendar date/],
+      ["2011-12-30", "Pacific/Apia", /does not exist in Pacific\/Apia/]] as const) {
+      const d = await get(`/day?lat=-13.8&lon=-171.8&date=${date}&tz=${tz}`)
+      expect(d.status, `${date} ${tz}`).toBe(400); expect(d.body).toMatchObject({ _tag: "InvalidRequest", parameter: "date" }); expect(d.body.message).toMatch(re)
+      const c = await get(`/crossing?lat=-13.8&lon=-171.8&body=sun&altitude=0&date=${date}&tz=${tz}`)
+      expect(c.status, `crossing ${date} ${tz}`).toBe(400); expect(c.body).toMatchObject({ _tag: "InvalidRequest", parameter: "date" })
+    }
+  })
   it("position without time is the sky now", async () => {
     const before = Date.now(), r = await get("/position?lat=40.7&lon=-74"), after = Date.now()
     expect(r.status).toBe(200)

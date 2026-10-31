@@ -41,6 +41,16 @@ export const nextDate = (date: string): string => {
   const [y, m, d] = date.split("-").map(Number) as [number, number, number]
   return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10)
 }
+/** The local day `date` in `tz` as a UTC window [startMs, endMs), or why there is none: `date` must be a real calendar date
+ *  (2026-02-30 is not; Date.UTC would silently roll it to 2026-03-02) and must exist in `tz` (Pacific/Apia skipped
+ *  2011-12-30: its midnight and the next one are the same instant). */
+export const localDay = (date: string, tz: string): { ok: { startMs: number; endMs: number } } | { error: string } => {
+  const [y, m, d] = date.split("-").map(Number) as [number, number, number]
+  if (new Date(Date.UTC(y, m - 1, d)).toISOString().slice(0, 10) !== date) return { error: `date=${date} is not a calendar date (YYYY-MM-DD with a real month and day)` }
+  const startMs = localMidnight(date, tz), endMs = localMidnight(nextDate(date), tz)
+  if (!(endMs > startMs)) return { error: `date=${date} does not exist in ${tz}: the zone skipped that calendar day` }
+  return { ok: { startMs, endMs } }
+}
 
 // ── root finding: fixed sampling grid, then safeguarded regula falsi ──
 type F = (ms: number) => number

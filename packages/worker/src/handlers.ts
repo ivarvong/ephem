@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder"
 import { EphemApi, InvalidRequest } from "@ephem/api"
-import { SUPPORTED, TRACK_DEFAULT_STEP_S, alignmentLatRange, alignmentRequest, blocksFor, parseInclude, parseObstacles, sightline, SIGHTLINE_CONVENTIONS, MAX_SIGHTLINE_KM, inverse, K_TERRESTRIAL, GEOID, crossingRequest, crossingWindow, dayRequest, instant, instrumented, isValidZone, localMidnight, nextDate, positionRequest, trackRequest, trackWindowError } from "@ephem/core"
+import { SUPPORTED, TRACK_DEFAULT_STEP_S, alignmentLatRange, alignmentRequest, blocksFor, parseInclude, parseObstacles, sightline, SIGHTLINE_CONVENTIONS, MAX_SIGHTLINE_KM, inverse, K_TERRESTRIAL, GEOID, crossingRequest, crossingWindow, dayRequest, instant, instrumented, isValidZone, localDay, positionRequest, trackRequest, trackWindowError } from "@ephem/core"
 import { Blocks, blocksCache } from "./blocks.ts"
 import { Geoid, geoidCache } from "./geoid.ts"
 import { EarthLive } from "./weather.ts"
@@ -64,7 +64,9 @@ export const SkyLive = HttpApiBuilder.group(EphemApi, "sky", h => h
   }).pipe(Effect.withSpan("position")))
   .handle("day", ({ query: q }) => Effect.gen(function* () {
     if (!isValidZone(q.tz)) return yield* badZone(q.tz)
-    const t0 = localMidnight(q.date, q.tz), t1 = localMidnight(nextDate(q.date), q.tz)
+    const ld = localDay(q.date, q.tz)
+    if ("error" in ld) return yield* new InvalidRequest({ parameter: "date", message: ld.error })
+    const t0 = ld.ok.startMs, t1 = ld.ok.endMs
     if (t0 < SUPPORTED.fromMs || t1 >= SUPPORTED.toMs) return yield* new InvalidRequest({ parameter: "date", message: `date=${q.date} is outside the supported range 1972-01-01 to 2149-12-31` })
     const { out, provenance } = yield* compute("day", blocksFor(jd(t0), jd(t1)), src =>
       dayRequest(src, { date: q.date, tz: q.tz, lat: q.lat, lon: q.lon, height: q.height, heightRef: q.heightRef, temperature: q.temperature, pressure: q.pressure,
@@ -77,7 +79,7 @@ export const SkyLive = HttpApiBuilder.group(EphemApi, "sky", h => h
     if (q.start !== undefined) yield* parseUtc(q.start, "start")
     if (q.end !== undefined) yield* parseUtc(q.end, "end")
     const w = crossingWindow(q)
-    if ("error" in w) return yield* new InvalidRequest({ message: w.error })
+    if ("error" in w) return yield* new InvalidRequest({ ...(w.error.startsWith("date=") ? { parameter: "date" } : {}), message: w.error })
     const { startMs, endMs } = w.ok
     if (startMs < SUPPORTED.fromMs || endMs >= SUPPORTED.toMs) return yield* new InvalidRequest({ message: "the window is outside the supported range 1972-01-01 to 2149-12-31 UTC" })
     const { out, provenance } = yield* compute("crossing", blocksFor(jd(startMs), jd(endMs)), src =>

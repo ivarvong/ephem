@@ -5,7 +5,7 @@ import { type Limb, type HeightRef, type HorizonSpec, type ObserverHeights, P_DE
   K_TERRESTRIAL, horizonOf, observerHeights, refraction } from "./horizon.ts"
 import { GEOID } from "./geoid.ts"
 import { position, RATE_METHOD } from "./position.ts"
-import { type HorizonProfile, DAY_THRESHOLDS, MAX_CROSSING_WINDOW_MS, crossing, day, localMidnight, nextDate, parseProfile } from "./day.ts"
+import { type HorizonProfile, DAY_THRESHOLDS, MAX_CROSSING_WINDOW_MS, crossing, day, localDay, parseProfile } from "./day.ts"
 import { isoMs } from "./time.ts"
 import { track } from "./track.ts"
 import { CONTEXT_CONVENTIONS, type Include, contextAt } from "./context.ts"
@@ -87,6 +87,7 @@ const resolveHorizon = (spec: HorizonSpec | undefined, profile: string | undefin
   return { ok: hz }
 }
 export const dayRequest = (src: BlockSource, q: DayRequest): SkyResult<ReturnType<typeof dayOut>> => {
+  const w = localDay(q.date, q.tz); if ("error" in w) return w
   const { h, geo } = geoOf(q), T = q.temperature ?? T_DEFAULT, P = q.pressure ?? P_DEFAULT, limb = q.aim ?? "upper"
   const hz = resolveHorizon(q.horizon, q.horizonProfile, h.heightMsl)
   if ("error" in hz) return hz
@@ -135,7 +136,7 @@ export const crossingWindow = (q: { start?: string | undefined; end?: string | u
     return { ok: { startMs: a, endMs: b } }
   }
   if (q.date === undefined || q.tz === undefined) return { error: "date and tz go together (YYYY-MM-DD and an IANA zone such as America/New_York)" }
-  return { ok: { startMs: localMidnight(q.date, q.tz), endMs: localMidnight(nextDate(q.date), q.tz) } }
+  return localDay(q.date, q.tz)
 }
 export const crossingRequest = (src: BlockSource, q: CrossingRequest): SkyResult<ReturnType<typeof crossingOut>> => {
   if (q.aim === "litCentroid" && q.body !== "moon") return { error: "aim=litCentroid is the Moon's lit-area centroid: it needs body=moon (for the Sun use center, upper or lower)" }
