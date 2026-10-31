@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
+import { readFileSync } from "node:fs"
+import { resolve } from "node:path"
 import fc from "fast-check"
 import { makeHandler } from "../src/app.ts"
-import { CORE_JS, page, visitor } from "../src/home.ts"
-import { makeBlocks } from "../src/blocks.ts"
+import { CORE_JS, initialQueries, page, visitor } from "../src/home.ts"
+import { REC, direct, makeBlocks } from "../src/blocks.ts"
 
 const NYC = { latitude: "40.71427", longitude: "-74.00597", city: "New York City", region: "New York", country: "US", timezone: "America/New_York", colo: "EWR" }
 const u = (q = "") => new URL("https://ephem.example/" + q)
@@ -232,7 +234,7 @@ describe("home: altitude-ring labels stay off the path lines", () => {
       expect(spot.x).toBeGreaterThanOrEqual(bounds.x0); expect(spot.x + w).toBeLessThanOrEqual(bounds.x1)
     }), { numRuns: 400, seed: 20261029 })
   })
-  it("first load is four API calls: one /v1/track (not a /v1/position per grid point), live position, today, weather", () => {
+  it("first load fetches only what was not embedded: one /v1/track (not a /v1/position per grid point), live position, today, weather", () => {
     const html = page(V), calls = [...html.matchAll(/api\("(\/v1\/[a-z]+)"/g)].map(m => m[1])
     expect(calls.toSorted()).toEqual(["/v1/day", "/v1/day", "/v1/magnetic", "/v1/position", "/v1/track", "/v1/weather"])   // tomorrow's day and magnetic are conditional
     expect(html).not.toMatch(/jobs\.push|time: new Date/)                                  // no per-sample fetch loop, no timed live poll
@@ -291,5 +293,50 @@ describe("home: sky chart geometry", () => {
     expect(chart.poseFrom({ alpha: 30, beta: 90, gamma: 0 }, 0)).toBeNull()   // relative alpha, no compass: nothing to show
     expect(chart.aimText("Moon", { az: 20, alt: -23.4 }, { az: 60, alt: 18 })).toBe("Moon, 23.4° below the horizon: turn 40° left, tilt 41° down")
     expect(chart.aimText("Sun", { az: 181, alt: 30 }, { az: 180, alt: 29 })).toBe("Sun: dead ahead")
+  })
+})
+
+// One round trip (2026-10-31): the page streams its first-load answers, computed in-process through the router.
+describe("home: first-load answers embedded in the streamed page", () => {
+  const FIX = resolve(__dirname, "../../core/test/fixtures/blocks")
+  const fixtures = makeBlocks(direct(async (first, count) => {
+    const out = new Uint8Array(count * REC)
+    for (let i = 0; i < count; i++) out.set(readFileSync(`${FIX}/${first + i}.bin`), i * REC)
+    return out.buffer
+  }))
+  const embedded = (html: string, id: string) => {
+    const m = new RegExp(`<script type="application/json" id="${id}">(.*?)</script>`).exec(html)
+    return m ? JSON.parse(m[1]!) : null
+  }
+  const strip = (x: { provenance?: unknown }) => ({ ...x, provenance: undefined })   // diagnostics carry timings
+  it("embeds /v1/position, /v1/track and /v1/day verbatim: the API's own answers to the page's own queries", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-10-31T00:13:00Z"))
+    try {
+      const handler = makeHandler(fixtures)
+      const req = new Request("https://ephem.example/"); Object.defineProperty(req, "cf", { value: NYC })
+      const res = await handler(req), html = await res.text()
+      expect(res.headers.get("cache-control")).toBe("private, no-store")
+      expect(html.indexOf("</style>")).toBeLessThan(html.indexOf('id="ephem-position"'))   // the head first, the data after
+      expect(html.endsWith("</body></html>")).toBe(true)
+      const v = visitor(u(), NYC), Q = initialQueries(v, Date.now())
+      const pos = embedded(html, "ephem-position")
+      expect(pos.time.utc).toBe("2026-10-31T00:13:00.000Z")
+      const timed = await (await handler(new Request(`https://ephem.example${Q["ephem-position"][0]}?${new URLSearchParams({ ...Q["ephem-position"][1], time: pos.time.utc })}`))).json()
+      expect(pos.sun).toEqual(timed.sun); expect(pos.moon).toEqual(timed.moon)   // the same instant asked with time=: the same sky
+      expect(pos.sun.altitude).toBeCloseTo(-26.6, 0)
+      for (const id of ["ephem-track", "ephem-day"] as const) {
+        const [path, query] = Q[id], api = await (await handler(new Request(`https://ephem.example${path}?${new URLSearchParams(query)}`))).json()
+        expect(strip(embedded(html, id))).toEqual(strip(api))
+      }
+      expect(embedded(html, "ephem-day").date).toBe("2026-10-30")   // today in New York, not in UTC
+    } finally { vi.useRealTimers() }
+  })
+  it("an answer that fails is left out (the page fetches it); the page still completes", async () => {
+    const handler = makeHandler(makeBlocks(async () => { throw new Error("R2 down") }))
+    const req = new Request("https://ephem.example/"); Object.defineProperty(req, "cf", { value: NYC })
+    const html = await (await handler(req)).text()
+    expect(embedded(html, "ephem-position")).toBeNull()
+    expect(html.endsWith("</body></html>")).toBe(true)
+    expect(html).toContain('__embed("ephem-position")')   // the boot reads it, and fetches without it
   })
 })

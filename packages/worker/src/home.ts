@@ -4,10 +4,10 @@ import * as Effect from "effect/Effect"
 import * as Option from "effect/Option"
 import * as HttpRouter from "effect/http/HttpRouter"
 import * as HttpServerRequest from "effect/http/HttpServerRequest"
-import * as HttpServerResponse from "effect/http/HttpServerResponse"
 import { isValidZone } from "@ephem/core"
 import { RUM_JS } from "./rum.ts"
 import { ICON_LINK } from "./favicon.ts"
+import { READ_EMBED_JS, jsonScript, routeText, streamHtml } from "./embed.ts"
 import { CLIENT_TRACE_JS, documentTrace, documentTraceHeaders, traceparentMeta, type DocumentTrace } from "./clienttrace.ts"
 
 interface CfLocation {
@@ -40,15 +40,37 @@ export const visitor = (url: URL, cf: CfLocation | undefined): Visitor => {
   return { ...DEFAULT, colo, source: "default" }
 }
 
-export const Home = HttpRouter.add("GET", "/", req => Effect.gen(function* () {
+/** The queries the page's first load makes, built exactly as the client builds them (q(), loadTrack, loadDay), so an embedded
+ *  answer is the one the browser would have fetched: lat/lon at 5 decimals, the track window from this UTC day, today in tz. */
+const iso = (ms: number) => new Date(ms).toISOString().slice(0, 19) + "Z"
+export const initialQueries = (v: Visitor, now: number) => {
+  const q = { lat: v.lat.toFixed(5), lon: v.lon.toFixed(5) }, D = Math.floor(now / 864e5), t0 = (D - 1) * 864e5
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: v.tz }).format(new Date(now))
+  return {
+    "ephem-position": ["/v1/position", q],
+    "ephem-track": ["/v1/track", { ...q, start: iso(t0), end: iso(t0 + 72 * 3600e3) }],
+    "ephem-day": ["/v1/day", { ...q, date: today, tz: v.tz }],
+  } as const satisfies Record<string, readonly [string, Record<string, string>]>
+}
+
+// GET /: the head (CSS, markup, boot script) is flushed at once; the three first-load answers follow, computed in-process
+// through the router (src/embed.ts), then </body>. An answer that is not a 200 is left out and the page fetches it.
+export const Home = HttpRouter.use(router => router.add("GET", "/", req => Effect.gen(function* () {
   const tid = yield* documentTrace(req)   // on the root span; the page's fetches are its children (src/clienttrace.ts)
   return yield* Effect.gen(function* () {
     const url = Option.getOrElse(HttpServerRequest.toURL(req), () => new URL("http://localhost/"))
     const v = visitor(url, (req.source as { cf?: CfLocation }).cf)
     yield* Effect.annotateCurrentSpan({ "home.source": v.source, "home.colo": v.colo ?? "", "home.tz": v.tz })
-    return HttpServerResponse.text(page(v, tid), { contentType: "text/html; charset=utf-8", headers: { "cache-control": "private, no-store", ...documentTraceHeaders(tid) } })
+    const embeds = Effect.forEach(Object.entries(initialQueries(v, Date.now())), ([id, [path, query]]) =>
+      routeText(router, req, path, query, tid.traceparent).pipe(Effect.map(r => (r.status === 200 ? jsonScript(id, r.text) : ""))), { concurrency: "unbounded" })
+    const tail = embeds.pipe(
+      Effect.tap(parts => Effect.annotateCurrentSpan({ "home.embedded": parts.filter(Boolean).length })),
+      Effect.withSpan("home.embed"),
+      Effect.map(parts => parts.join("") + PAGE_END),
+      Effect.catchCause(() => Effect.succeed(PAGE_END)))   // never fails: the page fetches what is missing
+    return yield* streamHtml(pageHead(v, tid), tail, { "cache-control": "private, no-store", ...documentTraceHeaders(tid) })
   }).pipe(Effect.withSpan("home"))
-}))
+})))
 
 const json = (x: unknown) => JSON.stringify(x).replace(/</g, "\\u003c")
 
@@ -250,7 +272,11 @@ function aimText(name, b, pose) {
 }
 `
 
-export const page = (v: Visitor, trace?: DocumentTrace) => `<!doctype html>
+/** The whole page without embedded data (tests; the client then fetches everything). */
+export const page = (v: Visitor, trace?: DocumentTrace) => pageHead(v, trace) + PAGE_END
+
+/** Everything the browser can parse, style, paint and boot before the data: flushed at once (src/embed.ts streamHtml). */
+export const pageHead = (v: Visitor, trace?: DocumentTrace) => `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
 ${traceparentMeta(trace)}
@@ -445,6 +471,7 @@ footer.tel i{font:500 10px/1 var(--sans);font-style:normal;letter-spacing:.14em;
 ${CORE_JS}
 ${CLIENT_TRACE_JS}
 ${RUM_JS}
+${READ_EMBED_JS}
 var D2R = Math.PI / 180, AU = 149597870.7;
 var loc = { lat: LOC.lat, lon: LOC.lon, place: LOC.place, city: LOC.city, tz: LOC.tz, source: LOC.source, acc: null };
 var $ = function (id) { return document.getElementById(id); };
@@ -880,9 +907,10 @@ function loadPos() {
 function loadDay() {
   var today = localDate(tNow());
   S.day = { date: today, events: [], start: new Date(tNow()).toISOString(), end: new Date(tNow()).toISOString(), loading: true }; S.tomorrow = null; S.tomorrowFor = null;
-  return api("/v1/day", Object.assign(q(), { date: today, tz: loc.tz }))
-    .then(function (r) { S.day = r; drawEvents(); drawStrip(); tick(); }).catch(err);
+  return api("/v1/day", dayQuery(today)).then(applyDay).catch(err);
 }
+function dayQuery(today) { return Object.assign(q(), { date: today, tz: loc.tz }); }
+function applyDay(r) { S.day = r; S.tomorrow = null; S.tomorrowFor = null; drawEvents(); drawStrip(); tick(); }
 // Tomorrow's events matter only once today's have all passed (the Next line); fetched then, once per day.
 function loadTomorrow() {
   var d = S.day; S.tomorrowFor = d.date;
@@ -937,21 +965,22 @@ function drawWx() {
 function loadTrack() {
   var D = Math.floor(tNow() / 864e5), t0 = (D - 1) * 864e5, iso = function (ms) { return new Date(ms).toISOString().slice(0, 19) + "Z"; };
   S.trackDay = D;
-  return api("/v1/track", Object.assign(q(), { start: iso(t0), end: iso(t0 + 72 * 3600e3) }), true).then(function (r) {
-    if (S.trackDay !== D) return;
-    var out = [], step = r.stepSeconds * 1000, s0 = Date.parse(r.start);
+  return api("/v1/track", Object.assign(q(), { start: iso(t0), end: iso(t0 + 72 * 3600e3) }), true).then(function (r) { if (S.trackDay === D) applyTrack(r); }).catch(err);
+}
+function applyTrack(r) {
+  S.trackDay = Math.round(Date.parse(r.start) / 864e5) + 1;
+  var out = [], step = r.stepSeconds * 1000, s0 = Date.parse(r.start);
     function b(x, i) { return { azimuth: x.azimuth[i], altitude: x.altitude[i], apparentAltitude: x.apparentAltitude[i] }; }
     for (var i = 0; i < r.count; i++) out.push({ t: s0 + i * step, sun: b(r.sun, i), moon: b(r.moon, i) });
     S.track = out; drawStrip(); requestDraw();
     if (window.performance && performance.mark) performance.mark("ephem:track");
-  }).catch(err);
 }
 function pad(k) { return (k.toUpperCase() + "                    ").slice(0, 18); }
 function diag() {
   var out = [];
   if (S.last) {
     var d = S.last.prov && S.last.prov.diagnostics, c = d && d.cache;
-    out.push('<span class="c"># last position answer</span>', "GET " + esc(S.last.url), pad("round trip") + S.last.ms.toFixed(1) + " ms");
+    out.push('<span class="c"># last position answer</span>', "GET " + esc(S.last.url), pad("round trip") + (S.last.ms == null ? "none: embedded in the page" : S.last.ms.toFixed(1) + " ms"));
     if (d) out.push(pad("DE440 blocks") + d.blocks.join(", "), pad("cache") + ["L1 " + c.l1].concat(Object.keys(c).filter(function (k) { return k.indexOf("blocks_") === 0; }).map(function (k) { return k.slice(7) + " " + c[k]; })).join(", "), pad("coefficient reads") + c.reads);
     out.push(pad("served by") + "Cloudflare " + esc(LOC.colo || "edge") + ", refreshed every 5 s");
   }
@@ -969,7 +998,7 @@ function diag() {
   function tel(k, v) { return "<span><i>" + k + "</i>" + v + "</span>"; }
   var dg = prov && prov.diagnostics, c1 = dg && dg.cache;
   if (!S.err) setHtml("foot", tel("ephem", esc((prov && prov.version) || "")) + tel("Ephemeris", esc((prov && prov.ephemeris) || "JPL DE440")) +
-    (S.last ? tel("Round trip", S.last.ms.toFixed(1) + " ms") : "") + (c1 ? tel("Block cache", esc(["L1 " + c1.l1].concat(Object.keys(c1).filter(function (k) { return k.indexOf("blocks_") === 0; }).map(function (k) { return k.slice(7) + " " + c1[k]; })).join(" \\u00b7 "))) : "") + tel("Edge", esc(LOC.colo || "\\u2014")) +
+    (S.last ? tel("Round trip", S.last.ms == null ? "embedded" : S.last.ms.toFixed(1) + " ms") : "") + (c1 ? tel("Block cache", esc(["L1 " + c1.l1].concat(Object.keys(c1).filter(function (k) { return k.indexOf("blocks_") === 0; }).map(function (k) { return k.slice(7) + " " + c1[k]; })).join(" \\u00b7 "))) : "") + tel("Edge", esc(LOC.colo || "\\u2014")) +
     tel("Location", loc.source === "cloudflare" ? "approximate, from Cloudflare" : loc.source === "device" ? "from your device" : loc.source === "query" ? "from the link" : "default"));
 }
 function header() {
@@ -982,7 +1011,20 @@ function header() {
     "curl '" + b + "/v1/day?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "&date=" + localDate(tNow()) + "&tz=" + loc.tz + "'\\n\\n" +
     "curl '" + b + "/v1/weather?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "&n=3'";
 }
-function reloadAll() { S.track = []; S.from = null; S.decl = null; header(); diag(); return Promise.all([loadTrack(), loadPos(), loadDay(), loadWx()]); }
+// First load: the server streams today's answers into the page (src/embed.ts; /v1/position, /v1/track, /v1/day, verbatim),
+// so the first paint with data needs no API round trip. Whatever is missing (or ?at, which the server doesn't know) is fetched.
+var booted = false;
+function boot() {
+  if (booted) return; booted = true;
+  var pos = AT == null ? __embed("ephem-position") : null, tr = AT == null ? __embed("ephem-track") : null, dy = AT == null ? __embed("ephem-day") : null;
+  header(); diag();
+  if (pos) { S.posAt = Date.now(); S.posErr = null; S.last = { url: "/v1/position?" + new URLSearchParams(q()).toString(), ms: null, prov: pos.provenance }; setPos(pos); } else loadPos();
+  if (tr) applyTrack(tr); else loadTrack();
+  if (dy && dy.date === localDate(tNow())) applyDay(dy); else loadDay();
+  loadWx();
+  if (window.performance && performance.mark) performance.mark(pos && tr && dy ? "ephem:embedded" : "ephem:fetched");
+}
+function reloadAll() { S.track = []; S.to = null; S.center = null; S.decl = null; header(); diag(); return Promise.all([loadTrack(), loadPos(), loadDay(), loadWx()]); }
 
 $("locate").addEventListener("click", function () {
   if (!navigator.geolocation) { $("locnote").textContent = "This browser has no location API."; return; }
@@ -1003,10 +1045,11 @@ var rsT = 0; addEventListener("resize", function () { resize(); clearTimeout(rsT
 document.addEventListener("visibilitychange", function () { if (!document.hidden) loadPos(); });
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(requestDraw);
 resize(); header();
-reloadAll();
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();   // the embedded data is the last thing the server streams
 if (AT == null) setInterval(function () { if (!document.hidden) loadPos(); }, 5000);
 setInterval(tick, 1000); tick();
 setInterval(function () { if (!document.hidden) loadWx(); }, 60e3);
 })();
 </script>
-</body></html>`
+`
+const PAGE_END = "</body></html>"
