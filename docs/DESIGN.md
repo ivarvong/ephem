@@ -38,7 +38,7 @@ reference/oracle/crosscheck.py  diffs any two implementations field by field
 | --- | --- | --- |
 | `@ephem/core` | `block` (DE440 record evaluator) · `time` · `linalg` · `frames` · `ephemeris` · `observe` · `geodesic` · `position` · `day` · `alignment` | nothing |
 | `@ephem/api` | `EphemApi` (groups `sky`, `meta`), request/response schemas, tagged errors, `CONVENTIONS` | `effect` |
-| `@ephem/worker` | `handlers` (decode → block set → load → core → diagnostics) · `blocks` (cache tiers) · `router` (shared /v1 router, CORS, explained 400s) · `app` (front door: + home, `/docs`, MCP) · `ingest` + `admin` (JPL → R2 RPC) · `index` (ephem entry) · `compute` (the Api + BlockStore entrypoints, §12.0) · `dev` (Node server) · `ops/` (local-only RPC caller) | core, api, effect |
+| `@ephem/worker` | `handlers` (decode → block set → load → core → diagnostics) · `blocks` (cache tiers) · `router` (shared API router, CORS, explained 400s) · `app` (front door: + home, `/docs`, MCP) · `ingest` + `admin` (JPL → R2 RPC) · `index` (ephem entry) · `compute` (the Api + BlockStore entrypoints, §12.0) · `dev` (Node server) · `ops/` (local-only RPC caller) | core, api, effect |
 
 The dependency rule is one-way and mechanical: core's `package.json` lists no dependencies; `tsc -p packages/core` fails
 if anything else is imported. Core is runtime-agnostic (Workers, Node, browsers, Bun, Deno) because it does no I/O: the
@@ -399,31 +399,23 @@ Every success carries `provenance: { implementation, version, ephemeris, diagnos
 attributes (`computeMs`, `blocks`, `reads`, `l1/l2/l3`) for Workers tracing; `Server-Timing: total;dur=…` on every
 response; CORS `*` for browser clients; `OPTIONS` answered before routing.
 
-**Block cache tiers** (`blocks.ts`), keyed per block (8 144 B, the smallest unit DE440 has):
+**Block loading** (`blocks.ts`), per block (8 144 B, the smallest unit DE440 has): an in-isolate LRU (512 blocks, 4.2 MB,
+~45 years), then one fetch per missing block through the BlockStore loopback (`GET /block/v<CACHE_VERSION>/<sha16>/<i>`,
+Workers Caching, `public, max-age=31536000, immutable`, cross-version; §12.0), whose MISS is one exact R2 range read. The
+key carries the file hash, so a different ephemeris can never be served from an old entry. In-flight de-duplication per
+block; failed loads are not memoised; the range length is checked on arrival, and each block's own JD header is checked
+against its index before use, so an offset error can never be cached as truth (tested with a deliberately off-by-one
+origin). A missing block is an infrastructure fault and becomes a 500 (`Effect.orDie`), not a typed client error.
+(Until 2026-10-29 the second tier was the Cache API, `caches.default`; ephem uses Workers Caching only.)
 
-| Tier | Where | Key | Hit cost | Eviction |
-| --- | --- | --- | --- | --- |
-| L1 | in-isolate LRU, 512 blocks (4.2 MB, ~45 years) | block index | ~0 | LRU; isolates are recycled anyway |
-| L2 | Workers Cache `caches.default` | `https://eph.internal/de440/<sha256[:16]>/<i>` | ~1 ms, per colo | `max-age=31536000, immutable` |
-| L3 | R2 `get(key, { range })` | byte range | one round trip per run of misses | n/a |
-
-L2 lookups run in parallel; the remaining misses are grouped into runs of consecutive indices and each run is one R2
-range read (a typical request needs 1–2 blocks; a 32-day `/day` window spans at most 2). L2 writes go through
-`waitUntil`, off the response path. The cache key carries the file hash, so a different ephemeris can never be served
-from an old entry. In-flight de-duplication per block; failed loads are not memoised; the range length is checked on
-arrival, and each block's own JD header is checked against its index before use or caching, so an offset error can
-never be cached as truth (tested with a deliberately off-by-one origin). A missing block
-is an infrastructure fault and becomes a 500 (`Effect.orDie`), not a typed client error.
-
-**Deployment** (real account):
+**Deployment.** Every commit on main ships through `scripts/ship.sh` → `scripts/deploy.sh` (gate, 0% canary, telemetry
+gate, promote, live gate, auto-rollback; docs/telemetry_and_profiling.md "Ship and roll back"); never `cf deploy` or
+`wrangler deploy` by hand. The DE440 file is ingested once into R2 through the Admin entrypoint:
 
 ```
-npx wrangler r2 bucket create ephem-de440
-npx wrangler deploy -c packages/worker/wrangler.jsonc             # 516 KiB / 167 KiB gzip, minified
 npx wrangler dev -c packages/worker/ops/wrangler.jsonc            # local caller, remote binding to ephem#Admin
 curl localhost:8788/ingest                                        # JPL → R2, verified; ~102 MB, once
 curl localhost:8788/status                                        # { present, sizeBytes, sha256, matchesPinned }
-curl https://ephem.<you>.workers.dev/position?lat=40.7&lon=-74&time=2026-10-28T12:00:00Z
 ```
 
 Until ingest has run, data endpoints return 500 with "R2 object … missing — run the ingest RPC". No `nodejs_compat`.
@@ -435,7 +427,7 @@ it at `/openapi.json`; with `minify: true` the Worker is 516 KiB / 167 KiB gzip 
 was cut to **402 KiB / 139 KiB gzip** (git 0b88f9f): the geoid moved to R2 (§7.2), and every Effect import goes by module
 subpath (`import * as Effect from "effect/Effect"`), because esbuild keeps the whole namespace of a barrel import
 (`import { Schema } from "effect"`): Effect 465 → 228 KB. Startup effect, measured by version: fresh Api isolate pre-router
-gap p50 117 → 99 ms, first-request CPU unchanged (docs/telemetry_and_profiling.md, findings 2026-10-30).
+gap p50 117 → 99 ms, first-request CPU unchanged (lab notebook ephem-telemetry-history-2026-10-31.md, findings 2026-10-30).
 
 **Local.** `node --experimental-strip-types packages/worker/src/dev.ts 8787` runs the identical handler on Node with
 blocks range-read from a local copy of the DE440 file (`data/jpl/`) with the same `makeBlocks` and the same offsets
@@ -452,30 +444,17 @@ eyeball ─▶ ephem default (cache OFF; always runs: traces, Basin row, request
            live routes' blocks / geoid ─▶ ctx.exports.BlockStore; weather ─▶ ctx.exports.MetarFeed (cache ON)
 ```
 
-Api and BlockStore (src/compute.ts, the lean /v1 router src/router.ts `makeApiHandler`) are cache-enabled entrypoints of
+Api and BlockStore (src/compute.ts, the lean API router src/router.ts `makeApiHandler`) are cache-enabled entrypoints of
 `ephem` itself, called through `src/loopback.ts` with CACHE_VERSION in every key; crossVersionCache is on. A loopback runs
 the caller's version, so a pinned canary's forwarded MISSes run on the canary (`x-ephem-compute-version` = its own id;
 scripts/smoke.sh `compute` check).
 
-**Tried and removed: `ephem-compute`, a separate Worker for Api + BlockStore behind service bindings** (git 01e0323;
-it served 2026-10-30 19:44Z – 21:37Z; ephem d3caf38f, git 7a125fd, is one Worker again). Hypothesis: window compute shared the front door's isolate pool, so under scan load live
-requests landed on fresh front-door isolates. Decided by a pre-registered concurrent A/B (telemetry guide "Compute split"):
-one commit (5edf1b7) as two ephem versions 50/50, S = 02dd1270 (binding → ephem-compute fca6e275) and E = cc6ddd8e
-(entrypoints over ctx.exports), each pinned by version override and fed the identical open-loop load at the same instants
-(124 cold 12-month scans/min, /position every 200 ms, warm HITs), 6 × 240 s runs (20:42:57–21:11:57Z). Rule: keep S only
-if a primary metric improves with a 95 % CI excluding 0 and no other regresses with a CI excluding 0. Result (S − E, paired
-hierarchical bootstrap): cold scan server e2e p50 −29 ms [−40, −20], p90 −48 [−73, −29]; Api window pre-handler wait p90
-−26 [−31, −20], p99 −52 [−61, −44]; **CPU per scan +30 ms [+21, +40] (993 vs 963 ms, +3 %, S higher in 6/6 runs)**;
-position wait, warm hop and fresh-isolate counts unchanged within noise (position probes waiting > 20 ms: 1 / 7 324 vs
-2 / 7 337). CPU regressed beyond noise, so the rule chose E. Reviewed as a trade-off (S is faster on every latency
-metric) and confirmed (CoS, 2026-10-30): S's gains were measured only at 124 cold scans/min, synthetic contention far
-above real search traffic, so they likely vanish at real load; warm and live paths were unchanged; and the second Worker's
-operational cost (a compute deploy phase, canary pinning across a binding, interface ordering between two Workers) is
-paid on every deploy. ephem-compute, its bindings, deploy target and package were deleted. **Re-run trigger:** if
-search traffic ever approaches contention, re-run the A/B at real load; commit 5edf1b7 holds both arms (guide "Compute
-split", "Re-running"). The position tail the split was built for did not appear in either arm in this run (it was 0.35–5 % in earlier
-runs), so it was not the lever; the latency the split bought came from compute's smaller bundle starting faster
-(fresh-isolate pre-router gap p50 ~89 vs ~119 ms), which is reachable inside one Worker too (a leaner bundle).
+**Tried and removed: `ephem-compute`**, a separate Worker for Api + BlockStore behind service bindings (git 01e0323;
+served 2026-10-30 19:44Z – 21:37Z). A pre-registered concurrent A/B (S = 02dd1270 + ephem-compute fca6e275 vs E = cc6ddd8e,
+git 5edf1b7, 6 × 240 s) found S faster on cold scans (server e2e p50 −29 ms [−40, −20]) but **+30 ms CPU per scan
+[+21, +40] (+3 %)**, so the rule chose one Worker (ephem d3caf38f, git 7a125fd); the gain was only measured at synthetic
+contention and the second Worker cost something on every deploy. Full A/B: ~/code/lab_notebook/ephem-telemetry-history-2026-10-31.md
+("Compute split"). Re-run at real load if search traffic ever approaches contention (commit 5edf1b7 holds both arms).
 
 Found on the way (kept): core's EGM96 band source is a process global, and an isolate holds two `makeGeoid` (front door +
 Api); src/geoid.ts now installs a source that reads every L1 (the E arm's first canary 500'd /position?time= without it).
@@ -484,7 +463,7 @@ Api); src/geoid.ts now installs a source that reads every L1 (the E arm's first 
 
 One trace id per page view, from the browser through every server entrypoint, for real users as well as the lab harness:
 
-- **Documents** (`/`; `src/clienttrace.ts`; `/instrument` removed 2026-10-31): the front door adopts a valid incoming `traceparent` (W3C, strict:
+- **Documents** (`/`; `src/clienttrace.ts`): the front door adopts a valid incoming `traceparent` (W3C, strict:
   version 00, lower-case hex, non-zero ids) or uses the root request span's own trace id, and returns it three ways:
   `<meta name="traceparent" content="00-<trace>-<root span>-01">` (the OpenTelemetry document-load convention),
   `Server-Timing: trace;desc="…"` (the navigation entry's `serverTiming`) and `x-ephem-trace`. The HTML is `private,
@@ -577,13 +556,13 @@ then one Workers Cache hit per block per colo.
 ## 16. Operations
 
 ```
-npm install && npm test                                         # 229 tests, offline
+npm test                                                        # offline (the geodesic test needs pyproj)
 npx oxlint packages scripts && npm run typecheck
 curl -o data/jpl/linux_p1550p2650.440 https://ssd.jpl.nasa.gov/ftp/eph/planets/Linux/de440/linux_p1550p2650.440   # local dev only
 python3 reference/oracle/server.py --port 8440                  # oracle (needs de440s.bsp: reference/terrain_sunset/fetch_inputs.sh)
 node --experimental-strip-types packages/worker/src/dev.ts 8787
 python3 reference/oracle/crosscheck.py --a http://127.0.0.1:8440 --b http://127.0.0.1:8787
-npx wrangler deploy -c packages/worker/wrangler.jsonc           # then ingest via ops/ (§12)
+git commit …                                                    # ship.sh deploys it; first time: ingest via ops/ (§12)
 node --experimental-strip-types scripts/openapi.ts              # refresh reference/openapi.json after a contract change
 ```
 
