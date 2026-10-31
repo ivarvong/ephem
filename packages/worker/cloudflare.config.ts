@@ -35,7 +35,8 @@ export default defineConfig({
 			RUM: bindings.pipeline({ name: "3f7057f2350a4c7695ac6046305ac339" }),
 			VERSION: bindings.versionMetadata(),
 			// glyph (github.com/ivarvong/glyph): JSON scene → PNG, the Og entrypoint's renderer. A service binding: a public fetch
-			// from one *.ivar.workers.dev Worker to another is refused (same zone); glyph fetches our font from the public host.
+			// from one *.ivar.workers.dev Worker to another is refused (same zone); glyph fetches our font from this version's
+			// preview URL (<id[0:8]>-ephem.ivar.workers.dev, src/og-fonts.ts), so a canary renders with its own font.
 			GLYPH: bindings.worker({ worker: "glyph" }),
 			REQUEST_LOGS: bindings.text("on"), // "off": no rows (logging-overhead A/B)
 		},

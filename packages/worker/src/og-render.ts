@@ -58,7 +58,7 @@ export const ogFront = async (request: Request, lb: Loopback, tracing?: Tracing,
 
 // ---------- the Og entrypoint ----------
 export interface GlyphBinding { fetch(req: Request): Promise<Response> }
-export interface OgEnv { readonly GLYPH?: GlyphBinding }
+export interface OgEnv { readonly GLYPH?: GlyphBinding; readonly VERSION?: { readonly id: string } }
 
 /** The bucket's data from the Api: position at the bucket's start, the page's track window, today's and tomorrow's events. */
 export const ogData = async (q: OgQuery, api: Loopback["api"], headers: Record<string, string>): Promise<OgData> => {

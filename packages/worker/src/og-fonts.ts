@@ -1,15 +1,15 @@
 // Ephem DIN for glyph: glyph fetches fonts by https URL, pinned by sha256, so the front door serves the page's own inline font
 // (src/din.ts) at immutable, content-addressed paths: /assets/<sha256[0:16]>/ephem-din-{regular,bold}.woff2.
 // test/og.test.ts checks these hashes against the bytes, so regenerating src/din.ts without updating them fails the gate.
-// A font change is TWO deploys: glyph fetches from the public host, i.e. the live (100 %) version, never the canary whose spec
-// names the font (2026-10-31: 352678e named a path only the canary served; the canary smoke got the fallback card and removed
-// it). Deploy 1 serves the new font beside the previous one (keep the old base64 + advances in a din-prev.ts, return both
-// from servedFont, OG_FONTS/OG_DIN_ADV on the previous font); deploy 2 points the card at the new font and drops the old
-// (done that way in 90d178e → this commit).
+// glyph fetches the font from this version's own preview URL (https://<version id[0:8]>-ephem.ivar.workers.dev), so the spec
+// only ever names a path the same version serves: a font change is one deploy, and a canary renders with its own font
+// (2026-10-31: 352678e named a path only the canary served, while glyph fetched the live host, and got the fallback card).
 import { DIN_ADV, DIN_BOLD_B64, DIN_REGULAR_B64 } from "./din.ts"
 
 type W = "regular" | "bold"
-export const OG_ORIGIN = "https://ephem.ivar.workers.dev"   // glyph fetches from the public host: the live version must serve the font
+export const OG_ORIGIN = "https://ephem.ivar.workers.dev"
+/** This version's preview URL (workers.dev preview URLs are on for ephem); the public host when the version is unknown (tests, dev). */
+export const versionOrigin = (versionId?: string) => /^[0-9a-f]{8}/.test(versionId ?? "") ? `https://${versionId!.slice(0, 8)}-ephem.ivar.workers.dev` : OG_ORIGIN
 export const DIN_SHA256 = {
   regular: "316a72622a0926ee85e3db60007e0347aede4005a56d197a624d8910a3292d50",
   bold: "13667defdc54a0cd8716d8afc8214a513971739e55af58093265439886a2cf71",
@@ -22,16 +22,18 @@ let bytes: Partial<Record<K, Uint8Array<ArrayBuffer>>> = {}
 const dec = (k: K): Uint8Array<ArrayBuffer> => (bytes[k] ??= Uint8Array.from(atob(B64[k]), c => c.charCodeAt(0)) as Uint8Array<ArrayBuffer>)
 export const fontBytes = (w: W) => dec(w)
 export const resetFontBytes = () => { bytes = {} }
-/** The bytes the front door serves at an /assets path (during a font change, also the previous font's: see the header). */
+/** The bytes the front door serves at an /assets path. */
 export const servedFont = (p: string): Uint8Array<ArrayBuffer> | null => {
   for (const w of ["regular", "bold"] as const) if (p === fontPath(w)) return fontBytes(w)
   return null
 }
-/** The Ephem DIN the OG card names, and its characters and advances (src/og.ts lays out and picks faces with these). */
-export const OG_FONTS = {
-  regular: { url: OG_ORIGIN + fontPath("regular"), sha256: DIN_SHA256.regular },
-  bold: { url: OG_ORIGIN + fontPath("bold"), sha256: DIN_SHA256.bold },
-} as const
+/** The Ephem DIN the OG card names (served by the version that renders it), and its characters and advances (src/og.ts lays
+ *  out and picks faces with these). */
+export const ogFonts = (versionId?: string) => {
+  const o = versionOrigin(versionId)
+  return { regular: { url: o + fontPath("regular"), sha256: DIN_SHA256.regular }, bold: { url: o + fontPath("bold"), sha256: DIN_SHA256.bold } } as const
+}
+export const OG_FONTS = ogFonts()
 export const OG_DIN_ADV = DIN_ADV
 
 // The OG card's fallback face: a text item with any character Ephem DIN lacks (Cyrillic, Greek, Vietnamese, Ŋ…) is set whole

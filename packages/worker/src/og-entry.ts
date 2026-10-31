@@ -2,7 +2,7 @@
 import { WorkerEntrypoint } from "cloudflare:workers"
 import { makeLoopback, resolveBindings, type Bindings } from "./loopback.ts"
 import { ogScene, parseOgQuery } from "./og.ts"
-import { OG_FONTS } from "./og-fonts.ts"
+import { ogFonts } from "./og-fonts.ts"
 import { GLYPH_BUDGET_MS, OG_CACHE, OG_FALLBACK_CACHE, fallbackPng, ogData, ogSpan, renderGlyph, type OgEnv } from "./og-render.ts"
 
 let loop: Bindings | undefined
@@ -23,7 +23,7 @@ export class Og extends WorkerEntrypoint<OgEnv> {
       const data = await ogData(q, lb.api, headers)
       attrs["og.data_ms"] = Date.now() - t0
       if (!this.env.GLYPH) return done(fallbackPng(), "fallback:no-glyph", OG_FALLBACK_CACHE)
-      const spec = ogScene(data, OG_FONTS).spec
+      const spec = ogScene(data, ogFonts(this.env.VERSION?.id)).spec
       const r = await renderGlyph(this.env.GLYPH, spec, p => this.ctx.waitUntil(p))
       attrs["og.glyph_ms"] = r.ms; attrs["og.glyph_cache"] = r.cache
       if (r.png) return done(r.png, "glyph", OG_CACHE)

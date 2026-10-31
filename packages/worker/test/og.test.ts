@@ -7,7 +7,7 @@ import { makeHandler } from "../src/app.ts"
 import { CORE_JS } from "../src/home.ts"
 import { REC, direct, makeBlocks } from "../src/blocks.ts"
 import * as og from "../src/og.ts"
-import { DIN_SHA256, OG_FONTS, fontBytes, fontPath, servedFont } from "../src/og-fonts.ts"
+import { DIN_SHA256, OG_FONTS, fontBytes, fontPath, ogFonts, servedFont } from "../src/og-fonts.ts"
 import { DIN_ADV } from "../src/din.ts"
 import { OG_CACHE, OG_FALLBACK_CACHE, fallbackPng, ogData, ogFront, renderGlyph } from "../src/og-render.ts"
 import { makeLoopback, ogCacheKey, type Binding, type Loopback } from "../src/loopback.ts"
@@ -83,6 +83,8 @@ describe("og: text in Ephem DIN, the font served for glyph", () => {
       expect(fontPath(w)).toBe(`/assets/${DIN_SHA256[w].slice(0, 16)}/ephem-din-${w}.woff2`)
       expect(servedFont(fontPath(w))).toEqual(fontBytes(w))
       expect(OG_FONTS[w]).toEqual({ url: `https://ephem.ivar.workers.dev${fontPath(w)}`, sha256: DIN_SHA256[w] })
+      // the rendering version's own preview URL: the spec never names a font another version serves
+      expect(ogFonts("fc692046-33c2-40cd-b152-4541642aa5d4")[w].url).toBe(`https://fc692046-ephem.ivar.workers.dev${fontPath(w)}`)
     }
   })
 })

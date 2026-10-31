@@ -967,11 +967,11 @@ A shared link previews as a live 2400×1260 card of that place's sky (iMessage, 
   fallback and refuses a missing glyph, so `faceFor()` picks per text item: Ephem DIN when it has every character, else Noto
   Sans (OFL, pinned by commit + sha256 in src/og-fonts.ts, declared in the spec only when used: Cyrillic, Greek, Vietnamese),
   else the place is shown as coordinates. test/og.test.ts checks ~50 real place names character by character.
-- **A font change is two deploys.** glyph fetches the font from the public host, i.e. the live (100 %) version, not the
-  canary whose spec names it; 352678e (2026-10-31) named a path only its canary served, got the fallback card in the canary
-  smoke and was removed. Deploy 1 serves the new font beside the previous one (the old base64 + advances in a
-  temporary src/din-prev.ts, both returned by `servedFont`, OG_FONTS / OG_DIN_ADV on the old font: the card picks faces from
-  that font's characters); deploy 2 points the card at the new font and drops the old (90d178e, then the next commit).
+- **A font change is one deploy.** The spec names the font on the rendering version's own preview URL
+  (`https://<version id[0:8]>-ephem.ivar.workers.dev/assets/…`, `ogFonts(env.VERSION.id)` in src/og-fonts.ts), so glyph
+  always fetches a path the same version serves, canary included (352678e, 2026-10-31, named a path only its canary served
+  while glyph fetched the live host, and got the fallback card; the two-deploy workaround is gone). Needs workers.dev preview
+  URLs on (they are). glyph caches fonts by URL, so each version costs one font fetch per glyph cache.
 - **Routes** (front door, before the app; no request row, like /favicon.ico): `GET /og.png?lat&lon&place&tz&t` (no lat/lon:
   the requester's request.cf place), `GET /assets/<sha16>/ephem-din-{regular,bold}.woff2` (the font glyph fetches; pinned
   by sha256 in the spec, src/og-fonts.ts, hashes tested), `GET /apple-touch-icon.png` (180×180, rendered by glyph from
