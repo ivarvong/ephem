@@ -19,12 +19,13 @@ import * as HttpRouter from "effect/http/HttpRouter"
 import * as HttpServerRequest from "effect/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/http/HttpServerResponse"
 import { visitor, type Visitor } from "./home.ts"
-import { ASSETS, TOKENS_CSS } from "./instrument-ds.ts"
+import { ASSETS, SOFIA_RANGES, TOKENS_CSS } from "./instrument-ds.ts"
 import { ENGINE_JS } from "./instrument-engine.ts"
 import { declinationAt } from "./weather.ts"
 import { RUM_JS } from "./rum.ts"
 import { ICON_LINK } from "./favicon.ts"
 import { CLIENT_TRACE_JS, documentTrace, documentTraceHeaders, traceparentMeta, type DocumentTrace } from "./clienttrace.ts"
+import { READ_EMBED_JS, jsonScript, routeText, streamHtml } from "./embed.ts"
 
 /** The immutable URL of a vendored file (fonts, OFL licences). */
 export const assetUrl = (name: string): string => `/assets/${ASSETS[name]!.sha}/${name}`
@@ -44,15 +45,40 @@ const Assets = HttpRouter.add("GET", "/assets/:sha/:name", Effect.gen(function* 
   return HttpServerResponse.uint8Array(b, { contentType: a.type, headers })
 }).pipe(Effect.withSpan("asset")))
 
-const Page = HttpRouter.add("GET", "/instrument", req => Effect.gen(function* () {
+export const EMBED_ID = "ephem-initial"
+/** Give up on the embed after this long and let the page fetch (a cold Api isolate's /v1/day MISS is ~200 ms; p99 below). */
+const EMBED_TIMEOUT_MS = 1500
+
+/** The first answers, as the page would fetch them (same paths and queries as GLUE_JS), run in-process: the live position in
+ *  this isolate, today's day through Gateway → the cached Api. JSON text `{"position":…,"day":…,"date":"YYYY-MM-DD"}` with
+ *  the API's own bodies, a field null when its route did not answer 200; "" on timeout or error (the page then fetches). */
+export const initialJson = (router: HttpRouter.HttpRouter, req: HttpServerRequest.HttpServerRequest, v: Visitor, now: number, trace?: DocumentTrace) => Effect.gen(function* () {
+  const loc = { lat: v.lat.toFixed(5), lon: v.lon.toFixed(5) }
+  const date = new Intl.DateTimeFormat("en-CA", { timeZone: v.tz }).format(new Date(now))
+  const tp = trace?.traceparent
+  const [pos, day] = yield* Effect.all([routeText(router, req, "/v1/position", loc, tp), routeText(router, req, "/v1/day", { ...loc, date, tz: v.tz }, tp)], { concurrency: 2 })
+  const ok = (r: { status: number; text: string }) => r.status === 200 && r.text ? r.text : "null"
+  yield* Effect.annotateCurrentSpan({ "embed.position_status": pos.status, "embed.day_status": day.status })
+  return `{"position":${ok(pos)},"day":${ok(day)},"date":${JSON.stringify(date)}}`
+}).pipe(
+  Effect.timeoutOption(EMBED_TIMEOUT_MS),
+  Effect.map(o => Option.getOrElse(o, () => "")),
+  Effect.tap(s => Effect.annotateCurrentSpan({ "embed.ok": s !== "", "embed.bytes": s.length })),
+  Effect.catchCause(() => Effect.succeed("")),
+  Effect.withSpan("instrument.embed"))
+
+// Streams: the head at once (CSS, fonts, boot script, engine), the body when the embed is in (src/embed.ts).
+const Page = HttpRouter.use(router => router.add("GET", "/instrument", req => Effect.gen(function* () {
   const tid = yield* documentTrace(req)   // on the root span; the page's fetches are its children (src/clienttrace.ts)
   return yield* Effect.gen(function* () {
     const url = Option.getOrElse(HttpServerRequest.toURL(req), () => new URL("http://localhost/instrument"))
     const v = visitor(url, (req.source as { cf?: Parameters<typeof visitor>[1] }).cf)
+    const now = Date.now()
     yield* Effect.annotateCurrentSpan({ "home.source": v.source, "home.colo": v.colo ?? "", "home.tz": v.tz })
-    return HttpServerResponse.text(instrumentPage(v, url.search, Date.now(), tid), { contentType: "text/html; charset=utf-8", headers: { "cache-control": "private, no-store", ...documentTraceHeaders(tid) } })
+    const tail = initialJson(router, req, v, now, tid).pipe(Effect.map(init => "\n" + instrumentBody(v, url.search, now, init)))
+    return yield* streamHtml(instrumentHead(v, now, tid), tail, { "cache-control": "private, no-store", ...documentTraceHeaders(tid) })
   }).pipe(Effect.withSpan("instrument"))
-}))
+})))
 
 export const Instrument = Layer.mergeAll(Page, Assets)
 
@@ -124,8 +150,15 @@ const calcHtml = (v: Visitor, back: string) =>
   `<p class="vh" id="said" aria-live="polite"></p></div>`
 
 // ---------------------------------------------------------------------------------------------------------------------------
-const fontFace = (family: string, file: string, display: string, weight = "400") =>
-  `@font-face{font-family:"${family}";src:url("${assetUrl(file)}") format("woff2");font-weight:${weight};font-display:${display}}`
+const fontFace = (family: string, src: string, display: string, weight = "400", range?: string) =>
+  `@font-face{font-family:"${family}";src:url("${src}") format("woff2");font-weight:${weight};font-display:${display}${range ? `;unicode-range:${range}` : ""}}`
+const dataUrl = (name: string) => `data:font/woff2;base64,${ASSETS[name]!.b64}`
+/** Every face the page uses inline (data: URLs: no request, no font swap), and Sofia's full file, by URL, only for the code
+ *  points outside its core (accented place names): a browser fetches it only if the page shows one of them. */
+const FONT_CSS = () => fontFace("RPN Dot", dataUrl("RPNDot-Regular.woff2"), "block") + fontFace("RPN Dot Small", dataUrl("RPNDotSmall-Regular.woff2"), "block") +
+  fontFace("Sofia Sans Condensed", assetUrl("SofiaSansCondensed-Legend.woff2"), "swap", "400 800", SOFIA_RANGES.rest) +
+  fontFace("Sofia Sans Condensed", dataUrl("SofiaSansCondensed-Core.woff2"), "swap", "400 800", SOFIA_RANGES.core)
+const magdecOf = (v: Visitor, now: number) => declinationAt(v.lat, v.lon, now).declination
 
 /**
  * Sizes come from four variables the layout script sets (defaults are the 390 × 844 phone): --w case width, --p key-row
@@ -240,42 +273,66 @@ button{font:inherit;color:inherit;margin:0}
 `
 
 /**
- * Layout, then the LCD renderer, then input. Runs synchronously after the markup (before first paint), so there is no
- * layout shift. window.__instrument records timings and the computed geometry for scripts.
+ * Layout, part 1 (in the head, before the body exists): the case width, the LCD dot and the key pitch from the viewport alone,
+ * as CSS variables, so the first layout is already the final one. No DOM reads but the empty document's clientWidth (no
+ * layout to force yet). The pitch is computed from the case's height formula (PAGE_CSS: everything but the key rows is
+ * 50 px + 68 dots + pitch-dependent margins, g(p) below); part 2 checks it against the real height after the first layout.
  */
-export const VIEW_JS = String.raw`
+export const BOOT_JS = String.raw`
 (function () {
 "use strict";
-var S = window.__instrument = { t0: performance.now(), dataAt: null, dayAt: null, calls: 0, errors: 0, geo: null };
-var root = document.documentElement, calc = document.getElementById("calc"), bezel = document.getElementById("bezel"), lcd = document.getElementById("lcd");
-// ---- layout: case width, key pitch, an integer-device-pixel dot, the glass on the pixel grid ----
-function layout() {
-  var dpr = window.devicePixelRatio || 1, vw = root.clientWidth, vh = window.innerHeight, wide = vw >= 900 && vh >= 620;
+var S = window.__instrument = { t0: performance.now(), dataAt: null, dayAt: null, calls: 0, errors: 0, geo: null, embedded: null };
+var root = document.documentElement;
+function g(p) { return 8.4 * p + Math.max(44, 0.86 * p); }   // soft-key row + margins + 8 key rows + case padding, at pitch p
+function pitch(w, vh, gv, fixed) { return Math.floor(Math.max(44, Math.min(w * 0.155, 62, (vh - 2 * gv - fixed) / 8))); }
+function vars(vw) {
+  var dpr = window.devicePixelRatio || 1, vh = window.innerHeight, wide = vw >= 900 && vh >= 620;
   var gh = vw <= 420 ? 16 : 24, gv = vh <= 700 ? 8 : 12;
   var w = Math.min(vw - 2 * gh, 440);
   if ((vw - w) % 2) w -= 1;                                  // centred at an integer offset
   var chrome = 2 * (3 + Math.round(w * 0.026) + 7);           // case border + faceplate padding + bezel, both sides
   var dev = Math.max(2, Math.floor((w - chrome) / 135 * dpr)); // 131 dots + the 2-dot glass margin each side
   var d = Math.min(dev, Math.ceil(3 * dpr)) / dpr;
-  root.style.setProperty("--w", w + "px"); root.style.setProperty("--d", d + "px"); root.style.setProperty("--px", 1 / dpr + "px"); root.style.setProperty("--gv", gv + "px");
-  root.style.setProperty("--p", "52px");
-  var fixed = calc.offsetHeight - 8 * 52;                     // everything that is not the eight key rows
-  var p = Math.floor(Math.max(44, Math.min(w * 0.155, 62, (vh - 2 * gv - fixed) / 8)));
-  root.style.setProperty("--p", p + "px");
-  bezel.style.transform = "";
-  var r = lcd.getBoundingClientRect(), dx = Math.round(r.left * dpr) / dpr - r.left, dy = Math.round(r.top * dpr) / dpr - r.top;
-  if (dx || dy) bezel.style.transform = "translate(" + dx + "px," + dy + "px)";
-  r = lcd.getBoundingClientRect();
-  S.geo = { dpr: dpr, w: w, d: d, dotDevicePx: d * dpr, pitch: p, lcd: [r.left, r.top, r.width, r.height], lcdDevice: [r.left * dpr, r.top * dpr], fits: calc.offsetHeight + 2 * gv <= vh, wide: wide };
+  var p = pitch(w, vh, gv, Math.round(50 + 68 * d + g(52)) - 8 * 52);
+  var s = root.style;
+  s.setProperty("--w", w + "px"); s.setProperty("--d", d + "px"); s.setProperty("--px", 1 / dpr + "px"); s.setProperty("--gv", gv + "px"); s.setProperty("--p", p + "px");
+  return { vw: vw, vh: vh, dpr: dpr, w: w, d: d, gv: gv, p: p, wide: wide, dx: 0, dy: 0, g: g, pitch: pitch };
 }
-layout();
+S.vars = vars;
+S.lay = vars(root.clientWidth);
+})();
+`
+
+/**
+ * Layout, part 2, then the LCD renderer, then input. fit() runs from a ResizeObserver, i.e. after the browser's own first
+ * layout and before its first paint: it reads the case height and the LCD's position from that clean layout (no forced
+ * synchronous layout; it used to cost 135 ms at 4× CPU before anything else could run), corrects the pitch if the head's
+ * formula was off, and nudges the glass onto the device-pixel grid. window.__instrument records timings and the geometry.
+ */
+export const VIEW_JS = String.raw`
+(function () {
+"use strict";
+var S = window.__instrument;
+var root = document.documentElement, calc = document.getElementById("calc"), bezel = document.getElementById("bezel"), lcd = document.getElementById("lcd");
+function fit() {
+  var L = S.lay;
+  if (root.clientWidth !== L.vw) { var keep = L; L = S.lay = S.vars(root.clientWidth); L.dx = keep.dx; L.dy = keep.dy; }   // a classic scrollbar appeared
+  var h = calc.offsetHeight, p = L.pitch(L.w, L.vh, L.gv, h - L.g(L.p) + L.g(52) - 8 * 52);
+  if (p !== L.p) { root.style.setProperty("--p", p + "px"); L.p = p; h = calc.offsetHeight; }
+  var dpr = L.dpr, r = lcd.getBoundingClientRect(), x = r.left - L.dx, y = r.top - L.dy;   // as if untranslated
+  var dx = Math.round(x * dpr) / dpr - x, dy = Math.round(y * dpr) / dpr - y;
+  if (dx !== L.dx || dy !== L.dy) { bezel.style.transform = dx || dy ? "translate(" + dx + "px," + dy + "px)" : ""; L.dx = dx; L.dy = dy; }
+  S.geo = { dpr: dpr, w: L.w, d: L.d, dotDevicePx: L.d * dpr, pitch: p, lcd: [x + dx, y + dy, r.width, r.height], lcdDevice: [(x + dx) * dpr, (y + dy) * dpr], fits: h + 2 * L.gv <= L.vh, wide: L.wide };
+}
+if (window.ResizeObserver) new ResizeObserver(function () { fit(); }).observe(calc); else fit();
 var lastW = root.clientWidth, lastH = window.innerHeight, raf = 0;
+function relayout() { var keep = S.lay; S.lay = S.vars(root.clientWidth); S.lay.dx = keep.dx; S.lay.dy = keep.dy; fit(); }
 window.addEventListener("resize", function () {
   if (root.clientWidth === lastW && Math.abs(window.innerHeight - lastH) < 2) return;
   lastW = root.clientWidth; lastH = window.innerHeight;
-  cancelAnimationFrame(raf); raf = requestAnimationFrame(layout);
+  cancelAnimationFrame(raf); raf = requestAnimationFrame(relayout);
 });
-if (window.matchMedia) { try { matchMedia("(resolution: " + (window.devicePixelRatio || 1) + "dppx)").addEventListener("change", layout); } catch (e) {} }
+if (window.matchMedia) { try { matchMedia("(resolution: " + (window.devicePixelRatio || 1) + "dppx)").addEventListener("change", relayout); } catch (e) {} }
 
 // ---- the engine, the renderer ----
 var sky = window.__sky = { SUN: {}, MOON: {}, DAY: null, TIME: "--:--", HOURS: null, WHERE: "{ HOME }", MAGDEC: null };
@@ -429,35 +486,45 @@ function get(path, extra) {
   return __tfetch(path + "?" + q(extra)).then(function (r) { return r.json().then(function (b) { if (!r.ok) throw new Error(b && b.message || "HTTP " + r.status); return b; }); });
 }
 function body(b) { return { AZ: b.azimuth, ALT: b.altitude, DECL: b.declination, DIST: b.distanceKm }; }
+// The first answers come embedded in the page (src/embed.ts: the API's own response bodies, run in-process by the page
+// handler), so data is drawn with zero fetches; polls fetch as before. No embed (timeout, error): fetch at once.
+var init = __embed("ephem-initial") || {};
+S.embedded = !!(init.position || init.day);
 var seeded = false, posAt = 0;
 function position() {
-  return get("/v1/position").then(function (p) {
-    posAt = Date.now(); linkDown = false;
-    sky.SUN = body(p.sun); sky.MOON = body(p.moon);
-    sky.MOON.PHASE = p.moon.phase.name.toUpperCase(); sky.MOON.ILLUM = p.moon.phase.illuminatedFraction * 100;
-    sky.TIME_UTC = p.time.utc; clock();
-    if (!seeded) {
-      seeded = true;
-      E.seed([N(RPNEngine.wrap360(sky.SUN.AZ), "°", "AZ T"), N(RPNEngine.wrap360(sky.SUN.AZ - sky.MAGDEC), "°", "AZ M"), N(sky.SUN.ALT, "°", "ALT"), RPNEngine.str(sky.MOON.PHASE)]);
-    }
-    render();
-    if (S.dataAt == null) { S.dataAt = performance.now(); if (performance.mark) performance.mark("ephem:data"); __rum.mark("data-ready"); }
-  });
+  var e = init.position; init.position = null;
+  if (e) { try { onPosition(e); } catch (x) { return Promise.reject(x); } return Promise.resolve(); }
+  return get("/v1/position").then(onPosition);
+}
+function onPosition(p) {
+  posAt = Date.now(); linkDown = false;
+  sky.SUN = body(p.sun); sky.MOON = body(p.moon);
+  sky.MOON.PHASE = p.moon.phase.name.toUpperCase(); sky.MOON.ILLUM = p.moon.phase.illuminatedFraction * 100;
+  sky.TIME_UTC = p.time.utc; clock();
+  if (!seeded) {
+    seeded = true;
+    E.seed([N(RPNEngine.wrap360(sky.SUN.AZ), "°", "AZ T"), N(RPNEngine.wrap360(sky.SUN.AZ - sky.MAGDEC), "°", "AZ M"), N(sky.SUN.ALT, "°", "ALT"), RPNEngine.str(sky.MOON.PHASE)]);
+  }
+  render();
+  if (S.dataAt == null) { S.dataAt = performance.now(); if (performance.mark) performance.mark("ephem:data"); __rum.mark("data-ready"); }
 }
 var dayFor = null;
 function day() {
   var d = df.format(new Date());
   if (d === dayFor) return Promise.resolve();
   dayFor = d;
-  return get("/v1/day", { date: d, tz: LOC.tz }).then(function (r) {
-    var out = { SUN: {}, MOON: {} };
-    r.events.forEach(function (e) {
-      var B = e.body === "sun" ? out.SUN : e.body === "moon" ? out.MOON : null;
-      if (B && (e.kind === "rise" || e.kind === "set" || e.kind === "transit") && B[e.kind] == null) B[e.kind] = localHours(Date.parse(e.time));
-    });
-    sky.DAY = out; render();
-    if (S.dayAt == null) S.dayAt = performance.now();
-  }, function (e) { dayFor = null; throw e; });
+  var e = init.day && init.date === d ? init.day : null; init.day = null;
+  if (e) { try { onDay(e); } catch (x) { dayFor = null; return Promise.reject(x); } return Promise.resolve(); }
+  return get("/v1/day", { date: d, tz: LOC.tz }).then(onDay, function (e) { dayFor = null; throw e; });
+}
+function onDay(r) {
+  var out = { SUN: {}, MOON: {} };
+  r.events.forEach(function (e) {
+    var B = e.body === "sun" ? out.SUN : e.body === "moon" ? out.MOON : null;
+    if (B && (e.kind === "rise" || e.kind === "set" || e.kind === "transit") && B[e.kind] == null) B[e.kind] = localHours(Date.parse(e.time));
+  });
+  sky.DAY = out; render();
+  if (S.dayAt == null) S.dayAt = performance.now();
 }
 function fail(e) { S.errors++; linkDown = true; clock(); render(); if (window.console) console.warn("instrument:", e && e.message || e); }
 function refresh() { position().catch(fail); day().catch(fail); }
@@ -491,11 +558,10 @@ stack really computes (try <b>DAY</b>, then SET, RISE, <kbd>−</kbd> for the da
 <p style="margin-top:12px">Fonts: <a href="${assetUrl("RPNDot-OFL.txt")}">RPN Dot</a> and <a href="${assetUrl("SofiaSansCondensed-OFL.txt")}">Sofia Sans</a> (OFL). <a href="/docs">The API</a>.</p>
 </aside>`
 
-export const instrumentPage = (v: Visitor, search = "", now = Date.now(), trace?: DocumentTrace): string => {
-  const fonts = Object.keys(ASSETS).filter(f => f.endsWith(".woff2"))
-  const back = "/" + (search && /[?&]lat=/.test(search) ? search : "")
-  const magdec = declinationAt(v.lat, v.lon, now).declination
-  return `<!doctype html>
+/** The head: inline CSS and fonts (no font requests: the dot faces are 4.3 KB, Sofia's core 18 KB; one request would cost a
+ *  round trip, ~570 ms on Fast 3G, measured 2026-10-31), the boot script (trace, RUM, layout variables) and the engine. It
+ *  needs nothing but the place, so it is flushed before the data is in. */
+export const instrumentHead = (v: Visitor, now = Date.now(), trace?: DocumentTrace): string => `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
 ${traceparentMeta(trace)}
@@ -505,17 +571,27 @@ ${traceparentMeta(trace)}
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#121416" media="(prefers-color-scheme: dark)"><meta name="theme-color" content="#eae9e6" media="(prefers-color-scheme: light)">
 ${ICON_LINK}
-${fonts.map(f => `<link rel="preload" href="${assetUrl(f)}" as="font" type="font/woff2" crossorigin>`).join("\n")}
-<script>(function(){var m=matchMedia("(prefers-color-scheme: dark)");var s=function(){document.documentElement.setAttribute("data-theme",m.matches?"dark":"light")};s();m.addEventListener&&m.addEventListener("change",s)})();</script>
-<style>${fontFace("RPN Dot", "RPNDot-Regular.woff2", "block")}${fontFace("RPN Dot Small", "RPNDotSmall-Regular.woff2", "block")}${fontFace("Sofia Sans Condensed", "SofiaSansCondensed-Legend.woff2", "swap", "400 800")}</style>
+<style>${FONT_CSS()}</style>
 <style>${TOKENS_CSS}</style>
 <style>${PAGE_CSS}</style>
-</head><body>
-<main class="stage"><div class="well">${calcHtml(v, back)}</div>${HELP(v, magdec)}</main>
-<noscript><p style="text-align:center">The instrument needs JavaScript. <a href="${esc(back)}">The sky view</a> and <a href="/docs">the API</a> work without it.</p></noscript>
+<script>(function(){var m=matchMedia("(prefers-color-scheme: dark)");var s=function(){document.documentElement.setAttribute("data-theme",m.matches?"dark":"light")};s();m.addEventListener&&m.addEventListener("change",s)})();
+const LOC = ${json({ lat: v.lat, lon: v.lon, tz: v.tz, place: v.place, magdec: magdecOf(v, now) })};
+${CLIENT_TRACE_JS}${RUM_JS}${READ_EMBED_JS}${BOOT_JS}</script>
 <script>${ENGINE_JS}</script>
+</head>`
+
+/** The body: the instrument, the embedded first answers (`init`: JSON text from initialJson, or "" for none), the glue. */
+export const instrumentBody = (v: Visitor, search = "", now = Date.now(), init = ""): string => {
+  const back = "/" + (search && /[?&]lat=/.test(search) ? search : "")
+  return `<body>
+<main class="stage"><div class="well">${calcHtml(v, back)}</div>${HELP(v, magdecOf(v, now))}</main>
+<noscript><p style="text-align:center">The instrument needs JavaScript. <a href="${esc(back)}">The sky view</a> and <a href="/docs">the API</a> work without it.</p></noscript>
+${init ? jsonScript(EMBED_ID, init) : ""}
 <script>${VIEW_JS}</script>
-<script>const LOC = ${json({ lat: v.lat, lon: v.lon, tz: v.tz, place: v.place, magdec })};</script>
-<script>${CLIENT_TRACE_JS}${RUM_JS}${GLUE_JS}</script>
+<script>${GLUE_JS}</script>
 </body></html>`
 }
+
+/** The whole page at once (tests; the route streams head, then body). */
+export const instrumentPage = (v: Visitor, search = "", now = Date.now(), trace?: DocumentTrace, init = ""): string =>
+  instrumentHead(v, now, trace) + "\n" + instrumentBody(v, search, now, init)
