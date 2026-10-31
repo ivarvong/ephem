@@ -295,6 +295,7 @@ function spotsAround(it) {
     var d = (it.r || 0) + 5 * m, e = d * 0.72;
     out.push([it.x - w / 2, it.y - d - h], [it.x + d, it.y - h / 2], [it.x - d - w, it.y - h / 2], [it.x - w / 2, it.y + d],
       [it.x + e, it.y - e - h], [it.x - e - w, it.y - e - h], [it.x + e, it.y + e], [it.x - e - w, it.y + e]);
+    if (it.body) out.push([it.x + d, it.y - 2], [it.x - d - w, it.y - 2], [it.x + d, it.y - h + 2], [it.x - d - w, it.y - h + 2]);   // beside, top- or bottom-aligned (a body near the horizon ticks)
   });
   return out;
 }
@@ -330,9 +331,14 @@ function layoutLabels(items, hard, segs, bounds, pad) {
       if ((it.body || it.must) && !fall) fall = r;
     }
     var r2 = best || fall;
-    if (!r2 && it.body) for (k = 0; k < spots.length && !r2; k++) {   // a body is always named: the nearest spot in bounds clear of the other labels
-      var q = { x: spots[k][0], y: spots[k][1], w: it.w, h: it.h };
-      if (q.x >= bounds.x0 && q.y >= bounds.y0 && q.x + q.w <= bounds.x1 && q.y + q.h <= bounds.y1 && clearOf(q, placed)) { r2 = q; fall = q; }
+    if (!r2 && it.body) {   // a body is always named: the spot in bounds clear of the other labels that covers the least
+      var least = Infinity;
+      for (k = 0; k < spots.length; k++) {
+        var q = { x: spots[k][0], y: spots[k][1], w: it.w, h: it.h }, cover = 0;
+        if (q.x < bounds.x0 || q.y < bounds.y0 || q.x + q.w > bounds.x1 || q.y + q.h > bounds.y1 || !clearOf(q, placed)) continue;
+        for (var j = 0; j < hard.length; j++) cover += overlapArea(q, hard[j]);
+        if (cover < least) { least = cover; r2 = q; fall = q; }
+      }
     }
     if (!r2) { out.push({ id: it.id, dropped: true, prio: it.prio }); return; }
     r2.id = it.id; r2.prio = it.prio; if (!best) r2.crossed = true;
