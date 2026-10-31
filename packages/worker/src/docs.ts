@@ -9,22 +9,20 @@ export const SCALAR = "https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.74.0
 
 interface Endpoint { readonly path: string; readonly summary: string; readonly required: ReadonlyArray<string>; readonly example: string }
 export const ENDPOINTS: ReadonlyArray<Endpoint> = [
-  { path: "/v1/position", summary: "Topocentric Sun and Moon at one instant (default now): azimuth, true and apparent altitude, rates, RA/Dec, distance, angular radius, Moon phase and bright limb (from celestial north and from the local vertical).",
-    required: ["lat", "lon"], example: "/v1/position?lat=40.7&lon=-74&time=2026-11-17T03:45:00Z" },
-  { path: "/v1/day", summary: "One local day's events: rise, set, transit, civil/nautical/astronomical twilight, golden and blue hour, with a conventions block (limb, horizon, dip, refraction, thresholds, geoid).",
-    required: ["lat", "lon", "date", "tz"], example: "/v1/day?lat=40.7&lon=-74&date=2026-11-16&tz=America/New_York" },
-  { path: "/v1/crossing", summary: "Every instant in a window (≤ 31 days) or local date when a limb, the centre or the lit-area centroid (aim) of the Sun or Moon reaches a true or apparent altitude or a skyline profile.",
-    required: ["lat", "lon", "body"], example: "/v1/crossing?body=moon&lat=40.6985&lon=-73.999&height=5&heightRef=msl&altitude=0.87&altitudeType=apparent&direction=set&start=2026-11-16T00:00:00Z&end=2026-11-18T00:00:00Z" },
-  { path: "/v1/alignment", summary: "Where to stand so the Sun or Moon (centre, a limb, or the Moon's lit-area centroid: aim) sits on a landmark, per instant; with observerLat/Lon also when it passes the landmark from a fixed spot. Heights in ellipsoid or msl (heightRef, targetHeightRef), per-point rates, include=sun,phase.",
-    required: ["body", "targetLat", "targetLon", "targetHeight", "start", "end"], example: "/v1/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&observerHeight=5&heightRef=msl&start=2026-11-17T03:44:30Z&end=2026-11-17T03:46:00Z&stepSeconds=5&maxDistanceKm=8" },
-  { path: "/v1/alignment/search/window", summary: "One 30-day window of POST /v1/alignment/search (the cacheable unit; the POST fans out to these). start on the 30-day grid since 1970-01-01, region in the r1 encoding the POST returns as region.encoding.",
-    required: ["body", "targetLat", "targetLon", "targetHeight", "region", "start"], example: "/v1/alignment/search/window?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&observerHeight=5&heightRef=msl&region=r1.AQEE3-fawQWAz5KEA8CpBwAAwKkHv6kHAA&start=2026-11-03T00:00:00Z" },
-  { path: "/v1/sightline", summary: "The sight line's height above sea level against ground distance from an eye to a target (Earth curvature; straight and refracted with k = 0.13), and the clearance over obstacle points lat:lon:heightMsl.",
-    required: ["observerLat", "observerLon", "targetLat", "targetLon", "targetHeight"], example: "/v1/sightline?observerLat=40.6935&observerLon=-74.0017&observerHeight=5&heightRef=msl&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&samples=11&obstacles=40.6894:-74.0166:25" },
-  { path: "/v1/track", summary: "Sun and Moon azimuth, true and apparent altitude on a UTC grid (≤ 8 days, ≤ 1 441 samples), columnar.",
-    required: ["lat", "lon", "start", "end"], example: "/v1/track?lat=40.7&lon=-74&start=2026-11-16T00:00:00Z&end=2026-11-17T00:00:00Z" },
-  { path: "/v1/magnetic", summary: "WMM2025 magnetic declination, inclination and intensity.", required: ["lat", "lon"], example: "/v1/magnetic?lat=40.7&lon=-74" },
-  { path: "/v1/weather", summary: "Nearest METAR stations, decoded, with distance and true/magnetic bearing.", required: ["lat", "lon"], example: "/v1/weather?lat=40.7&lon=-74&n=2" },
+  { path: "/position", summary: "Topocentric Sun and Moon at one instant (default now): azimuth, true and apparent altitude, rates, RA/Dec, distance, angular radius, Moon phase and bright limb (from celestial north and from the local vertical).",
+    required: ["lat", "lon"], example: "/position?lat=40.7&lon=-74&time=2026-11-17T03:45:00Z" },
+  { path: "/day", summary: "One local day's events: rise, set, transit, civil/nautical/astronomical twilight, golden and blue hour, with a conventions block (limb, horizon, dip, refraction, thresholds, geoid).",
+    required: ["lat", "lon", "date", "tz"], example: "/day?lat=40.7&lon=-74&date=2026-11-16&tz=America/New_York" },
+  { path: "/crossing", summary: "Every instant in a window (≤ 31 days) or local date when a limb, the centre or the lit-area centroid (aim) of the Sun or Moon reaches a true or apparent altitude or a skyline profile.",
+    required: ["lat", "lon", "body"], example: "/crossing?body=moon&lat=40.6985&lon=-73.999&height=5&heightRef=msl&altitude=0.87&altitudeType=apparent&direction=set&start=2026-11-16T00:00:00Z&end=2026-11-18T00:00:00Z" },
+  { path: "/alignment", summary: "Where to stand so the Sun or Moon (centre, a limb, or the Moon's lit-area centroid: aim) sits on a landmark, per instant; with observerLat/Lon also when it passes the landmark from a fixed spot. Heights in ellipsoid or msl (heightRef, targetHeightRef), per-point rates, include=sun,phase.",
+    required: ["body", "targetLat", "targetLon", "targetHeight", "start", "end"], example: "/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&observerHeight=5&heightRef=msl&start=2026-11-17T03:44:30Z&end=2026-11-17T03:46:00Z&stepSeconds=5&maxDistanceKm=8" },
+  { path: "/sightline", summary: "The sight line's height above sea level against ground distance from an eye to a target (Earth curvature; straight and refracted with k = 0.13), and the clearance over obstacle points lat:lon:heightMsl.",
+    required: ["observerLat", "observerLon", "targetLat", "targetLon", "targetHeight"], example: "/sightline?observerLat=40.6935&observerLon=-74.0017&observerHeight=5&heightRef=msl&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&samples=11&obstacles=40.6894:-74.0166:25" },
+  { path: "/track", summary: "Sun and Moon azimuth, true and apparent altitude on a UTC grid (≤ 8 days, ≤ 1 441 samples), columnar.",
+    required: ["lat", "lon", "start", "end"], example: "/track?lat=40.7&lon=-74&start=2026-11-16T00:00:00Z&end=2026-11-17T00:00:00Z" },
+  { path: "/magnetic", summary: "WMM2025 magnetic declination, inclination and intensity.", required: ["lat", "lon"], example: "/magnetic?lat=40.7&lon=-74" },
+  { path: "/weather", summary: "Nearest METAR stations, decoded, with distance and true/magnetic bearing.", required: ["lat", "lon"], example: "/weather?lat=40.7&lon=-74&n=2" },
   { path: "/healthz", summary: "Liveness.", required: [], example: "/healthz" },
 ]
 
@@ -40,7 +38,7 @@ const RULES = [
 
 /** The one POST route (JSON body; QUERY_PARAMS lists query routes only). */
 export const SEARCH_POST = {
-  path: "/v1/alignment/search",
+  path: "/alignment/search",
   summary: "Every pass in [start, end) (≤ 400 days) when the alignment standing point lies inside a standing region, with exact entry / exit per in-region segment, Moon az / alt / illuminated and Sun altitude per pass. One call instead of crossing → alignment → polygon clip → position.",
   fields: "body*, target* {lat, lon, height, heightRef}, region* (GeoJSON Polygon | MultiPolygon | Feature, or bbox [west, south, east, north]), observerHeight, heightRef, start*, end*, temperature, pressure, dut1, aim, include [sun, phase], minIlluminated, maxSunAltitude",
   example: '{"body":"moon","target":{"lat":40.68925,"lon":-74.0445,"height":70,"heightRef":"msl"},"region":[-73.9995,40.7,-73.993,40.706],"observerHeight":5,"heightRef":"msl","start":"2026-11-16T00:00:00Z","end":"2026-11-18T00:00:00Z","maxSunAltitude":-4}',

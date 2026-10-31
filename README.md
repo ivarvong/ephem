@@ -22,8 +22,8 @@ Pure TypeScript on JPL DE440, served from a Cloudflare Worker with Effect v4 `Ht
    Reykjavík; 0 / 320 m, limbs, T/P, horizon profiles), 11 crossing windows, 2 alignment tracks. Angles ≤ 1e-5°, events ≤ 46 ms,
    rates ≤ 1.2e-5 °/min, geoid ≤ 3 mm.
 3. `packages/core/test/properties.test.ts` — invariants (fast-check): refraction is 0.98685 × Skyfield's Bennett everywhere,
-   continuous and monotone down to the horizon, null exactly below it, exactly 34′ at 0° with defaults; /v1/crossing at
-   apparent 0° (upper limb) equals /v1/day's rise/set to ≤ 1 ms; rates
+   continuous and monotone down to the horizon, null exactly below it, exactly 34′ at 0° with defaults; /crossing at
+   apparent 0° (upper limb) equals /day's rise/set to ≤ 1 ms; rates
    match finite differences of the API's own positions; higher eyes rise earlier; limb order; profile interpolation; alignment
    self-consistency to 1e-7°.
 4. `packages/core/test/geoid.test.ts` — EGM96 against NGA: 403 grid nodes equal `WW15MGH.GRD` to the cm, NGA's published test

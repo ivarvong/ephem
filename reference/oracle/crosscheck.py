@@ -70,7 +70,7 @@ def cmp_num(R, key, va, vb, tol, ctx):
     R.check(key, abs(va - vb), tol, ctx)
 
 def run_position(R, A, B, q):
-    (sa, a), (sb, b) = get(A, "/v1/position", q), get(B, "/v1/position", q)
+    (sa, a), (sb, b) = get(A, "/position", q), get(B, "/position", q)
     ctx = f"position {q['time']} @{q['lat']},{q['lon']}"
     if sa != sb: return R.structural(f"status {sa} ≠ {sb} [{ctx}]")
     if sa != 200: return
@@ -85,7 +85,7 @@ def run_position(R, A, B, q):
         cmp_num(R, "pos.refraction.validFrom", ca["refraction"]["validFrom"], cb["refraction"]["validFrom"], TOL["angle_deg"], ctx)
 
 def run_day(R, A, B, q):
-    (sa, a), (sb, b) = get(A, "/v1/day", q), get(B, "/v1/day", q)
+    (sa, a), (sb, b) = get(A, "/day", q), get(B, "/day", q)
     ctx = f"day {q['date']} {q['tz']} @{q['lat']},{q['lon']}"
     if sa != sb: return R.structural(f"status {sa} ≠ {sb} [{ctx}]")
     if sa != 200: return
@@ -108,7 +108,7 @@ def run_day(R, A, B, q):
         for x, y in zip(sorted(ga[k]), sorted(gb[k])): R.check(f"event.{k[0]}.{k[1]}", abs(x - y), TOL["event_s"], ctx)
 
 def run_crossing(R, A, B, q):
-    (sa, a), (sb, b) = get(A, "/v1/crossing", q), get(B, "/v1/crossing", q)
+    (sa, a), (sb, b) = get(A, "/crossing", q), get(B, "/crossing", q)
     ctx = "crossing " + "&".join(f"{k}={v}" for k, v in q.items() if k not in ("lat", "lon"))
     if (sa == 200) != (sb == 200): return R.structural(f"status {sa} ≠ {sb} [{ctx}]")
     if sa != 200: return
@@ -131,7 +131,7 @@ def run_rejects(R, A, B, q):
     else: R.check("reject.status_4xx", 0, 0, ctx)
 
 def run_alignment(R, A, B, q):
-    (sa, a), (sb, b) = get(A, "/v1/alignment", q), get(B, "/v1/alignment", q)
+    (sa, a), (sb, b) = get(A, "/alignment", q), get(B, "/alignment", q)
     ctx = f"alignment {q['body']} {q['start']}"
     if sa != sb: return R.structural(f"status {sa} ≠ {sb} [{ctx}]")
     if sa != 200: return
@@ -167,7 +167,7 @@ def default_cases(seed=440):
     for (lat, lon, h, tz) in OBS[:6]:
         for d in ("2026-10-28", "2026-06-21", "2026-12-21", "2024-04-08", "2035-03-20", "2100-09-23", "1985-01-15", "2026-07-15"):
             days.append(dict(lat=lat, lon=lon, height=h, date=d, tz=tz))
-    # 2026-10-29 parameters: heights (ellipsoid / msl / default), horizon (sea / geometric / degrees), T/P on /v1/day, limbs, profiles
+    # 2026-10-29 parameters: heights (ellipsoid / msl / default), horizon (sea / geometric / degrees), T/P on /day, limbs, profiles
     NYC = dict(lat="40.7484", lon="-73.9857")
     for t in ("2026-10-29T21:55:00Z", "2026-10-29T22:00:00Z", "2026-10-29T22:04:00Z", "2026-10-29T22:10:00Z", "2026-10-30T05:00:00Z", "2026-10-29T11:20:00Z"):
         for extra in (dict(), dict(height="0"), dict(height="320", heightRef="msl"), dict(height="320", heightRef="ellipsoid"),
@@ -195,12 +195,12 @@ def default_cases(seed=440):
     cross.append(dict(NYC, body="sun", altitude="-6", start="2026-10-01T00:00:00Z", end="2026-10-31T00:00:00Z"))
     cross.append(dict(NYC, body="moon", altitude="10", limb="upper", start="2026-12-01T00:00:00Z", end="2026-12-08T00:00:00Z"))
     cross.append(dict(lat=OBS[1][0], lon=OBS[1][1], body="sun", altitude="-0.833", altitudeType="apparent", limb="upper", start="2026-11-20T00:00:00Z", end="2026-12-10T00:00:00Z"))
-    rejects = [dict(NYC, _path="/v1/day", date="2026-10-29", tz="America/New_York", temprature="-20"),
-               dict(NYC, _path="/v1/position", time="2026-10-29T21:55:00Z", bogus="1"),
-               dict(NYC, _path="/v1/crossing", body="sun", date="2026-10-29", tz="America/New_York"),            # neither altitude nor profile
-               dict(NYC, _path="/v1/crossing", body="sun", altitude="-3", altitudeType="apparent", date="2026-10-29", tz="America/New_York"),   # below the floor
-               dict(NYC, _path="/v1/day", date="2026-10-29", tz="America/New_York", horizon="sea", horizonProfile="0:1"),
-               dict(NYC, _path="/v1/day", date="2026-10-29", tz="America/New_York", height="5000", heightRef="msl")]   # sea horizon below the floor
+    rejects = [dict(NYC, _path="/day", date="2026-10-29", tz="America/New_York", temprature="-20"),
+               dict(NYC, _path="/position", time="2026-10-29T21:55:00Z", bogus="1"),
+               dict(NYC, _path="/crossing", body="sun", date="2026-10-29", tz="America/New_York"),            # neither altitude nor profile
+               dict(NYC, _path="/crossing", body="sun", altitude="-3", altitudeType="apparent", date="2026-10-29", tz="America/New_York"),   # below the floor
+               dict(NYC, _path="/day", date="2026-10-29", tz="America/New_York", horizon="sea", horizonProfile="0:1"),
+               dict(NYC, _path="/day", date="2026-10-29", tz="America/New_York", height="5000", heightRef="msl")]   # sea horizon below the floor
     align = [dict(body="moon", targetLat="40.68925", targetLon="-74.0445", targetHeight="63.4", observerHeight="-30.9",
                   start="2026-10-28T23:45:00Z", end="2026-10-29T02:00:00Z", stepSeconds="900", maxDistanceKm="20"),
              dict(body="sun", targetLat="40.748441", targetLon="-73.985664", targetHeight="410", observerHeight="-25",

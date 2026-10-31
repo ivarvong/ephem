@@ -33,7 +33,7 @@ const DAY = { lat: 40.7127, lon: -74.0059, height: -22.6, date: "2026-10-28", tz
 const ALIGN = { body: "moon", targetLat: 40.68925, targetLon: -74.0445, targetHeight: 63.4, observerHeight: -30.9, start: "2026-10-28T23:45:00Z", end: "2026-10-29T02:00:00Z", stepSeconds: 1800, maxDistanceKm: 20, observerLat: 40.6892, observerLon: -74.076 }
 const WX = { lat: 40.7, lon: -74, n: 3 }
 const TRACK = { lat: 40.7127, lon: -74.0059, height: -22.6, start: "2026-10-28T00:00:00Z", end: "2026-10-28T06:00:00Z", stepSeconds: 1800 }
-const REST: Record<string, [string, Record<string, unknown>]> = { sun_moon_position: ["/v1/position", POS], day_events: ["/v1/day", DAY], alignment: ["/v1/alignment", ALIGN], sun_moon_track: ["/v1/track", TRACK], weather_nearest: ["/v1/weather", WX] }
+const REST: Record<string, [string, Record<string, unknown>]> = { sun_moon_position: ["/position", POS], day_events: ["/day", DAY], alignment: ["/alignment", ALIGN], sun_moon_track: ["/track", TRACK], weather_nearest: ["/weather", WX] }
 
 /** Modern (2026-07-28) request: _meta plus the mirrored headers. */
 const modern = (method: string, params: Record<string, unknown> = {}, id: number | string = 1, extra: Record<string, string> = {}) => post({
@@ -104,7 +104,7 @@ describe("tools/call equals the REST endpoint", () => {
     const args = { body: "moon", target: { lat: 40.68925, lon: -74.0445, height: 70, heightRef: "msl" }, region: park, observerHeight: 5, heightRef: "msl", start: "2026-11-16T00:00:00Z", end: "2026-11-18T00:00:00Z", include: ["phase"] }
     const r = await modern("tools/call", { name: "alignment_search", arguments: args })
     expect(r.body.result.isError).toBe(false)
-    const rest = await (await handler(new Request("http://x/v1/alignment/search", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(args) }))).json()
+    const rest = await (await handler(new Request("http://x/alignment/search", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(args) }))).json()
     expect(comparable("alignment_search", r.body.result.structuredContent)).toEqual(comparable("alignment_search", rest))
     expect(r.body.result.structuredContent.passes[0].segments[0].enter.time).toMatch(/^2026-11-17T03:45:19\./)
     const bad = await modern("tools/call", { name: "alignment_search", arguments: { ...args, region: [-74.05, 40.68, -74.04, 40.70] } })

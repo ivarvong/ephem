@@ -10,7 +10,7 @@ export default defineConfig({
 			traces: { enabled: true, headSamplingRate: 1 },
 		},
 		// Workers Caching (never the Cache API). The front door (default) is uncached so it always runs; it forwards every
-		// deterministic GET /v1/* to the cache-enabled Api over ctx.exports, and reads DE440 blocks / geoid bands from the
+		// deterministic GET API to the cache-enabled Api over ctx.exports, and reads DE440 blocks / geoid bands from the
 		// cache-enabled BlockStore. MetarFeed (weather) is cached by its Cache-Control (src/metar-feed.ts). crossVersionCache
 		// (Worker-wide) keeps the feed warm across deploys; every loopback key carries CACHE_VERSION (src/cache-version.ts,
 		// bumped by hand, enforced by test/golden.test.ts) (ivar, 2026-10-29). Admin is RPC only (RPC bypasses the cache anyway).

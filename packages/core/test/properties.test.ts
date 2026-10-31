@@ -64,7 +64,7 @@ describe("refraction down to the horizon (2026-10-29)", () => {
     // alignment's solver uses the same model, falling back to no refraction only below the floor
     expect(refract(5, 10, 1010)).toBe(apparentAltitudeOf(5, 10, 1010, -90)); expect(refract(-5, 10, 1010)).toBe(-5)
   })
-  it("asking two endpoints the same question gives the same answer: /v1/crossing at apparent 0°, upper limb = /v1/day's rise and set (≤ 1 ms)", () => {
+  it("asking two endpoints the same question gives the same answer: /crossing at apparent 0°, upper limb = /day's rise and set (≤ 1 ms)", () => {
     for (const [lat, lon, tz, date, extra] of [[40.7484, -73.9857, "America/New_York", "2026-10-29", {}], [69.6492, 18.9553, "Europe/Oslo", "2026-10-29", {}],
       [-33.8568, 151.2153, "Australia/Sydney", "2026-10-29", { temperature: -20, pressure: 1040 }], [40.7484, -73.9857, "America/New_York", "2026-10-28", { height: 320, heightRef: "msl" as const }]] as const) {
       const d = dayRequest(diskBlocks, { date, tz, lat, lon, ...extra }); if (!("ok" in d)) throw new Error(d.error)

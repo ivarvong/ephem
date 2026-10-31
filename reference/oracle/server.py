@@ -88,7 +88,7 @@ def apparent_alt(h, T, P, lowest):
     a = _solve(h, T, P)
     return None if a < lo else a
 def refract_true(h, T, P):
-    """For /v1/alignment's geometry: the same model, no refraction where the solution would lie below the floor."""
+    """For /alignment's geometry: the same model, no refraction where the solution would lie below the floor."""
     return h if h < FLOOR - refraction(FLOOR, T, P) else _solve(h, T, P)
 rise_set_refraction = refraction
 PROFILE_RE = re.compile(r"^-?\d+(\.\d+)?:-?\d+(\.\d+)?$")
@@ -137,7 +137,7 @@ def iso_ms(t):
     return d.strftime("%Y-%m-%dT%H:%M:%S") + ".%03dZ" % ms
 
 def body_position(o, body, t, T, P, lowest=None, topo=None):
-    """lowest=None: a number always (/v1/alignment's geometry); otherwise null below max(lowest, floor)."""
+    """lowest=None: a number always (/alignment's geometry); otherwise null below max(lowest, floor)."""
     app = o.at(t).observe(body).apparent()
     alt, az, dist = app.altaz()
     ra, dec, _ = app.radec(epoch="date")
@@ -401,13 +401,13 @@ def alignment(q):
         out["fromObserver"] = dict(azimuthToTarget=az_t, distanceKm=dist / 1000, targetElevation=el, passes=passes)
     return out
 
-ROUTES = {"/v1/position": position, "/v1/day": day, "/v1/crossing": crossing, "/v1/alignment": alignment}
+ROUTES = {"/position": position, "/day": day, "/crossing": crossing, "/alignment": alignment}
 ALLOWED = {
-    "/v1/position": {"lat", "lon", "height", "heightRef", "time", "temperature", "pressure", "horizon", "dut1"},
-    "/v1/day": {"lat", "lon", "height", "heightRef", "date", "tz", "temperature", "pressure", "horizon", "horizonProfile", "limb", "dut1"},
-    "/v1/crossing": {"lat", "lon", "height", "heightRef", "body", "altitude", "altitudeType", "horizonProfile", "limb", "direction",
+    "/position": {"lat", "lon", "height", "heightRef", "time", "temperature", "pressure", "horizon", "dut1"},
+    "/day": {"lat", "lon", "height", "heightRef", "date", "tz", "temperature", "pressure", "horizon", "horizonProfile", "limb", "dut1"},
+    "/crossing": {"lat", "lon", "height", "heightRef", "body", "altitude", "altitudeType", "horizonProfile", "limb", "direction",
                      "start", "end", "date", "tz", "temperature", "pressure", "dut1"},
-    "/v1/alignment": {"body", "targetLat", "targetLon", "targetHeight", "targetHeightRef", "observerHeight", "heightRef", "start", "end", "stepSeconds", "maxDistanceKm",
+    "/alignment": {"body", "targetLat", "targetLon", "targetHeight", "targetHeightRef", "observerHeight", "heightRef", "start", "end", "stepSeconds", "maxDistanceKm",
                       "temperature", "pressure", "dut1", "observerLat", "observerLon"},
 }
 class H(BaseHTTPRequestHandler):

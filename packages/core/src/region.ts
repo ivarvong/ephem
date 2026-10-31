@@ -1,4 +1,4 @@
-// Standing regions for /v1/alignment/search: a GeoJSON Polygon / MultiPolygon (RFC 7946, holes allowed) or a bbox, validated,
+// Standing regions for /alignment/search: a GeoJSON Polygon / MultiPolygon (RFC 7946, holes allowed) or a bbox, validated,
 // canonicalised and encoded into one URL-safe string (the cacheable window GET carries it), plus the planar geometry the search
 // clips against.
 //

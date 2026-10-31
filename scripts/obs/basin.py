@@ -41,8 +41,8 @@ QUERIES = {
     # cpu-by-version-style counts: every request appears once with role = 'front'
     "by-route": f"SELECT version, route, status, COUNT(*) AS n, approx_percentile_cont(wall_ms, 0.5) AS wall_p50, approx_percentile_cont(wall_ms, 0.99) AS wall_p99 "
                 f"FROM {T} WHERE role = 'front' AND ts >= '{{since}}' GROUP BY version, route, status ORDER BY n DESC LIMIT 100",
-    "api-cache": f"SELECT route, api_cache, COUNT(*) AS n FROM {T} WHERE role = 'front' AND ts >= '{{since}}' AND route LIKE '/v1/%' GROUP BY route, api_cache ORDER BY route, n DESC",
-    "weather-tiers": f"SELECT feed_cache, weather_tier, COUNT(*) AS n, AVG(data_age_s) AS age_s FROM {T} WHERE route = '/v1/weather' AND ts >= '{{since}}' AND feed_cache IS NOT NULL GROUP BY feed_cache, weather_tier ORDER BY n DESC",
+    "api-cache": f"SELECT route, api_cache, COUNT(*) AS n FROM {T} WHERE role = 'front' AND ts >= '{{since}}' AND route LIKE '/%' GROUP BY route, api_cache ORDER BY route, n DESC",
+    "weather-tiers": f"SELECT feed_cache, weather_tier, COUNT(*) AS n, AVG(data_age_s) AS age_s FROM {T} WHERE route = '/weather' AND ts >= '{{since}}' AND feed_cache IS NOT NULL GROUP BY feed_cache, weather_tier ORDER BY n DESC",
     "work": f"SELECT route, blocks_cache, COUNT(*) AS n, AVG(blocks) AS blocks, AVG(block_reads) AS block_reads, AVG(iterations) AS iterations "
             f"FROM {T} WHERE role = 'api' AND ts >= '{{since}}' GROUP BY route, blocks_cache ORDER BY n DESC LIMIT 50",
     "errors": f"SELECT route, status, error_tag, COUNT(*) AS n FROM {T} WHERE role = 'front' AND ok = false AND ts >= '{{since}}' GROUP BY route, status, error_tag ORDER BY n DESC",

@@ -10,7 +10,7 @@
 //
 // Tools are the REST endpoints: arguments are decoded with the Type side of the endpoint's own query schema (so inputSchema is
 // generated from it and cannot drift), encoded back to the query string with the same schema, and run through the router's own
-// /v1/* handler in this fiber, so tools/call nests the handler, compute.* and blocks.load spans and shares the response cache.
+// /* handler in this fiber, so tools/call nests the handler, compute.* and blocks.load spans and shares the response cache.
 import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
 import * as S from "effect/Schema"
@@ -83,14 +83,14 @@ const POS_DOCS = {
   dut1: "UT1 − UTC, seconds. Default 0.",
 }
 export const TOOLS: ReadonlyArray<ToolDef> = [
-  { name: "sun_moon_position", title: "Sun and Moon position", path: "/v1/position", query: PositionQuery, success: PositionResponse, docs: (({ horizonProfile: _p, ...d }) => d)(POS_DOCS),
-    description: "Topocentric apparent azimuth, true and refracted altitude (apparentAltitude is null below the observer's horizon), altitude and azimuth rates (°/min), RA/Dec, distance, angular radius and ecliptic coordinates of the Sun and Moon for an observer, plus the Moon's phase. Same as GET /v1/position." },
-  { name: "day_events", title: "Sun and Moon events for a local day", path: "/v1/day", query: DayQuery, success: DayResponse,
+  { name: "sun_moon_position", title: "Sun and Moon position", path: "/position", query: PositionQuery, success: PositionResponse, docs: (({ horizonProfile: _p, ...d }) => d)(POS_DOCS),
+    description: "Topocentric apparent azimuth, true and refracted altitude (apparentAltitude is null below the observer's horizon), altitude and azimuth rates (°/min), RA/Dec, distance, angular radius and ecliptic coordinates of the Sun and Moon for an observer, plus the Moon's phase. Same as GET /position." },
+  { name: "day_events", title: "Sun and Moon events for a local day", path: "/day", query: DayQuery, success: DayResponse,
     docs: { lat: POS_DOCS.lat, lon: POS_DOCS.lon, height: POS_DOCS.height, heightRef: POS_DOCS.heightRef, date: "Local calendar date, YYYY-MM-DD.", tz: "IANA time zone, e.g. America/New_York; the day runs local midnight to local midnight.",
       temperature: POS_DOCS.temperature, pressure: POS_DOCS.pressure, horizon: POS_DOCS.horizon, horizonProfile: POS_DOCS.horizonProfile,
       limb: "Which part of the disc rise and set refer to: upper (default), center or lower.", dut1: POS_DOCS.dut1 },
-    description: "Sunrise, sunset, transits, civil/nautical/astronomical twilight, golden and blue hour, and moonrise/moonset/transit for one local day, sorted by time. Rise/set use the horizon dip from the observer's height above sea level and refraction from temperature/pressure; the response's conventions block states every threshold used. Same as GET /v1/day." },
-  { name: "crossing", title: "When the Sun or Moon reaches an altitude", path: "/v1/crossing", query: CrossingQuery, success: CrossingResponse,
+    description: "Sunrise, sunset, transits, civil/nautical/astronomical twilight, golden and blue hour, and moonrise/moonset/transit for one local day, sorted by time. Rise/set use the horizon dip from the observer's height above sea level and refraction from temperature/pressure; the response's conventions block states every threshold used. Same as GET /day." },
+  { name: "crossing", title: "When the Sun or Moon reaches an altitude", path: "/crossing", query: CrossingQuery, success: CrossingResponse,
     docs: { lat: POS_DOCS.lat, lon: POS_DOCS.lon, height: POS_DOCS.height, heightRef: POS_DOCS.heightRef, body: "sun or moon.",
       altitude: "Altitude to cross, degrees (required unless horizonProfile).", altitudeType: "true (default: vacuum altitude, like twilight thresholds) or apparent (refracted, as sun_moon_position reports).",
       horizonProfile: "Instead of altitude: " + POS_DOCS.horizonProfile, limb: "upper, center (default) or lower limb.", direction: "rise, set or either (default).",
@@ -98,8 +98,8 @@ export const TOOLS: ReadonlyArray<ToolDef> = [
       temperature: POS_DOCS.temperature, pressure: POS_DOCS.pressure, dut1: POS_DOCS.dut1,
       include: "Optional context per crossing: sun (Sun azimuth, true and apparent altitude), phase (Moon phase), or sun,phase.",
       aim: "Instead of limb: center, upper, lower, or litCentroid (the centroid of the Moon's lit area; body moon)." },
-    description: "Every instant in a window (start/end, or one local date) when the Sun's or Moon's upper limb, centre or lower limb reaches a given true or apparent altitude, or a skyline profile, with direction, azimuth and altitude rate. Same as GET /v1/crossing." },
-  { name: "alignment", title: "Where to stand to frame a target against the Sun or Moon", path: "/v1/alignment", query: AlignmentQuery, success: AlignmentResponse,
+    description: "Every instant in a window (start/end, or one local date) when the Sun's or Moon's upper limb, centre or lower limb reaches a given true or apparent altitude, or a skyline profile, with direction, azimuth and altitude rate. Same as GET /crossing." },
+  { name: "alignment", title: "Where to stand to frame a target against the Sun or Moon", path: "/alignment", query: AlignmentQuery, success: AlignmentResponse,
     docs: {
       body: "sun or moon.", targetLat: "Target latitude, degrees north.", targetLon: "Target longitude, degrees east.",
       targetHeight: "Height of the point to frame (e.g. the top of a tower), metres above the ellipsoid, or above sea level with targetHeightRef=msl.",
@@ -112,18 +112,18 @@ export const TOOLS: ReadonlyArray<ToolDef> = [
       aim: "Which point of the disc to put on the target: center (default), upper or lower limb (along the local vertical), or litCentroid (the centroid of the Moon's lit area, for a partial Moon).",
       observerLat: "Optional fixed observer latitude (with observerLon): also report when the body passes behind the target from there.", observerLon: "Optional fixed observer longitude (with observerLat).",
     },
-    description: "For each instant in [start, end], the ground point from which the Sun or Moon centre sits exactly on top of a target (azimuth and apparent altitude match), with distance, bearing, the body's altitude/azimuth rates and the eye's heights (ellipsoid, sea level, geoid undulation); a conventions block states the refraction, terrestrial refraction (k = 0.13) and height references. With observerLat/observerLon, also the instants the body passes the target from that spot. Same as GET /v1/alignment." },
-  { name: "weather_nearest", title: "Nearest METAR weather", path: "/v1/weather", query: WeatherQuery, success: WeatherResponse, openWorld: true,
+    description: "For each instant in [start, end], the ground point from which the Sun or Moon centre sits exactly on top of a target (azimuth and apparent altitude match), with distance, bearing, the body's altitude/azimuth rates and the eye's heights (ellipsoid, sea level, geoid undulation); a conventions block states the refraction, terrestrial refraction (k = 0.13) and height references. With observerLat/observerLon, also the instants the body passes the target from that spot. Same as GET /alignment." },
+  { name: "weather_nearest", title: "Nearest METAR weather", path: "/weather", query: WeatherQuery, success: WeatherResponse, openWorld: true,
     docs: { lat: POS_DOCS.lat, lon: POS_DOCS.lon, n: "How many stations, nearest first (1–10). Default 1." },
-    description: "The nearest METAR stations to a point (aviationweather.gov feed, cached up to 60 s fresh), decoded, with distance and true/magnetic bearing. Same as GET /v1/weather." },
-  { name: "sun_moon_track", title: "Sun and Moon paths across the sky", path: "/v1/track", query: TrackQuery, success: TrackResponse,
+    description: "The nearest METAR stations to a point (aviationweather.gov feed, cached up to 60 s fresh), decoded, with distance and true/magnetic bearing. Same as GET /weather." },
+  { name: "sun_moon_track", title: "Sun and Moon paths across the sky", path: "/track", query: TrackQuery, success: TrackResponse,
     docs: { lat: POS_DOCS.lat, lon: POS_DOCS.lon, height: POS_DOCS.height, heightRef: POS_DOCS.heightRef,
       start: "First sample, UTC ISO-8601 with Z, on the stepSeconds grid (a multiple of stepSeconds since 1970-01-01T00:00Z; e.g. a whole hour for 1200 s).",
       end: "Last sample, UTC ISO-8601 with Z, on the same grid, not before start; at most 8 days after it.",
       stepSeconds: "Sampling step, integer seconds 60–3600, at most 1441 samples. Default 1200 (20 min).",
       temperature: POS_DOCS.temperature, pressure: POS_DOCS.pressure, horizon: POS_DOCS.horizon, dut1: POS_DOCS.dut1 },
-    description: "The Sun's and Moon's azimuth, true altitude and apparent (refracted) altitude at every step of a UTC window, as parallel arrays; each sample equals sun_moon_position at that instant. For plotting paths or finding when a body is up. Same as GET /v1/track." },
-  { name: "sight_line", title: "Sight-line height and obstacle clearance", path: "/v1/sightline", query: SightlineQuery, success: SightlineResponse,
+    description: "The Sun's and Moon's azimuth, true altitude and apparent (refracted) altitude at every step of a UTC window, as parallel arrays; each sample equals sun_moon_position at that instant. For plotting paths or finding when a body is up. Same as GET /track." },
+  { name: "sight_line", title: "Sight-line height and obstacle clearance", path: "/sightline", query: SightlineQuery, success: SightlineResponse,
     docs: {
       observerLat: "Eye latitude, degrees north.", observerLon: "Eye longitude, degrees east.",
       observerHeight: "Eye height, metres above the ellipsoid, or above sea level with heightRef=msl. Default: at sea level.", heightRef: "What observerHeight is measured from: ellipsoid (default) or msl.",
@@ -132,8 +132,8 @@ export const TOOLS: ReadonlyArray<ToolDef> = [
       samples: "Points along the line, 2–1001. Default 101.",
       obstacles: "Optional obstacle points 'lat:lon:heightMsl,…' (up to 100; heights above sea level): the clearance of the line over each.",
     },
-    description: "The height above sea level of the sight line from an eye to a target against ground distance (Earth curvature included; straight and with terrestrial refraction k = 0.13), and the clearance over given obstacle points (negative = the obstacle hides the target). Same as GET /v1/sightline." },
-  { name: "alignment_search", title: "Every alignment pass over a standing region", path: "/v1/alignment/search", query: {}, payload: SearchPayload, success: SearchResponse,
+    description: "The height above sea level of the sight line from an eye to a target against ground distance (Earth curvature included; straight and with terrestrial refraction k = 0.13), and the clearance over given obstacle points (negative = the obstacle hides the target). Same as GET /sightline." },
+  { name: "alignment_search", title: "Every alignment pass over a standing region", path: "/alignment/search", query: {}, payload: SearchPayload, success: SearchResponse,
     docs: {
       body: "sun or moon.", target: "The point to frame: { lat, lon, height, heightRef? } (heightRef ellipsoid (default) or msl).",
       region: "Where you can stand: a GeoJSON Polygon or MultiPolygon (holes allowed; or a Feature with one), or a bbox [west, south, east, north]. ≤ 1 000 vertices, ≤ 50 km across, ≤ 100 km from the target.",
@@ -144,7 +144,7 @@ export const TOOLS: ReadonlyArray<ToolDef> = [
       include: "Extra per-pass context: [\"sun\"] (azimuth, true/apparent altitude), [\"phase\"] (the Moon's phase block), or both.",
       minIlluminated: "Keep passes with at least this Moon illuminated fraction (0–1).", maxSunAltitude: "Keep passes with the Sun's true altitude at most this, degrees (e.g. −4 for a dark sky).",
     },
-    description: "Every pass in a date range when the alignment standing point (where the Sun or Moon sits exactly on the target) lies inside a standing region, with exact entry and exit times and points per in-region segment, the Moon's azimuth / altitude / illumination and the Sun's altitude per pass. One call replaces crossing → alignment → polygon clip → position. Same as POST /v1/alignment/search." },
+    description: "Every pass in a date range when the alignment standing point (where the Sun or Moon sits exactly on the target) lies inside a standing region, with exact entry and exit times and points per in-region segment, the Moon's azimuth / altitude / illumination and the Sun's altitude per pass. One call replaces crossing → alignment → polygon clip → position. Same as POST /alignment/search." },
 ]
 
 const jsonSchema = (schema: S.Top) => {
@@ -324,7 +324,7 @@ const handlePost = (req: HttpServerRequest.HttpServerRequest, rest: Rest) => Eff
   return reply === undefined ? HttpServerResponse.empty({ status: 202 }) : json(reply.status, reply.body)
 })
 
-/** Registers POST/GET/DELETE /mcp. Tool calls dispatch to the router's own /v1 routes, in-process, in the caller's fiber. */
+/** Registers POST/GET/DELETE /mcp. Tool calls dispatch to the router's own API routes, in-process, in the caller's fiber. */
 export const Mcp = HttpRouter.use(router => Effect.gen(function* () {
   // fwd: the outer request's cf-ray and version override, so a tool's forward to the Api is joined
   // to this request's row and pinned like the REST call would be.

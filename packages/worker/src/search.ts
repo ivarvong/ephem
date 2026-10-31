@@ -1,5 +1,5 @@
-// /v1/alignment/search. POST (front door): validate, canonicalise the region, fan out one GET per 30-day window on the fixed
-// grid, merge, filter. GET /v1/alignment/search/window (Api entrypoint, immutable in Workers Caching): one window computed.
+// /alignment/search. POST (front door): validate, canonicalise the region, fan out one GET per 30-day window on the fixed
+// grid, merge, filter. GET /internal/alignment-search-window (Api entrypoint, immutable in Workers Caching): one window computed.
 //
 // Why fan out instead of caching the POST (Workers Caching stores GET/HEAD only): a rolling "next 12 months" scan never
 // repeats exactly, but on the 30-day grid two scans a day apart share 12 of 13 windows; each window is one bounded
@@ -12,7 +12,8 @@ import { SEARCH, SUPPORTED, WINDOW_MS, blocksFor, decodeRegion, encodeRegion, is
 import { PROV, compute, geoidAcross, jd, parseUtc } from "./handlers.ts"
 import { Edge, canonical, forwardHeaders } from "./responses.ts"
 
-export const SEARCH_WINDOW_PATH = "/v1/alignment/search/window"
+import { SEARCH_WINDOW_PATH } from "./routes.ts"
+export { SEARCH_WINDOW_PATH }
 export const MAX_PASSES = 1000
 
 interface WindowQuery {

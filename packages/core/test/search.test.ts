@@ -1,4 +1,4 @@
-// /v1/alignment/search core: region canonicalisation, the customer's 12-month Brooklyn Bridge Park scan (round-2 feedback),
+// /alignment/search core: region canonicalisation, the customer's 12-month Brooklyn Bridge Park scan (round-2 feedback),
 // completeness against a brute-force scan that shares none of the search's band or scan logic, and exactness of entries.
 import { describe, expect, it } from "vitest"
 import { readFileSync } from "node:fs"

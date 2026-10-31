@@ -44,7 +44,7 @@ export function buildModel(c: Client, srvIn: Server, meta: Record<string, unknow
   // server = client + θ. The Worker's root span starts after the browser sent (t2 > t1 + θ) and its first byte leaves before
   // the browser has the headers (t3 < t4 + θ): θ ∈ (t3 − t4, t2 − t1). Server times are whole ms: widen by 1 ms each side.
   // t3: the response leaving. The runtime's time_to_first_byte_ms can exceed the client's whole send → headers (a streamed
-  // body: headers leave first; seen on /v1/track, 68 ms vs 52.7 ms), so t3 is the earlier of it and the Effect request span's end.
+  // body: headers leave first; seen on /track, 68 ms vs 52.7 ms), so t3 is the earlier of it and the Effect request span's end.
   const bounds: Array<{ ray: string; lo: number; hi: number; path: string }> = []
   const bound = (ray: string, sendWall: number, headWall: number, path: string) => {
     const root = sspans.find(s => s.ray && ray0(s.ray) === ray0(ray) && s.ep === "default" && !s.parent)
@@ -86,7 +86,7 @@ export function buildModel(c: Client, srvIn: Server, meta: Record<string, unknow
     if (join === "joined") reason = byTrace ? "" : r.spanId || r.type === "Document" ? "joined by cf-ray only (no client.trace_id match)" : ""
     if (join === "joined" && r.failed) reason = (reason ? reason + "; " : "") + `CDP says ${r.failed} (a keepalive fetch: the browser stops reporting it) but the response (${r.status}) and its invocation exist`
     if (inv && r.cache === "HIT" && !internal.some(v => v.ep === "Api")) reason = (reason ? reason + "; " : "") + "Workers Cache HIT: the front door ran, the Api entrypoint did not"
-    return { i, url: u.pathname + (u.pathname.startsWith("/v1/") && u.search ? `?${[...u.searchParams.keys()].join("&")}` : ""), path: u.pathname, method: r.method, type: r.type, status: r.status,
+    return { i, url: u.pathname + (u.pathname.startsWith("/") && u.search ? `?${[...u.searchParams.keys()].join("&")}` : ""), path: u.pathname, method: r.method, type: r.type, status: r.status,
       protocol: r.protocol ?? null, start: r.start, end: r.end, bytes: r.bytes, ph: r.ph, ray: r.ray ?? null, cache: r.cache ?? null, fromCache: r.fromCache ?? null,
       version: r.version ?? null, serverTiming: r.serverTiming ?? null, traceId: r.traceId ?? null, spanId: r.spanId ?? null, byTrace, join, reason,
       endFrom: r.end != null ? r.endFrom ?? "client" : null, phFrom: r.phFrom ?? null, chunks: r.chunks ?? null, embedAt: embedArrival(r),

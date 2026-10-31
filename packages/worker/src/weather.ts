@@ -1,4 +1,4 @@
-// /v1/weather and /v1/magnetic. The weather lookup is a plain Effect service (Weather.nearest), so any front end (the HTTP
+// /weather and /magnetic. The weather lookup is a plain Effect service (Weather.nearest), so any front end (the HTTP
 // handler, an MCP tool) gets the same cache tiers, span attributes and log line.
 import * as Clock from "effect/Clock"
 import * as Context from "effect/Context"
@@ -68,7 +68,7 @@ export const weatherLive = (feed: Feed) => Layer.succeed(Weather, {
     const lm = httpDate(f.snap.lastModified)
     return {
       time: iso(now),
-      observer: { lat: q.lat, lon: q.lon, magneticDeclination: decl },   // full precision: the homepage takes its magnetic bearings from it (no /v1/magnetic call)
+      observer: { lat: q.lat, lon: q.lon, magneticDeclination: decl },   // full precision: the homepage takes its magnetic bearings from it (no /magnetic call)
       stations: near.map(x => station(x.station, x.distanceKm, x.bearing, decl, now)),
       feed: {
         source: FEED_URL, fetchedAt: iso(f.snap.fetchedAt), ageSeconds: Math.round(f.dataAgeMs / 1000),

@@ -1,4 +1,4 @@
-// /v1/alignment/search through the real router: the POST (validation, fan-out, merge, filters), the cacheable window GET,
+// /alignment/search through the real router: the POST (validation, fan-out, merge, filters), the cacheable window GET,
 // the front door → Api loopback with a fake Workers Caching (overlapping scans share windows), and failure mapping.
 import { describe, expect, it } from "vitest"
 import { readFileSync } from "node:fs"
@@ -18,11 +18,11 @@ const PARK = JSON.parse(readFileSync(`${FIX}/regions/brooklyn-bridge-park.geojso
 const BODY = { body: "moon", target: { lat: 40.68925, lon: -74.0445, height: 70, heightRef: "msl" }, region: PARK, observerHeight: 5, heightRef: "msl", start: "2026-11-16T00:00:00Z", end: "2026-11-18T00:00:00Z" }
 const local = makeHandler(blocks())
 const post = async (h: typeof local, body: unknown, headers: Record<string, string> = {}) => {
-  const r = await h(new Request("http://x/v1/alignment/search", { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) }))
+  const r = await h(new Request("http://x/alignment/search", { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) }))
   return { status: r.status, headers: r.headers, j: await r.json() as any }
 }
 
-describe("POST /v1/alignment/search", () => {
+describe("POST /alignment/search", () => {
   it("the customer's Nov 16 pass: one call, exact entry 2026-11-17T03:45:19Z at 40.70329, −73.99630", async () => {
     const { status, j, headers } = await post(local, BODY)
     expect(status).toBe(200); expect(headers.get("cache-control")).toBe("no-store")
@@ -63,7 +63,7 @@ describe("POST /v1/alignment/search", () => {
   }, 30_000)
 })
 
-describe("GET /v1/alignment/search/window", () => {
+describe("GET /internal/alignment-search-window", () => {
   const enc = encodeRegion((parseRegion(PARK) as any).ok)
   const W = `${SEARCH_WINDOW_PATH}?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&observerHeight=5&heightRef=msl&region=${enc}&start=2026-11-03T00:00:00Z`
   it("is deterministic (immutable) and refuses off-grid starts and non-canonical regions", async () => {

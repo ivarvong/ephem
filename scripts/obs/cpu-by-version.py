@@ -1,6 +1,6 @@
 """CPU / wall percentiles per (version, entrypoint, path, status) from prod invocation events.
 
-    python3 scripts/obs/cpu-by-version.py [--minutes 30] [--path /v1/alignment] [--version 80f5b087] [--from 2026-10-29T12:01:30Z --to 2026-10-29T12:03:00Z]
+    python3 scripts/obs/cpu-by-version.py [--minutes 30] [--path /alignment] [--version 80f5b087] [--from 2026-10-29T12:01:30Z --to 2026-10-29T12:03:00Z]
 
 --path is also sent as a server-side filter, so the 1000-event cap applies per path rather than to all traffic.
 entrypoint: `default` (the uncached front door), `Api`, `BlockStore`, `MetarFeed` (cached: a Workers Caching HIT never runs
@@ -16,7 +16,7 @@ from telemetry import eq, events, events_all, starts  # noqa: E402
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--minutes", type=float, default=30)
-ap.add_argument("--path", help="only this request path, e.g. /v1/alignment")
+ap.add_argument("--path", help="only this request path, e.g. /alignment")
 ap.add_argument("--version", help="only this script version (id prefix)")
 ap.add_argument("--entrypoint", help="only this entrypoint: default, Api, BlockStore, MetarFeed")
 ap.add_argument("--from", dest="frm", help="absolute window start, ISO-8601 (with --to)")

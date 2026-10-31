@@ -1,6 +1,6 @@
 """ephem-tail health and route labels from its own Workers Observability events (no Basin SQL token needed).
 
-    python3 scripts/obs/tail-check.py [--minutes 10] [--version <uuid-or-prefix>] [--wait 90] [--require /v1/track,/llms.txt]
+    python3 scripts/obs/tail-check.py [--minutes 10] [--version <uuid-or-prefix>] [--wait 90] [--require /track,/llms.txt]
 
 Counts ephem-tail invocations by (version, outcome) and sums the `tail_batch` log lines (one per tail() call:
 {"tail_batch":{"rows":n,"routes":["<entrypoint> <route> <count>", ...]}}; "-" = the default handler) into route-label counts. --wait polls until the version

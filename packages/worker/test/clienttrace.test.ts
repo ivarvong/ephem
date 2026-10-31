@@ -25,7 +25,7 @@ const recorder = () => {
 }
 afterEach(() => setTracing(undefined))
 const TID = "4bf92f3577b34da6a3ce929d0e0e4736", SID = "00f067aa0ba902b7", TP = `00-${TID}-${SID}-01`
-const DAY = "/v1/day?date=2026-10-28&tz=America/New_York&lat=40.6892&lon=-74.0445"
+const DAY = "/day?date=2026-10-28&tz=America/New_York&lat=40.6892&lon=-74.0445"
 const V = { lat: 40.7128, lon: -74.006, place: "New York", city: "New York", tz: "America/New_York", colo: null, source: "query" } as const
 
 describe("traceparent", () => {
@@ -149,7 +149,7 @@ describe("traceparent", () => {
     const run = new Function("window", "fetch", "performance", "crypto", "Headers", CLIENT_TRACE_JS + "; return __tfetch;")
     const tf = run(win, async (_u: string, i: { headers: Headers }) => { seen.push(i.headers); return new Response("{}", { headers: { "cf-ray": "abc-EWR", "x-ephem-trace": "t" } }) },
       { now: () => 1 }, globalThis.crypto, Headers) as (u: string) => Promise<Response>
-    await tf("/v1/a"); await tf("/v1/b")
+    await tf("/a"); await tf("/b")
     const ids = seen.map(h => parseTraceparent(h.get("traceparent")))
     expect(ids[0]!.traceId).toBe(ids[1]!.traceId); expect(ids[0]!.spanId).not.toBe(ids[1]!.spanId)
     const T = win.__ephemTrace as { traceId: string; fetches: Array<{ ray: string; status: number }> }

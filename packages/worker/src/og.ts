@@ -119,7 +119,7 @@ export interface BodyNow {
   readonly declination?: number; readonly phase?: { readonly illuminatedFraction: number; readonly brightLimbAngle: number }
 }
 export interface DayEvent { readonly time: string; readonly body: string; readonly kind: string }
-/** /v1/track's answer, as much of it as the chart reads. */
+/** /track's answer, as much of it as the chart reads. */
 export interface TrackAnswer { readonly start: string; readonly stepSeconds: number; readonly count: number
   readonly sun: { readonly azimuth: readonly number[]; readonly altitude: readonly number[] }; readonly moon: { readonly azimuth: readonly number[]; readonly altitude: readonly number[] } }
 export interface OgData {
@@ -127,7 +127,7 @@ export interface OgData {
   readonly at: number                          // ms: the instant drawn (the start of the time bucket)
   readonly sun: BodyNow; readonly moon: BodyNow
   readonly track: TrackAnswer | null
-  readonly events: readonly DayEvent[]         // today's and tomorrow's /v1/day events (local days in tz)
+  readonly events: readonly DayEvent[]         // today's and tomorrow's /day events (local days in tz)
 }
 const altOf = (b: BodyNow) => b.apparentAltitude ?? b.altitude
 
@@ -163,17 +163,17 @@ const coords = (lat: number, lon: number) => `${Math.abs(lat).toFixed(2)}° ${la
 export const ogQueryString = (q: OgQuery) =>
   new URLSearchParams({ lat: q.lat.toFixed(2), lon: q.lon.toFixed(2), place: q.place, tz: q.tz, t: String(q.t) }).toString()
 
-/** The /v1 queries the image needs at instant `at`: position then, the page's track window, today and tomorrow (local). */
+/** The API queries the image needs at instant `at`: position then, the page's track window, today and tomorrow (local). */
 export const ogApiQueries = (q: OgQuery) => {
   const at = q.t * BUCKET_MS, ll = { lat: q.lat.toFixed(2), lon: q.lon.toFixed(2) }, D = Math.floor(at / 864e5), t0 = (D - 1) * 864e5
   const iso = (ms: number) => new Date(ms).toISOString().slice(0, 19) + "Z"
   const today = localDate(at, q.tz), tomorrow = new Date(Date.parse(today + "T00:00:00Z") + 864e5).toISOString().slice(0, 10)
   const qs = (o: Record<string, string>) => new URLSearchParams(Object.entries(o).toSorted(([a], [b]) => (a < b ? -1 : 1))).toString()
   return {
-    position: `/v1/position?${qs({ ...ll, time: iso(at) })}`,
-    track: `/v1/track?${qs({ ...ll, start: iso(t0), end: iso(t0 + 72 * 3600e3) })}`,
-    today: `/v1/day?${qs({ ...ll, date: today, tz: q.tz })}`,
-    tomorrow: `/v1/day?${qs({ ...ll, date: tomorrow, tz: q.tz })}`,
+    position: `/position?${qs({ ...ll, time: iso(at) })}`,
+    track: `/track?${qs({ ...ll, start: iso(t0), end: iso(t0 + 72 * 3600e3) })}`,
+    today: `/day?${qs({ ...ll, date: today, tz: q.tz })}`,
+    tomorrow: `/day?${qs({ ...ll, date: tomorrow, tz: q.tz })}`,
   }
 }
 const localDate = (ms: number, tz: string) => new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(ms))

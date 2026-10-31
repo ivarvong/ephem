@@ -1,4 +1,4 @@
-# Independent check of /v1/sightline geometry: PROJ (ECEF <-> geodetic, EPSG 4978/4979) and GeographicLib (pyproj.Geod).
+# Independent check of /sightline geometry: PROJ (ECEF <-> geodetic, EPSG 4978/4979) and GeographicLib (pyproj.Geod).
 import json, sys, numpy as np
 from pyproj import Transformer, Geod
 G = Geod(ellps="WGS84"); to = Transformer.from_crs(4979, 4978, always_xy=True); back = Transformer.from_crs(4978, 4979, always_xy=True)

@@ -8,13 +8,13 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/http/HttpServerResponse"
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder"
 import * as HttpApiError from "effect/http-api/HttpApiError"
-import { EphemApi, QUERY_PARAMS } from "@ephem/api"
+import { EphemApi, INTERNAL_QUERY_PARAMS, QUERY_PARAMS } from "@ephem/api"
 import { HandlersLive } from "./handlers.ts"
 import { SearchLive } from "./search.ts"
 import type { Blocks } from "./blocks.ts"
 import { GeoidInstalled, type Geoid } from "./geoid.ts"
 import { TracerLive } from "./trace.ts"
-import { Edge, Gateway, type Role } from "./responses.ts"
+import { Edge, Gateway, notFound, type Role } from "./responses.ts"
 import { WeatherNone, type Weather } from "./weather.ts"
 import { RequestLog, RequestLogging, type RequestLogSink } from "./requestlog.ts"
 import { ClientTrace } from "./clienttrace.ts"
@@ -36,7 +36,7 @@ export const ExplainSchemaErrors = HttpRouter.middleware(http => Effect.catchDef
   HttpApiError.HttpApiSchemaError.is(defect)
     ? Effect.gen(function* () {
       yield* Effect.annotateCurrentSpan("ephem.error_tag", "InvalidRequest")
-      const req = yield* HttpServerRequest.HttpServerRequest, url = new URL(req.originalUrl, "http://x"), allowed = QUERY_PARAMS[url.pathname]
+      const req = yield* HttpServerRequest.HttpServerRequest, url = new URL(req.originalUrl, "http://x"), allowed = QUERY_PARAMS[url.pathname] ?? INTERNAL_QUERY_PARAMS[url.pathname]
       const unknown = defect.kind === "Query" && allowed ? [...new Set(url.searchParams.keys())].filter(k => !allowed.includes(k)) : []
       return unknown.length
         ? HttpServerResponse.jsonUnsafe({ _tag: "InvalidRequest", kind: "UnknownParameter", message: `unknown query parameter${unknown.length > 1 ? "s" : ""} ${unknown.join(", ")} for ${url.pathname}; allowed: ${allowed!.join(", ")}`, unknown, allowed }, { status: 400 })
@@ -59,7 +59,8 @@ export const toHandler = (app: unknown) => {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, POST, OPTIONS", "access-control-allow-headers": "*" } })
     const t0 = performance.now()
     const ctx = log && rum ? Context.add(Context.make(RequestLog, log), RumSink, rum) : log ? Context.make(RequestLog, log) : rum ? Context.make(RumSink, rum) : undefined
-    const res = await handler(request, ctx as Context.Context<never> | undefined)
+    let res = await handler(request, ctx as Context.Context<never> | undefined)
+    if (res.status === 404 && !res.headers.get("content-type")) res = HttpServerResponse.toWeb(notFound(new URL(request.url)))   // the router's own empty 404
     const h = new Headers(res.headers); const st = res.headers.get("server-timing")   // the router's entries (src/servertiming.ts), then the request's I/O wall
     h.set("server-timing", (st ? st + ", " : "") + `total;dur=${(performance.now() - t0).toFixed(1)}`)
     return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h })

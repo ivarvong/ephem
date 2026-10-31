@@ -53,46 +53,47 @@ const searchBody = { body: "moon", target: { lat: 40.68925, lon: -74.0445, heigh
 
 describe("contract", () => {
   it("decodes numeric query params and applies defaults", async () => {
-    const r = await get("/v1/position?lat=40.7127&lon=-74.0059&time=2026-10-28T11:51:00Z")
+    const r = await get("/position?lat=40.7127&lon=-74.0059&time=2026-10-28T11:51:00Z")
     expect(r.status).toBe(200)
     const j = await r.json() as any
     expect(j.observer).toMatchObject({ lat: 40.7127, lon: -74.0059, height: 0 })
   })
   it("rejects out-of-range latitude and malformed time", async () => {
-    expect((await get("/v1/position?lat=91&lon=0&time=2026-10-28T11:51:00Z")).status).toBe(400)
-    expect((await get("/v1/position?lat=0&lon=0&time=2026-10-28 11:51")).status).toBe(400)
+    expect((await get("/position?lat=91&lon=0&time=2026-10-28T11:51:00Z")).status).toBe(400)
+    expect((await get("/position?lat=0&lon=0&time=2026-10-28 11:51")).status).toBe(400)
   })
   it("weather: n is an integer 1..10", async () => {
-    expect(((await (await get("/v1/weather?lat=40.7&lon=-74&n=3")).json()) as any).feed.ageSeconds).toBe(3)
-    expect((await get("/v1/weather?lat=40.7&lon=-74&n=11")).status).toBe(400)
-    expect((await get("/v1/weather?lat=40.7&lon=-74&n=1.5")).status).toBe(400)
+    expect(((await (await get("/weather?lat=40.7&lon=-74&n=3")).json()) as any).feed.ageSeconds).toBe(3)
+    expect((await get("/weather?lat=40.7&lon=-74&n=11")).status).toBe(400)
+    expect((await get("/weather?lat=40.7&lon=-74&n=1.5")).status).toBe(400)
   })
   it("track: start/end are UTC instants, stepSeconds an integer 60..3600, apparentAltitude may be null", async () => {
-    const r = await get("/v1/track?lat=40.7&lon=-74&start=2026-10-28T12:00:00Z&end=2026-10-28T12:00:00Z&stepSeconds=600")
+    const r = await get("/track?lat=40.7&lon=-74&start=2026-10-28T12:00:00Z&end=2026-10-28T12:00:00Z&stepSeconds=600")
     expect(r.status).toBe(200); expect(((await r.json()) as any)).toMatchObject({ stepSeconds: 600, sun: { apparentAltitude: [null] } })
     for (const bad of ["stepSeconds=59", "stepSeconds=3601", "stepSeconds=90.5"])
-      expect((await get(`/v1/track?lat=40.7&lon=-74&start=2026-10-28T12:00:00Z&end=2026-10-28T13:00:00Z&${bad}`)).status, bad).toBe(400)
-    expect((await get("/v1/track?lat=40.7&lon=-74&start=2026-10-28 12:00&end=2026-10-28T13:00:00Z")).status).toBe(400)
-    expect((await get("/v1/track?lat=40.7&lon=-74&start=2026-10-28T12:00:00Z")).status).toBe(400)
+      expect((await get(`/track?lat=40.7&lon=-74&start=2026-10-28T12:00:00Z&end=2026-10-28T13:00:00Z&${bad}`)).status, bad).toBe(400)
+    expect((await get("/track?lat=40.7&lon=-74&start=2026-10-28 12:00&end=2026-10-28T13:00:00Z")).status).toBe(400)
+    expect((await get("/track?lat=40.7&lon=-74&start=2026-10-28T12:00:00Z")).status).toBe(400)
   })
   it("search: JSON body with a bbox or GeoJSON region; unknown fields and bad regions are 400", async () => {
-    const r = await post("/v1/alignment/search", searchBody)
+    const r = await post("/alignment/search", searchBody)
     expect(r.status).toBe(200); expect(((await r.json()) as any).region.vertices).toBe(4)
     const poly = { type: "Feature", properties: { name: "x" }, geometry: { type: "Polygon", coordinates: [[[-74, 40.7], [-73.99, 40.7], [-73.99, 40.71], [-74, 40.7]]] } }
-    expect((await post("/v1/alignment/search", { ...searchBody, region: poly, include: ["sun", "phase"], minIlluminated: 0.1, maxSunAltitude: -4 })).status).toBe(200)
-    expect((await post("/v1/alignment/search", { ...searchBody, bogus: 1 })).status).toBe(400)
-    expect((await post("/v1/alignment/search", { ...searchBody, region: [1, 2, 3] })).status).toBe(400)
-    expect((await post("/v1/alignment/search", { ...searchBody, region: { type: "LineString", coordinates: [[0, 0], [1, 1]] } })).status).toBe(400)
-    expect((await post("/v1/alignment/search", { ...searchBody, include: ["moon"] })).status).toBe(400)
-    expect((await post("/v1/alignment/search", { ...searchBody, minIlluminated: 2 })).status).toBe(400)
+    expect((await post("/alignment/search", { ...searchBody, region: poly, include: ["sun", "phase"], minIlluminated: 0.1, maxSunAltitude: -4 })).status).toBe(200)
+    expect((await post("/alignment/search", { ...searchBody, bogus: 1 })).status).toBe(400)
+    expect((await post("/alignment/search", { ...searchBody, region: [1, 2, 3] })).status).toBe(400)
+    expect((await post("/alignment/search", { ...searchBody, region: { type: "LineString", coordinates: [[0, 0], [1, 1]] } })).status).toBe(400)
+    expect((await post("/alignment/search", { ...searchBody, include: ["moon"] })).status).toBe(400)
+    expect((await post("/alignment/search", { ...searchBody, minIlluminated: 2 })).status).toBe(400)
   })
   it("search window: a GET with the r1 region encoding", async () => {
-    expect((await get("/v1/alignment/search/window?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=37&region=r1.AbC_-&start=2026-10-17T00:00:00Z")).status).toBe(200)
-    expect((await get("/v1/alignment/search/window?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=37&region=nope&start=2026-10-17T00:00:00Z")).status).toBe(400)
+    expect((await get("/internal/alignment-search-window?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=37&region=r1.AbC_-&start=2026-10-17T00:00:00Z")).status).toBe(200)
+    expect((await get("/internal/alignment-search-window?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=37&region=nope&start=2026-10-17T00:00:00Z")).status).toBe(400)
   })
   it("serves OpenAPI", async () => {
     const spec = OpenApi.fromApi(EphemApi) as any
-    expect(Object.keys(spec.paths)).toEqual(expect.arrayContaining(["/v1/position", "/v1/day", "/v1/alignment", "/v1/track", "/v1/weather", "/v1/magnetic", "/v1/alignment/search", "/v1/alignment/search/window"]))
-    expect(spec.paths["/v1/alignment/search"].post.requestBody).toBeDefined()
+    expect(Object.keys(spec.paths)).toEqual(expect.arrayContaining(["/position", "/day", "/alignment", "/track", "/weather", "/magnetic", "/alignment/search"]))
+    expect(Object.keys(spec.paths)).not.toContain("/internal/alignment-search-window")   // internal: the Api's cache unit
+    expect(spec.paths["/alignment/search"].post.requestBody).toBeDefined()
   })
 })

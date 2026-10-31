@@ -200,9 +200,9 @@ const fx = (x: number, d: number) => x.toFixed(d)
 export const WARM_KEYS: readonly string[] = Array.from({ length: 8 }, (_, i) => {
   const d = String(i + 1).padStart(2, "0"), e = String(i + 2).padStart(2, "0")
   return [
-    `/v1/day?lat=40.7&lon=-74&date=2026-11-${d}&tz=America/New_York`,
-    `/v1/track?lat=40.7&lon=-74&start=2026-11-${d}T00:00:00Z&end=2026-11-${e}T00:00:00Z`,
-    `/v1/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&start=2026-11-${d}T02:00:00Z&end=2026-11-${d}T03:00:00Z`,
+    `/day?lat=40.7&lon=-74&date=2026-11-${d}&tz=America/New_York`,
+    `/track?lat=40.7&lon=-74&start=2026-11-${d}T00:00:00Z&end=2026-11-${e}T00:00:00Z`,
+    `/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&start=2026-11-${d}T02:00:00Z&end=2026-11-${d}T03:00:00Z`,
   ]
 }).flat()
 
@@ -213,28 +213,28 @@ const BOXES: ReadonlyArray<readonly [number, number, number, number]> = [
 
 /**
  * One request of a kind. `rand` is the shard's key PRNG (keyRand), `i` the arrival index, `now` epoch ms.
- *   position  GET /v1/position (live, no time: computed in the front door)
+ *   position  GET /position (live, no time: computed in the front door)
  *   warm      GET one of WARM_KEYS (pre-warmed: Workers Caching HITs)
- *   track     GET /v1/track, homepage-shaped (72 h from a UTC midnight, default 20-min grid) at a fresh lat/lon (load.sh LOAD=track)
- *   weather   GET /v1/weather at a random land-weighted lat/lon, n = 1..3 (load.sh LOAD=weather)
- *   search    POST /v1/alignment/search, 12-month Brooklyn Bridge Park scan at a fresh target height
+ *   track     GET /track, homepage-shaped (72 h from a UTC midnight, default 20-min grid) at a fresh lat/lon (load.sh LOAD=track)
+ *   weather   GET /weather at a random land-weighted lat/lon, n = 1..3 (load.sh LOAD=weather)
+ *   search    POST /alignment/search, 12-month Brooklyn Bridge Park scan at a fresh target height
  */
 export const build = (kind: Kind, rand: () => number, i: number, now: number): Built => {
   switch (kind) {
-    case "position": return { kind, method: "GET", path: "/v1/position?lat=40.7&lon=-74" }
+    case "position": return { kind, method: "GET", path: "/position?lat=40.7&lon=-74" }
     case "warm": return { kind, method: "GET", path: WARM_KEYS[i % WARM_KEYS.length]! }
     case "track": {
       const lat = -60 + 120 * rand(), lon = -180 + 360 * rand()
       const d = (Math.floor(now / DAY) - 1 + Math.floor(rand() * 3)) * DAY
-      return { kind, method: "GET", path: `/v1/track?lat=${fx(lat, 4)}&lon=${fx(lon, 4)}&start=${iso(d)}&end=${iso(d + 3 * DAY)}` }
+      return { kind, method: "GET", path: `/track?lat=${fx(lat, 4)}&lon=${fx(lon, 4)}&start=${iso(d)}&end=${iso(d + 3 * DAY)}` }
     }
     case "weather": {
       const [la0, la1, lo0, lo1] = BOXES[Math.floor(rand() * BOXES.length)]!
-      return { kind, method: "GET", path: `/v1/weather?lat=${fx(la0 + (la1 - la0) * rand(), 3)}&lon=${fx(lo0 + (lo1 - lo0) * rand(), 3)}&n=${1 + Math.floor(rand() * 3)}` }
+      return { kind, method: "GET", path: `/weather?lat=${fx(la0 + (la1 - la0) * rand(), 3)}&lon=${fx(lo0 + (lo1 - lo0) * rand(), 3)}&n=${1 + Math.floor(rand() * 3)}` }
     }
     case "search": {
       const body = { body: "moon", target: { lat: 40.68925, lon: -74.0445, height: 71 + rand(), heightRef: "msl" }, region: park, observerHeight: 5, heightRef: "msl", start: "2026-10-30T00:00:00Z", end: "2027-10-30T00:00:00Z" }
-      return { kind, method: "POST", path: "/v1/alignment/search", body: JSON.stringify(body) }
+      return { kind, method: "POST", path: "/alignment/search", body: JSON.stringify(body) }
     }
   }
 }

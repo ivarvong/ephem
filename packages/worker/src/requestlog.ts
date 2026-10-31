@@ -94,7 +94,7 @@ const firstNum = (spans: ReadonlyArray<Attrs>, k: string) => { for (const a of s
 const sum = (spans: ReadonlyArray<Attrs>, k: string) => { let s = 0, seen = false; for (const a of spans) { const v = a.get(k); if (typeof v === "number" && Number.isFinite(v)) { s += v; seen = true } } return seen ? s : undefined }
 const sumPrefix = (spans: ReadonlyArray<Attrs>, p: string) => { let s = 0, seen = false; for (const a of spans) for (const [k, v] of a) if (k.startsWith(p) && typeof v === "number" && Number.isFinite(v)) { s += v; seen = true } return seen ? s : undefined }
 
-/** Every route is a static path, so on the front door (which forwards /v1/* without matching) the path is the route if it is one
+/** Every route is a static path, so on the front door (which forwards the API without matching) the path is the route if it is one
  *  of ROUTES (src/routes.ts, shared with ephem-tail); anything else is left out rather than stored raw. */
 export { ROUTES }
 
@@ -106,7 +106,7 @@ export interface RowInput {
   readonly spans: ReadonlyArray<Attrs>
   /** Tag of the request's own failure, else of the first span that ended in failure. */
   readonly errorTag?: string | undefined
-  /** URLs of in-process sub-requests (MCP tools/call → /v1/*), for lat/lon. */
+  /** URLs of in-process sub-requests (MCP tools/call → /*), for lat/lon. */
   readonly inner?: ReadonlyArray<URL>
   /** The request span's id. */
   readonly spanId?: string | undefined
@@ -154,7 +154,7 @@ const failedTag = (spans: ReadonlyArray<Tracer.Span>) => {
 export const RequestLogging = HttpRouter.middleware(http => Effect.gen(function* () {
   const req = yield* HttpServerRequest.HttpServerRequest
   const active = yield* ActiveLog
-  if (active) { active.inner.push(new URL(req.originalUrl, "http://localhost")); return yield* http }   // MCP's in-process /v1 call
+  if (active) { active.inner.push(new URL(req.originalUrl, "http://localhost")); return yield* http }   // MCP's in-process API call
   const sink = yield* Effect.serviceOption(RequestLog)
   const base = yield* Effect.tracer
   const spans: Array<Tracer.Span> = []

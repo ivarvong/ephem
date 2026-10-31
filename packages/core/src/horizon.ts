@@ -2,7 +2,7 @@
 // rise/set threshold. Evidence for every constant: docs/DESIGN.md §7 (ray traces in reference/terrain_sunset).
 import { DEG } from "./linalg.ts"
 import { geoidUndulation } from "./geoid.ts"
-/** Terrestrial refraction coefficient (ray curvature / Earth curvature) and mean Earth radius, shared with /v1/alignment. */
+/** Terrestrial refraction coefficient (ray curvature / Earth curvature) and mean Earth radius, shared with /alignment. */
 export const K_TERRESTRIAL = 0.13
 export const R_MEAN_M = 6_371_008.8
 
@@ -25,7 +25,7 @@ export const observerHeights = (lat: number, lon: number, height: number | undef
 
 // ─────────────── dip of the sea horizon ───────────────
 /** Apparent dip of the sea horizon (degrees, ≥ 0) for an eye `hMsl` metres above sea level, in the same terrestrial-refraction
- *  model as /v1/alignment (ray curvature k/R, k = 0.13): dip = √(1 − k) · acos(R / (R + h)), R = 6 371 008.8 m.
+ *  model as /alignment (ray curvature k/R, k = 0.13): dip = √(1 − k) · acos(R / (R + h)), R = 6 371 008.8 m.
  *  ≈ 1.797′·√h for small h. 0 at or below sea level. */
 export const seaDip = (hMsl: number): number =>
   hMsl <= 0 ? 0 : Math.sqrt(1 - K_TERRESTRIAL) * Math.acos(R_MEAN_M / (R_MEAN_M + hMsl)) / DEG
@@ -70,7 +70,7 @@ export const apparentAltitudeOf = (h: number, T: number, P: number, lowest: numb
   const a = fixedPoint(h, T, P)
   return a < floor ? null : a
 }
-/** Same model for geometry that needs a number (/v1/alignment's solver): no refraction where the fixed point would lie below
+/** Same model for geometry that needs a number (/alignment's solver): no refraction where the fixed point would lie below
  *  the floor, which alignment never reports (it drops bodies below −1° true). */
 export const refractTrue = (h: number, T: number, P: number): number =>
   h < REFRACTION_FLOOR - refraction(REFRACTION_FLOOR, T, P) ? h : fixedPoint(h, T, P)

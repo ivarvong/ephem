@@ -2,7 +2,7 @@
 // cache-enabled entrypoints (cloudflare.config.ts `exports`), driven only by the Cache-Control set here.
 //
 //   eyeball ─▶ default entrypoint (cache OFF: always runs, so traces, logs, request.cf and `/` stay per request)
-//                 ├─ GET /v1/* except live ─▶ loopback.ts api: Api, cf.cacheKey = /v<CACHE_VERSION><path+sorted query>
+//                 ├─ GET API except live ─▶ loopback.ts api: Api, cf.cacheKey = /v<CACHE_VERSION><path+sorted query>
 //                 │                          (cache ON; crossVersionCache is on, so answers survive deploys until the
 //                 │                           tag is bumped; test/golden.test.ts enforces the bump)
 //                 └─ live (position / magnetic without time): computed here; caching an answer about "now" buys nothing
@@ -14,6 +14,12 @@ import * as HttpRouter from "effect/http/HttpRouter"
 import * as HttpServerRequest from "effect/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/http/HttpServerResponse"
 import { parseTraceparent } from "./traceparent.ts"
+import { API_PATHS, SEARCH_WINDOW_PATH } from "./routes.ts"
+
+/** A public API path (src/routes.ts). */
+export const isApi = (url: URL) => API_PATHS.has(url.pathname)
+/** Unknown paths: JSON naming the API endpoints (pages are not listed). */
+export const notFound = (url: URL) => HttpServerResponse.jsonUnsafe({ _tag: "NotFound", message: `no endpoint ${url.pathname}; the API endpoints are ${[...API_PATHS].join(", ")} (docs: /docs, spec: /openapi.json)`, endpoints: [...API_PATHS] }, { status: 404, headers: { "cache-control": "no-store" } })
 
 export const IMMUTABLE = "public, max-age=31536000, immutable"
 const NO_STORE = "no-store"
@@ -27,9 +33,9 @@ export class Edge extends Context.Service<Edge, Role>()("@ephem/worker/Edge") {}
 
 /** A pure function of the query (and CACHE_VERSION, which is in the Api's cache key), so a year is safe. */
 export const deterministic = (url: URL): boolean =>
-  url.pathname === "/v1/day" || url.pathname === "/v1/alignment" || url.pathname === "/v1/track" || url.pathname === "/v1/sightline" || url.pathname === "/v1/alignment/search/window" ||
-  (url.pathname === "/v1/crossing" && (url.searchParams.has("start") || url.searchParams.has("date"))) ||
-  ((url.pathname === "/v1/position" || url.pathname === "/v1/magnetic") && url.searchParams.has("time"))
+  url.pathname === "/day" || url.pathname === "/alignment" || url.pathname === "/track" || url.pathname === "/sightline" || url.pathname === SEARCH_WINDOW_PATH ||
+  (url.pathname === "/crossing" && (url.searchParams.has("start") || url.searchParams.has("date"))) ||
+  ((url.pathname === "/position" || url.pathname === "/magnetic") && url.searchParams.has("time"))
 
 /** What the Api entrypoint tells Workers Caching. Weather: stored but stale at once (max-age=0), then served stale for up
  *  to 5 min while one background request refreshes it, so a hot key answers from cache and is at most one request behind
@@ -38,21 +44,21 @@ export const deterministic = (url: URL): boolean =>
 export const API_LIVE = "public, max-age=0"
 export const API_WEATHER = "public, max-age=0, stale-while-revalidate=300, stale-if-error=3600"
 export const internalCacheControl = (status: number, url: URL): string | undefined => {
-  if (!url.pathname.startsWith("/v1/")) return undefined
+  if (!isApi(url) && url.pathname !== SEARCH_WINDOW_PATH) return undefined
   if (status !== 200) return NO_STORE
   if (deterministic(url)) return IMMUTABLE
-  return url.pathname === "/v1/weather" ? API_WEATHER : API_LIVE
+  return url.pathname === "/weather" ? API_WEATHER : API_LIVE
 }
 
 /** What browsers and other downstream caches see from the (uncached) front door. */
 export const outwardCacheControl = (status: number, url: URL): string | undefined => {
   if (url.pathname === "/") return "private, no-store"   // the sky at request.cf's location: never shared
   if (url.pathname === "/docs" || url.pathname === "/docs/interactive" || url.pathname === "/llms.txt" || url.pathname === "/openapi.json") return "public, max-age=300"
-  if (!url.pathname.startsWith("/v1/")) return undefined
+  if (!isApi(url)) return undefined
   if (status !== 200) return NO_STORE
   if (deterministic(url)) return IMMUTABLE
-  if (url.pathname === "/v1/weather") return "private, max-age=30"
-  if (url.pathname === "/v1/magnetic") return "public, max-age=3600"   // ~0.1°/year
+  if (url.pathname === "/weather") return "private, max-age=30"
+  if (url.pathname === "/magnetic") return "public, max-age=3600"   // ~0.1°/year
   return NO_STORE   // position now, health
 }
 
@@ -65,9 +71,9 @@ export const canonical = (url: URL): string => {
  *  and no sequential hits on c72a360c, so these run in the front door. Weather too: its keys (lat/lon) almost never repeat
  *  (487 Api runs for 489 requests, b49a8a02) and the forward paid the tier-colo round trip (api.fetch p50 18–63 ms by Api
  *  colo); in the front door it is the MetarFeed loopback (cached, cross-version) plus a nearest-station lookup. */
-export const live = (url: URL) => url.pathname === "/v1/weather" ||
-  ((url.pathname === "/v1/position" || url.pathname === "/v1/magnetic") && !url.searchParams.has("time"))
-export const forwards = (method: string, url: URL) => (method === "GET" || method === "HEAD") && url.pathname.startsWith("/v1/") && !live(url)
+export const live = (url: URL) => url.pathname === "/weather" ||
+  ((url.pathname === "/position" || url.pathname === "/magnetic") && !url.searchParams.has("time"))
+export const forwards = (method: string, url: URL) => (method === "GET" || method === "HEAD") && isApi(url) && !live(url)
 
 /** Request headers the front door sends with every forward to the Api. x-ephem-ray joins the Api invocation's log row to
  *  this one; a valid client traceparent (src/clienttrace.ts) is passed on so the Api's root span carries client.trace_id. Cloudflare-Workers-Version-Overrides is passed through (harmless: ctx.exports already runs the caller's
@@ -112,7 +118,9 @@ export const Gateway = HttpRouter.middleware(Effect.gen(function* () {
       const res = yield* http
       return withCacheControl(HttpServerResponse.setHeader(res, "x-ephem-cache", "LOOPBACK_ERROR"), outwardCacheControl(res.status, url))
     }
-    if (edge.role === "front" && url.pathname.startsWith("/v1/")) yield* Effect.annotateCurrentSpan({ "ephem.api_cache": "LOCAL" })
+    // The search window is the Api's cache unit, reached only over ctx.exports: not a public route.
+    if (edge.role === "front" && url.pathname === SEARCH_WINDOW_PATH) return notFound(url)
+    if (edge.role === "front" && isApi(url)) yield* Effect.annotateCurrentSpan({ "ephem.api_cache": "LOCAL" })
     const res = yield* http
     return withCacheControl(res, edge.role === "api" ? internalCacheControl(res.status, url) : outwardCacheControl(res.status, url))
   })

@@ -16,7 +16,7 @@ const origin = direct(async (first: number, count: number) => {
 })
 const TID = "4bf92f3577b34da6a3ce929d0e0e4736", SID = "00f067aa0ba902b7", TP = `00-${TID}-${SID}-01`
 const ctx = (h: Record<string, string> = {}) => ({ now: Date.parse("2026-10-30T12:00:00Z"), headers: { "user-agent": "Mozilla/5.0 (Macintosh) Chrome/156", ...h }, cf: { colo: "EWR", country: "US", city: "New York" }, version: "v1" })
-const span = (o: Record<string, unknown> = {}) => ({ k: "resource", n: "fetch", sid: "a1b2c3d4e5f60718", t: 12.3, d: 40, tg: "/v1/position", ph: [0, 0, 0, 30, 35, 5], b: 900, st: 200, pr: "h2", sv: 'api;desc="HIT";dur=3.1, total;dur=4', r: "a52e17c7ca334350-EWR", ...o })
+const span = (o: Record<string, unknown> = {}) => ({ k: "resource", n: "fetch", sid: "a1b2c3d4e5f60718", t: 12.3, d: 40, tg: "/position", ph: [0, 0, 0, 30, 35, 5], b: 900, st: 200, pr: "h2", sv: 'api;desc="HIT";dur=3.1, total;dur=4', r: "a52e17c7ca334350-EWR", ...o })
 const batch = (s: unknown[], o: Record<string, unknown> = {}) => ({ tp: TP, page: "/", seq: 0, to: Date.parse("2026-10-30T11:59:50Z"), vw: 390, dpr: 3, s, ...o })
 const SCHEMA = JSON.parse(readFileSync(resolve(__dirname, "../ops/basin/rum.schema.json"), "utf8")) as Array<{ name: string; type: string; required: boolean }>
 const matches = (row: Record<string, unknown>) => {
@@ -29,13 +29,13 @@ describe("/rum validation (pure)", () => {
     const r = validateRum(batch([span(), span({ k: "app", n: "data-ready", sid: "1111111111111111", tg: undefined, d: undefined })]), ctx())
     expect(r.ok).toBe(true); if (!r.ok) return
     expect(r.rows).toHaveLength(2); expect(r.dropped).toBe(0)
-    expect(r.rows[0]).toMatchObject({ trace_id: TID, span_id: "a1b2c3d4e5f60718", parent_id: SID, kind: "resource", name: "fetch", page: "/", target: "/v1/position",
+    expect(r.rows[0]).toMatchObject({ trace_id: TID, span_id: "a1b2c3d4e5f60718", parent_id: SID, kind: "resource", name: "fetch", page: "/", target: "/position",
       cache: "HIT", ray: "a52e17c7ca334350-EWR", ttfb_ms: 35, ua_family: "browser", colo: "EWR", country: "US", synthetic: false, time_origin: "2026-10-30T11:59:50.000Z" })
     expect(r.rows[1]).toMatchObject({ kind: "app", name: "data-ready" })
     for (const row of r.rows) matches(row as unknown as Record<string, unknown>)
   })
   it("privacy: no IP, no user agent, no city, no URL or query is ever stored", () => {
-    const r = validateRum(batch([span({ tg: "/v1/position?lat=40.71234&lon=-74.01", dt: "x" }), span({ tg: "https://evil.example/p?q=secret" }), span({ tg: "/fonts/7c1a2e7bc735/RPNDot-Regular.woff2" }), span({ tg: "/assets/000000000000/secret.txt" })]),
+    const r = validateRum(batch([span({ tg: "/position?lat=40.71234&lon=-74.01", dt: "x" }), span({ tg: "https://evil.example/p?q=secret" }), span({ tg: "/fonts/7c1a2e7bc735/RPNDot-Regular.woff2" }), span({ tg: "/assets/000000000000/secret.txt" })]),
       ctx({ "cf-connecting-ip": "203.0.113.9", "x-real-ip": "203.0.113.9" }))
     if (!r.ok) throw new Error(r.reason)
     expect(r.rows.map(x => x.target)).toEqual(["other", "other", "other", "other"])
@@ -69,8 +69,8 @@ describe("/rum validation (pure)", () => {
     expect(r.rows[0]).not.toHaveProperty("tls_ms")
   })
   it("targetOf: route ids, known assets, else other", () => {
-    expect(targetOf("/")).toBe("/"); expect(targetOf("/v1/day")).toBe("/v1/day"); expect(targetOf("/rum")).toBe("/rum")
-    expect(targetOf("external")).toBe("external"); expect(targetOf("/v1/day/x")).toBe("other"); expect(targetOf(5)).toBeUndefined()
+    expect(targetOf("/")).toBe("/"); expect(targetOf("/day")).toBe("/day"); expect(targetOf("/rum")).toBe("/rum")
+    expect(targetOf("external")).toBe("external"); expect(targetOf("/day/x")).toBe("other"); expect(targetOf(5)).toBeUndefined()
   })
   it("the limiter: per trace per minute, per isolate per 10 s", () => {
     const lim = makeLimiter({ ...RUM_LIMITS, perTracePerMin: 3, perIsolatePer10s: 5 })
@@ -103,7 +103,7 @@ describe("POST /rum", () => {
 
 describe("Server-Timing", () => {
   it("every API response: blocks with count + cache path, the trace (a traceresponse), total last; no cpu entry", async () => {
-    const r = await makeHandler(makeBlocks(origin))(new Request("http://x/v1/day?date=2026-10-28&tz=America/New_York&lat=40.6892&lon=-74.0445", { headers: { traceparent: TP } }))
+    const r = await makeHandler(makeBlocks(origin))(new Request("http://x/day?date=2026-10-28&tz=America/New_York&lat=40.6892&lon=-74.0445", { headers: { traceparent: TP } }))
     const st = r.headers.get("server-timing")!
     expect(st).toMatch(/^blocks;desc="ORIGIN:\d+ n=\d+";dur=[0-9.]+, geoid;desc="L1";dur=[0-9.]+, trace;desc="00-4bf92f3577b34da6a3ce929d0e0e4736-[0-9a-f]{16}-01", total;dur=[0-9.]+$/)
     expect(st).not.toMatch(/cpu/)
@@ -125,8 +125,8 @@ describe("request rows carry the trace", () => {
   it("trace ids (validated hex) + synthetic; matches the stream schema", async () => {
     const rows: RequestRow[] = []
     const sink: RequestLogSink = { version: "v", emit: r => { rows.push(r) } }
-    await makeHandler(makeBlocks(origin))(new Request("http://x/v1/day?date=2026-10-28&tz=America/New_York&lat=40.6892&lon=-74.0445", { headers: { traceparent: TP, tracestate: "ephem=1234567890abcdef", "x-ephem-load": "J1" } }), sink)
-    expect(rows[0]).toMatchObject({ synthetic: true, trace_id: TID, client_span_id: SID, client_parent_id: "1234567890abcdef", route: "/v1/day" })
+    await makeHandler(makeBlocks(origin))(new Request("http://x/day?date=2026-10-28&tz=America/New_York&lat=40.6892&lon=-74.0445", { headers: { traceparent: TP, tracestate: "ephem=1234567890abcdef", "x-ephem-load": "J1" } }), sink)
+    expect(rows[0]).toMatchObject({ synthetic: true, trace_id: TID, client_span_id: SID, client_parent_id: "1234567890abcdef", route: "/day" })
     expect(rows[0]!.span_id).toMatch(/^[0-9a-f]{16}$/)
     const schema = JSON.parse(readFileSync(resolve(__dirname, "../ops/basin/requests.schema.json"), "utf8")) as Array<{ name: string; required: boolean }>
     for (const k of Object.keys(rows[0]!)) expect(schema.some(f => f.name === k), k).toBe(true)
@@ -150,7 +150,7 @@ describe("loopback trace propagation", () => {
   it("the Blocks loader passes the current span's traceparent (the client's trace id)", async () => {
     const tps: Array<string | undefined> = []
     const blocks = makeBlocks(async (i, tp) => { tps.push(tp); return origin(i) })
-    await makeHandler(blocks)(new Request("http://x/v1/day?date=2026-10-28&tz=America/New_York&lat=40.6892&lon=-74.0445", { headers: { traceparent: TP } }))
+    await makeHandler(blocks)(new Request("http://x/day?date=2026-10-28&tz=America/New_York&lat=40.6892&lon=-74.0445", { headers: { traceparent: TP } }))
     expect(tps.length).toBeGreaterThan(0)
     for (const t of tps) expect(t).toMatch(new RegExp(`^00-${TID}-[0-9a-f]{16}-01$`))
   })

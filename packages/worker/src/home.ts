@@ -1,5 +1,5 @@
 // GET /: the live sky over wherever the visitor is. Location comes from Cloudflare (request.cf) unless ?lat&lon override it;
-// every number on the page comes from this Worker's own /v1 API, fetched by the page from the same origin.
+// every number on the page comes from this Worker's own API, fetched by the page from the same origin.
 import * as Effect from "effect/Effect"
 import * as Option from "effect/Option"
 import * as HttpRouter from "effect/http/HttpRouter"
@@ -50,14 +50,14 @@ export const initialQueries = (v: Visitor, now: number) => {
   const q = { lat: v.lat.toFixed(5), lon: v.lon.toFixed(5) }, D = Math.floor(now / 864e5), t0 = (D - 1) * 864e5
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: v.tz }).format(new Date(now))
   return {
-    "ephem-position": ["/v1/position", q],
-    "ephem-track": ["/v1/track", { ...q, start: iso(t0), end: iso(t0 + 72 * 3600e3) }],
-    "ephem-day": ["/v1/day", { ...q, date: today, tz: v.tz }],
-    "ephem-magnetic": ["/v1/magnetic", q],   // the declination, so MAG shows with the first numbers (it used to wait for weather)
+    "ephem-position": ["/position", q],
+    "ephem-track": ["/track", { ...q, start: iso(t0), end: iso(t0 + 72 * 3600e3) }],
+    "ephem-day": ["/day", { ...q, date: today, tz: v.tz }],
+    "ephem-magnetic": ["/magnetic", q],   // the declination, so MAG shows with the first numbers (it used to wait for weather)
   } as const satisfies Record<string, readonly [string, Record<string, string>]>
 }
 
-/** An answer slower than this is left out and the page fetches it (a cold Api isolate's /v1/day or /v1/track MISS is ~200–350 ms). */
+/** An answer slower than this is left out and the page fetches it (a cold Api isolate's /day or /track MISS is ~200–350 ms). */
 const EMBED_TIMEOUT_MS = 1500
 // GET /: the head (CSS, markup, boot script) is flushed at once; the three first-load answers follow, computed in-process
 // through the router (src/embed.ts), then </body>. An answer that is not a 200 is left out and the page fetches it.
@@ -246,7 +246,7 @@ function chartCenter(lat, azs) {
 }
 // Horizon crossings and culminations from track samples [{t, alt (true), az}]: h0 is the centre's true altitude at rise/set.
 // Crossings interpolate linearly between samples; transit and anti-transit (upper and lower culmination) take the vertex of a
-// parabola through three samples. Times here are within a minute or so; the page prefers /v1/day's exact time when it has one.
+// parabola through three samples. Times here are within a minute or so; the page prefers /day's exact time when it has one.
 function trackEvents(s, h0) {
   var out = [], az = unwrapAz(s.map(function (p) { return p.az; }));
   for (var i = 1; i < s.length; i++) {
@@ -671,7 +671,7 @@ ${READ_EMBED_JS}
 var D2R = Math.PI / 180, AU = 149597870.7;
 var loc = { lat: LOC.lat, lon: LOC.lon, place: LOC.place, city: LOC.city, tz: LOC.tz, source: LOC.source, acc: null };
 var $ = function (id) { return document.getElementById(id); };
-// Debug only: ?at=<ISO time> freezes the page's clock there (and asks /v1/position for that time), so any sky state renders
+// Debug only: ?at=<ISO time> freezes the page's clock there (and asks /position for that time), so any sky state renders
 // deterministically for screenshots; ?pose=<az>,<alt> with it fakes the phone's pointing. Real visitors never send it; / is
 // no-store either way, and a timed position is the same immutable answer the API gives anyone.
 var QS = new URLSearchParams(location.search), AT = (function () { var t = Date.parse(QS.get("at") || ""); return isFinite(t) && t > 63e9 && t < 5.6e12 ? t : null; })();
@@ -730,7 +730,7 @@ function parallactic(alt, az, dec, lat) {
 
 // ---------- canvas: the sky chart ----------
 // All 360° of azimuth by the whole altitude range (chartModel, CORE_JS): the sky at true scale, the horizon, the civil, nautical
-// and astronomical bands, the deep ground at a quarter scale. Each body's 24 h track (now ± 12 h, the one /v1/track answer)
+// and astronomical bands, the deep ground at a quarter scale. Each body's 24 h track (now ± 12 h, the one /track answer)
 // runs through sky and ground, past solid and future dashed, split at the live marker. Dark: the night instrument, Sun in
 // lavender and Moon in teal; light: the same chart on reflective LCD glass, ink only. It draws only when something changes:
 // data, resize, theme, drag, pointing, fonts, or a marker moving half a pixel (checked once a second; no rAF loop).
@@ -786,7 +786,7 @@ function trackInfo(nowMs) {
   ["sun", "moon"].forEach(function (body) {
     var win = out.win[body] = S.track.filter(function (x) { return Math.abs(x.t - nowMs) <= HALF[body]; });
     var s = win.map(function (x) { return { t: x.t, alt: x[body].altitude, az: x[body].azimuth }; });
-    out[body] = trackEvents(s, -0.833).map(function (e) {   // the exact /v1/day time when it has this event
+    out[body] = trackEvents(s, -0.833).map(function (e) {   // the exact /day time when it has this event
       var k = e.kind === "antitransit" ? null : e.kind, m = k && dayEv.find(function (d) { return d.body === body && d.kind === k && Math.abs(Date.parse(d.time) - e.t) < 40 * 60e3; });
       return m ? Object.assign({}, e, { t: Date.parse(m.time) }) : e;
     });
@@ -1011,7 +1011,7 @@ function tick() {
     tm = "T\u2212" + hhmmss(t - now);
   } else if (S.day && !S.day.loading && S.tomorrowFor === S.day.date) {
     if (S.tomorrow) html = "No rise, set or twilight in the next two days";
-  } else if (S.day && !S.day.loading) loadTomorrow();   // today has nothing left: only now is tomorrow's /v1/day needed
+  } else if (S.day && !S.day.loading) loadTomorrow();   // today has nothing left: only now is tomorrow's /day needed
   setText("tminus", tm);
   if (html !== lastNext) { lastNext = html; $("next").innerHTML = html; }
   if (S.day && localDate(now) !== S.day.date) loadDay();
@@ -1072,29 +1072,29 @@ function err(e) { S.err = e.message || String(e); var s = document.createElement
 // The live answer: no time parameter, so the front door computes it (never forwarded, never cached; a timed URL would add an
 // Api hop and a single-use immutable cache entry every 5 s).
 function loadPos() {
-  return api("/v1/position", AT == null ? q() : Object.assign(q(), { time: AT_ISO })).then(function (p) { S.posAt = Date.now(); S.posErr = null; setPos(p); tick(); })
+  return api("/position", AT == null ? q() : Object.assign(q(), { time: AT_ISO })).then(function (p) { S.posAt = Date.now(); S.posErr = null; setPos(p); tick(); })
     .catch(function (e) { S.posErr = e; err(e); });
 }
 function loadDay() {
   var today = localDate(tNow());
   S.day = { date: today, events: [], start: new Date(tNow()).toISOString(), end: new Date(tNow()).toISOString(), loading: true }; S.tomorrow = null; S.tomorrowFor = null;
-  return api("/v1/day", dayQuery(today)).then(applyDay).catch(err);
+  return api("/day", dayQuery(today)).then(applyDay).catch(err);
 }
 function dayQuery(today) { return Object.assign(q(), { date: today, tz: loc.tz }); }
 function applyDay(r) { S.day = r; S.tomorrow = null; S.tomorrowFor = null; drawEvents(); drawStrip(); tick(); if (S.to) setBodies(); requestDraw(); }
 // Tomorrow's events matter only once today's have all passed (the Next line); fetched then, once per day.
 function loadTomorrow() {
   var d = S.day; S.tomorrowFor = d.date;
-  return api("/v1/day", Object.assign(q(), { date: nextDate(d.date), tz: loc.tz }), true).then(function (b) { if (S.day === d) { S.tomorrow = b; tick(); } }).catch(function () {});
+  return api("/day", Object.assign(q(), { date: nextDate(d.date), tz: loc.tz }), true).then(function (b) { if (S.day === d) { S.tomorrow = b; tick(); } }).catch(function () {});
 }
-// Declination comes with the weather answer (observer.magneticDeclination, the same WMM2025 value); /v1/magnetic only if weather fails.
+// Declination comes with the weather answer (observer.magneticDeclination, the same WMM2025 value); /magnetic only if weather fails.
 function setDecl(x) { S.decl = x; if (S.to) setBodies(); diag(); }
 function loadMag() {
-  return api("/v1/magnetic", q(), true).then(function (b) { S.decl = b.magnetic.declination; if (S.to) setBodies(); if (S.wx) drawWx(); diag(); })
+  return api("/magnetic", q(), true).then(function (b) { S.decl = b.magnetic.declination; if (S.to) setBodies(); if (S.wx) drawWx(); diag(); })
     .catch(function () { S.decl = null; });
 }
 function loadWx() {
-  return api("/v1/weather", Object.assign(q(), { n: 3 }), true).then(function (b) {
+  return api("/weather", Object.assign(q(), { n: 3 }), true).then(function (b) {
     S.wx = b; S.wxAt = Date.now(); if (S.decl !== b.observer.magneticDeclination) setDecl(b.observer.magneticDeclination); drawWx(); diag();
   }).catch(function (e) { $("wx").innerHTML = '<span class="err">Weather unavailable: ' + esc(e.message || e) + '</span>'; if (S.decl == null) loadMag(); });
 }
@@ -1131,14 +1131,14 @@ function drawWx() {
   $("rawd").addEventListener("toggle", function (e) { S.rawOpen = e.target.open; });
   wxAges();
 }
-// One /v1/track answer, 20-minute UTC grid (217 samples), over [D - 24 h, D + 48 h] for D = this UTC midnight: that covers now +- 12 h
+// One /track answer, 20-minute UTC grid (217 samples), over [D - 24 h, D + 48 h] for D = this UTC midnight: that covers now +- 12 h
 // (the paths) and the local day in any zone from UTC-12 to UTC+14 (the strip; a local day can start up to 24 h before D, e.g.
 // New York at 23:30 EDT is already D), and the URL is the same for everyone here all UTC day, so it is one immutable, shared
 // cache entry. Fetched at once, in parallel with the rest; again when the UTC date changes.
 function loadTrack() {
   var D = Math.floor(tNow() / 864e5), t0 = (D - 1) * 864e5, iso = function (ms) { return new Date(ms).toISOString().slice(0, 19) + "Z"; };
   S.trackDay = D;
-  return api("/v1/track", Object.assign(q(), { start: iso(t0), end: iso(t0 + 72 * 3600e3) }), true).then(function (r) { if (S.trackDay === D) applyTrack(r); }).catch(err);
+  return api("/track", Object.assign(q(), { start: iso(t0), end: iso(t0 + 72 * 3600e3) }), true).then(function (r) { if (S.trackDay === D) applyTrack(r); }).catch(err);
 }
 function applyTrack(r) {
   S.trackDay = Math.round(Date.parse(r.start) / 864e5) + 1;
@@ -1179,19 +1179,19 @@ function header() {
   $("place").classList.toggle("coords", /^[0-9.]+\u00b0 [NS], [0-9.]+\u00b0 [EW]$/.test(loc.city)); // a bare coordinate title: smaller, so it fits on one line at 390 px
   document.title = "ephem \\u00b7 the sky over " + loc.city;
   var b = location.origin;
-  $("curl").textContent = "curl '" + b + "/v1/position?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "'\\n\\n" +
-    "curl '" + b + "/v1/track?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "&start=" + new Date((Math.floor(tNow() / 864e5) - 1) * 864e5).toISOString().slice(0, 19) + "Z&end=" + new Date((Math.floor(tNow() / 864e5) + 2) * 864e5).toISOString().slice(0, 19) + "Z'\\n\\n" +
-    "curl '" + b + "/v1/day?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "&date=" + localDate(tNow()) + "&tz=" + loc.tz + "'\\n\\n" +
-    "curl '" + b + "/v1/weather?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "&n=3'";
+  $("curl").textContent = "curl '" + b + "/position?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "'\\n\\n" +
+    "curl '" + b + "/track?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "&start=" + new Date((Math.floor(tNow() / 864e5) - 1) * 864e5).toISOString().slice(0, 19) + "Z&end=" + new Date((Math.floor(tNow() / 864e5) + 2) * 864e5).toISOString().slice(0, 19) + "Z'\\n\\n" +
+    "curl '" + b + "/day?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "&date=" + localDate(tNow()) + "&tz=" + loc.tz + "'\\n\\n" +
+    "curl '" + b + "/weather?lat=" + loc.lat.toFixed(4) + "&lon=" + loc.lon.toFixed(4) + "&n=3'";
 }
-// First load: the server streams today's answers into the page (src/embed.ts; /v1/position, /v1/track, /v1/day, verbatim),
+// First load: the server streams today's answers into the page (src/embed.ts; /position, /track, /day, verbatim),
 // so the first paint with data needs no API round trip. Whatever is missing (or ?at, which the server doesn't know) is fetched.
 var booted = false;
 function boot() {
   if (booted) return; booted = true;
   var pos = AT == null ? __embed("ephem-position") : null, tr = AT == null ? __embed("ephem-track") : null, dy = AT == null ? __embed("ephem-day") : null;
   header(); diag();
-  if (pos) { S.posAt = Date.now(); S.posErr = null; S.last = { url: "/v1/position?" + new URLSearchParams(q()).toString(), ms: null, prov: pos.provenance }; setPos(pos); } else loadPos();
+  if (pos) { S.posAt = Date.now(); S.posErr = null; S.last = { url: "/position?" + new URLSearchParams(q()).toString(), ms: null, prov: pos.provenance }; setPos(pos); } else loadPos();
   if (tr) applyTrack(tr); else loadTrack();
   if (dy && dy.date === localDate(tNow())) applyDay(dy); else loadDay();
   var mg = AT == null ? __embed("ephem-magnetic") : null; if (mg && mg.magnetic) setDecl(mg.magnetic.declination);

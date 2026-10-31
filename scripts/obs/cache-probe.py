@@ -34,13 +34,13 @@ def key(route: str) -> str:
     j = rng.random()
     lat, lon = round(20 + 40 * j, 5), round(-120 + 60 * rng.random(), 5)
     t = datetime(2030, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=rng.randrange(0, 3 * 365 * 86400))
-    if route == "day": return f"/v1/day?date={(t.date()).isoformat()}&tz=America/New_York&lat={lat}&lon={lon}"
-    if route == "alignment": return f"/v1/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&start={iso(t)}&end={iso(t + timedelta(hours=24))}"
-    if route == "position": return f"/v1/position?lat={lat}&lon={lon}&time={iso(t)}"
-    if route == "position-now": return f"/v1/position?lat={lat}&lon={lon}"
-    if route == "weather": return f"/v1/weather?lat={lat}&lon={lon}&n=3"
-    if route == "weather-fixed": return "/v1/weather?lat=40.7&lon=-74&n=3"   # one hot key: what SWR on the Api buys
-    if route == "magnetic": return f"/v1/magnetic?lat={lat}&lon={lon}"
+    if route == "day": return f"/day?date={(t.date()).isoformat()}&tz=America/New_York&lat={lat}&lon={lon}"
+    if route == "alignment": return f"/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&start={iso(t)}&end={iso(t + timedelta(hours=24))}"
+    if route == "position": return f"/position?lat={lat}&lon={lon}&time={iso(t)}"
+    if route == "position-now": return f"/position?lat={lat}&lon={lon}"
+    if route == "weather": return f"/weather?lat={lat}&lon={lon}&n=3"
+    if route == "weather-fixed": return "/weather?lat=40.7&lon=-74&n=3"   # one hot key: what SWR on the Api buys
+    if route == "magnetic": return f"/magnetic?lat={lat}&lon={lon}"
     if route == "home": return "/"
     if route == "docs": return "/docs"
     raise SystemExit(f"unknown route {route}")

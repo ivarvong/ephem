@@ -34,7 +34,7 @@ def spans(name: str) -> dict:
     return out
 
 
-inv = [e for e in events_all([eq("$metadata.type", "cf-worker-event"), starts("$workers.event.request.url", f"https://api.internal/v1/{a.route}")], W)
+inv = [e for e in events_all([eq("$metadata.type", "cf-worker-event"), starts("$workers.event.request.url", f"https://api.internal/{a.route}")], W)
        if not a.version or e["$workers"]["scriptVersion"]["id"].startswith(a.version)]
 HANDLER = {"alignment/search/window": "search.window"}   # handler span name when it is not the route's
 handler, loads, gets = spans(HANDLER.get(a.route, a.route)), spans("blocks.load"), spans("GET")

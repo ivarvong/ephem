@@ -19,16 +19,16 @@ def blocks_between(j0, j1):
 ap = argparse.ArgumentParser(); ap.add_argument("--oracle", default="http://127.0.0.1:8440"); a = ap.parse_args()
 cases = default_cases(); need = set(); out = {"spec": "ephem-oracle/3", "position": [], "day": [], "crossing": [], "alignment": []}
 for q in cases["position"]:
-    s, r = get(a.oracle, "/v1/position", q); assert s == 200, (s, r); out["position"].append({"query": q, "expect": r})
+    s, r = get(a.oracle, "/position", q); assert s == 200, (s, r); out["position"].append({"query": q, "expect": r})
     need.update(blocks_between(jd(q["time"]), jd(q["time"])))
 for q in cases["day"]:
-    s, r = get(a.oracle, "/v1/day", q); assert s == 200, (s, r); out["day"].append({"query": q, "expect": r})
+    s, r = get(a.oracle, "/day", q); assert s == 200, (s, r); out["day"].append({"query": q, "expect": r})
     need.update(blocks_between(jd(r["start"]), jd(r["end"])))
 for q in cases["crossing"]:
-    s, r = get(a.oracle, "/v1/crossing", q); assert s == 200, (s, r); out["crossing"].append({"query": q, "expect": r})
+    s, r = get(a.oracle, "/crossing", q); assert s == 200, (s, r); out["crossing"].append({"query": q, "expect": r})
     need.update(blocks_between(jd(r["start"]), jd(r["end"])))
 for q in cases["alignment"]:
-    s, r = get(a.oracle, "/v1/alignment", q); assert s == 200, (s, r); out["alignment"].append({"query": q, "expect": r})
+    s, r = get(a.oracle, "/alignment", q); assert s == 200, (s, r); out["alignment"].append({"query": q, "expect": r})
     need.update(blocks_between(jd(q["start"]), jd(q["end"])))
 for b in sorted(need):
     dst = os.path.join(FIX, "blocks", f"{b}.bin"); src = os.path.join(ROOT, "data/jpl/blocks", f"{b}.bin")

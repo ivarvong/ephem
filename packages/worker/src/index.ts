@@ -1,6 +1,6 @@
 // ephem: the front door. Workers Caching only (no Cache API); which entrypoints are cached is cloudflare.config.ts `exports`.
 //   default     cache OFF. Always runs (traces, logs, request.cf, `/`, `/mcp`, live position / magnetic, weather, the
-//               alignment/search merge); every deterministic GET /v1/* is forwarded to the Api over ctx.exports.
+//               alignment/search merge); every deterministic GET API is forwarded to the Api over ctx.exports.
 //   Api         cache ON.  The /v1 routes (src/compute.ts, lean router src/router.ts); every deterministic answer and search window.
 //   BlockStore  cache ON.  DE440 blocks and EGM96 bands from R2 (src/compute.ts).
 //   MetarFeed   cache ON.  GET /feed/v<N>/metars.cache.csv.gz → aviationweather.gov's feed, max-age + SWR + stale-if-error.

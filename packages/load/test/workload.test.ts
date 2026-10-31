@@ -75,7 +75,7 @@ describe("plan", () => {
 describe("workloads", () => {
   it("match the laptop harnesses", () => {
     const r = mulberry32(1)
-    expect(build("position", r, 0, NOW).path).toBe("/v1/position?lat=40.7&lon=-74")
+    expect(build("position", r, 0, NOW).path).toBe("/position?lat=40.7&lon=-74")
     expect(WARM_KEYS).toHaveLength(24)
     expect(build("warm", r, 25, NOW).path).toBe(WARM_KEYS[1])
     const t = new URL(build("track", r, 0, NOW).path, ORIGIN)
