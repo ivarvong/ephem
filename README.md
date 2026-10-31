@@ -56,6 +56,10 @@ and EGM96 read from PROJ's GeoTIFF through pyproj (`reference/geoid/fetch.sh` fe
 
 Every quantity's definition is in `packages/api/src/index.ts` (`CONVENTIONS`) and in `/openapi.json` of any deployment.
 
+## Guides
+
+- [Build a reproducible ephem MCP chart and inspect it inline in pi](docs/pi-mcp-mpl.md)
+
 ## License
 
 MIT (see `LICENSE`), except for the following:
