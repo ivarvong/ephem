@@ -1,10 +1,10 @@
-// Initial data in the page, streamed (used by the homepage). A page's first data used
-// to cost a second network round trip (document → boot script → API fetch): ~570 ms of latency on Fast 3G for ~2 ms of
-// server CPU. Instead the page handler runs the API routes in-process (the same router, the same middleware: a live
-// /v1/position is computed here, /v1/day goes through Gateway to the cached Api, exactly as the browser's fetch would) and
-// embeds their response bodies verbatim as `<script type="application/json" id="…">`, so the numbers are the API's by
-// construction. The response streams: the head (CSS, fonts, boot script) is flushed at once, so the browser parses and
-// styles while the server waits for the data; the rest (body + data + glue) follows when the data is in.
+// Initial data in the page, streamed (used by the homepage). A page's first data used to cost a second network round trip
+// (document → boot script → API fetch): ~570 ms of latency on Fast 3G for ~2 ms of server CPU. Instead the page handler runs
+// the API routes in-process (the same router, the same middleware: a live /v1/position is computed here, /v1/day goes
+// through Gateway to the cached Api, exactly as the browser's fetch would) and embeds their response bodies verbatim as
+// `<script type="application/json" id="…">` (rendered by @ephem/web), so the numbers are the API's by construction. The
+// response streams: the head and the body's shell are flushed at once, so the browser parses and styles while the server
+// waits for the data; the answers follow when they are in.
 import * as Clock from "effect/Clock"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
@@ -31,24 +31,7 @@ export const routeText = (router: HttpRouter.HttpRouter, req: HttpServerRequest.
   return { status: web.status, text: yield* Effect.promise(() => web.text()) }
 })
 
-/** `<script type="application/json" id>` holding JSON text; `<` is escaped (\u003c is the same JSON), so no `</script>`. */
-export const jsonScript = (id: string, json: string): string =>
-  `<script type="application/json" id="${id}">${json.replace(/</g, "\\u003c")}</script>`
-
-/** Where a tail splits into chunks of its own: everything after it is written separately, so what comes before is flushed and
- *  parsed without waiting (the homepage sends its inline font after the answers that boot it). */
-export const FLUSH = "<!--flush-->"
-
-/** The inline <script> and <style> blocks of a head without comments and indentation (the homepage's 98 KB head → ~60).
- *  From scripts: whole lines that start with //, and a trailing "  // …" right after ; { } ) , or [ (no string in the page's
- *  scripts spans lines or holds that pattern); from styles, block comments. JSON scripts and markup are untouched. */
-export const minifyInline = (h: string): string =>
-  h.replace(/(<script>)([\s\S]*?)(<\/script>)|(<style>)([\s\S]*?)(<\/style>)/g, (_m, a, js, b, c, css, d) => js != null
-    ? a + js.split("\n").map((l: string) => l.trim().replace(/([;{}),[])\s+\/\/ .*$/, "$1")).filter((l: string) => l && !l.startsWith("//")).join("\n") + b
-    : c + css.replace(/\/\*[\s\S]*?\*\//g, "").split("\n").map((l: string) => l.trim()).filter(Boolean).join("\n") + d)
-
-/** A streamed HTML response: `head` (minified) is sent at once, `tail` when it has run (forked now, so it starts at once
- *  too), in chunks split at FLUSH. The tail must not fail: give it its own fallback.
+/** A streamed HTML response: `head` goes out at once, `tail` (forked now, so it starts at once too) when it has run. The tail must not fail: give it its own fallback.
  *  `html.stream` span: opened with the response, ended when the body stream has handed its last chunk to the runtime (or was
  *  cancelled), so a streamed document's body end is recorded (the request span closes when the handler returns, at the first
  *  byte). Workers' clock only advances on I/O, so the end reads the last I/O before the close. Attributes: html.chunks,
@@ -58,8 +41,8 @@ export const streamHtml = (head: string, tail: Effect.Effect<string>, headers: R
   const fiber = yield* Effect.forkDetach(tail)
   const enc = new TextEncoder()
   let chunks = 0, bytes = 0
-  const body = Stream.concat(Stream.make(enc.encode(minifyInline(head))),
-    Stream.fromEffect(Fiber.join(fiber)).pipe(Stream.flatMap(s => Stream.fromIterable(s.split(FLUSH).map(p => enc.encode(p)))))).pipe(
+  const body = Stream.concat(Stream.make(enc.encode(head)),
+    Stream.fromEffect(Fiber.join(fiber)).pipe(Stream.map(s => enc.encode(s)))).pipe(
     Stream.tap(b => Effect.sync(() => { chunks++; bytes += b.byteLength })),
     Stream.onExit(exit => Effect.flatMap(Clock.currentTimeNanos, now => Effect.sync(() => {
       span.attribute("html.chunks", chunks); span.attribute("html.bytes", bytes)
@@ -68,8 +51,3 @@ export const streamHtml = (head: string, tail: Effect.Effect<string>, headers: R
     }))))
   return HttpServerResponse.stream(body, { contentType: "text/html; charset=utf-8", headers })
 })
-
-/** Browser side: the embedded JSON by id, or null (missing, empty, unparsable). */
-export const READ_EMBED_JS = String.raw`
-function __embed(id) { try { var el = document.getElementById(id); return el && el.textContent ? JSON.parse(el.textContent) : null; } catch (e) { return null; } }
-`

@@ -1,17 +1,17 @@
 import { describe, expect, it } from "vitest"
-import { ICON_LINK, ICON_SVG, favicon } from "../src/favicon.ts"
-import { page } from "../src/home.ts"
-import { SCALAR_HTML, docsHtml } from "../src/docs.ts"
+import { ICON_HREF, ICON_SVG, renderDocs, renderHomeStatic, renderScalar } from "@ephem/web/server"
+import { favicon } from "../src/favicon.ts"
+import { docsContent } from "../src/docs.ts"
 
 const V = { lat: 1, lon: 2, place: "x", city: "x", tz: "UTC", colo: null, source: "query" } as const
 
 describe("favicon: zero requests from our pages, a tiny immutable /favicon.ico for everyone else", () => {
   it("every HTML page inlines the icon as a data URI (so the browser never asks for /favicon.ico)", async () => {
-    for (const html of [page(V), docsHtml(), SCALAR_HTML]) {
-      expect(html).toContain(ICON_LINK)
+    for (const html of [await renderHomeStatic({ v: V, blocks: "/b/", now: 0 }), renderDocs(docsContent()), renderScalar()]) {
+      expect(html).toContain(`<link rel="icon" type="image/svg+xml" href="${ICON_HREF}"/>`)
       expect(html.match(/<link rel="icon"/g)).toHaveLength(1)
     }
-    expect(ICON_LINK).toMatch(/^<link rel="icon" type="image\/svg\+xml" href="data:image\/svg\+xml,[^"<>]+">$/)
+    expect(ICON_HREF).toMatch(/^data:image\/svg\+xml,[^"<>]+$/)
   })
   it("GET /favicon.ico is the SVG, immutable for a year; HEAD has no body; nothing else matches", async () => {
     const r = favicon(new Request("https://e.example/favicon.ico?x=1"))!

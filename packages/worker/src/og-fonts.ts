@@ -1,37 +1,20 @@
-// Ephem DIN for glyph: glyph fetches fonts by https URL, pinned by sha256, so the front door serves the page's own inline font
-// (src/din.ts) at immutable, content-addressed paths: /assets/<sha256[0:16]>/ephem-din-{regular,bold}.woff2.
-// test/og.test.ts checks these hashes against the bytes, so regenerating src/din.ts without updating them fails the gate.
+// Ephem DIN for glyph: glyph fetches fonts by https URL, pinned by sha256. The page's own font files (packages/web/src/fonts,
+// content-hashed by the web build and served by Workers Static Assets, immutable) are named here with the sha256 the build
+// recorded (packages/web/dist/assets.json); test/og.test.ts checks the hashes against the bytes.
 // glyph fetches the font from this version's own preview URL (https://<version id[0:8]>-ephem.ivar.workers.dev), so the spec
 // only ever names a path the same version serves: a font change is one deploy, and a canary renders with its own font
 // (2026-10-31: 352678e named a path only the canary served, while glyph fetched the live host, and got the fallback card).
-import { DIN_ADV, DIN_BOLD_B64, DIN_REGULAR_B64 } from "./din.ts"
+import { assets } from "@ephem/web/server"
+import { DIN_ADV } from "./din.ts"
 
-type W = "regular" | "bold"
 export const OG_ORIGIN = "https://ephem.ivar.workers.dev"
 /** This version's preview URL (workers.dev preview URLs are on for ephem); the public host when the version is unknown (tests, dev). */
 export const versionOrigin = (versionId?: string) => /^[0-9a-f]{8}/.test(versionId ?? "") ? `https://${versionId!.slice(0, 8)}-ephem.ivar.workers.dev` : OG_ORIGIN
-export const DIN_SHA256 = {
-  regular: "316a72622a0926ee85e3db60007e0347aede4005a56d197a624d8910a3292d50",
-  bold: "13667defdc54a0cd8716d8afc8214a513971739e55af58093265439886a2cf71",
-} as const
-const path = (sha: string, w: W) => `/assets/${sha.slice(0, 16)}/ephem-din-${w}.woff2`
-export const fontPath = (w: W) => path(DIN_SHA256[w], w)
-const B64 = { regular: DIN_REGULAR_B64, bold: DIN_BOLD_B64 } as const
-type K = keyof typeof B64
-let bytes: Partial<Record<K, Uint8Array<ArrayBuffer>>> = {}
-const dec = (k: K): Uint8Array<ArrayBuffer> => (bytes[k] ??= Uint8Array.from(atob(B64[k]), c => c.charCodeAt(0)) as Uint8Array<ArrayBuffer>)
-export const fontBytes = (w: W) => dec(w)
-export const resetFontBytes = () => { bytes = {} }
-/** The bytes the front door serves at an /assets path. */
-export const servedFont = (p: string): Uint8Array<ArrayBuffer> | null => {
-  for (const w of ["regular", "bold"] as const) if (p === fontPath(w)) return fontBytes(w)
-  return null
-}
 /** The Ephem DIN the OG card names (served by the version that renders it), and its characters and advances (src/og.ts lays
  *  out and picks faces with these). */
 export const ogFonts = (versionId?: string) => {
-  const o = versionOrigin(versionId)
-  return { regular: { url: o + fontPath("regular"), sha256: DIN_SHA256.regular }, bold: { url: o + fontPath("bold"), sha256: DIN_SHA256.bold } } as const
+  const o = versionOrigin(versionId), f = assets().fonts
+  return { regular: { url: o + f.regular.href, sha256: f.regular.sha256 }, bold: { url: o + f.bold.href, sha256: f.bold.sha256 } } as const
 }
 export const OG_FONTS = ogFonts()
 export const OG_DIN_ADV = DIN_ADV

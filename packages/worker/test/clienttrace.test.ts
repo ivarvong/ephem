@@ -6,10 +6,8 @@ import { resolve } from "node:path"
 import { makeHandler } from "../src/app.ts"
 import { REC, direct, makeBlocks } from "../src/blocks.ts"
 import { setTracing, type Tracing } from "../src/trace.ts"
-import { CLIENT_TRACE_JS, parseTraceparent, traceparentMeta } from "../src/clienttrace.ts"
+import { parseTraceparent } from "../src/clienttrace.ts"
 import { forwardHeaders, forwards } from "../src/responses.ts"
-import { page as homePage } from "../src/home.ts"
-import { RUM_JS } from "../src/rum.ts"
 
 const FIX = resolve(__dirname, "../../core/test/fixtures/blocks")
 const origin = direct(async (first: number, count: number) => {
@@ -26,7 +24,6 @@ const recorder = () => {
 afterEach(() => setTracing(undefined))
 const TID = "4bf92f3577b34da6a3ce929d0e0e4736", SID = "00f067aa0ba902b7", TP = `00-${TID}-${SID}-01`
 const DAY = "/v1/day?date=2026-10-28&tz=America/New_York&lat=40.6892&lon=-74.0445"
-const V = { lat: 40.7128, lon: -74.006, place: "New York", city: "New York", tz: "America/New_York", colo: null, source: "query" } as const
 
 describe("traceparent", () => {
   it("parses version 00 only, lower-case hex, non-zero ids", () => {
@@ -52,7 +49,7 @@ describe("traceparent", () => {
     expect(JSON.stringify(spans)).not.toContain("client.trace_id")
   })
   const TPRE = /^00-([0-9a-f]{32})-([0-9a-f]{16})-01$/
-  const metaOf = (html: string) => /<meta name="traceparent" content="([^"]*)">/.exec(html)?.[1]
+  const metaOf = (html: string) => /<meta name="traceparent" content="([^"]*)"\/>/.exec(html)?.[1]
   it("a page document carries trace context: <meta name=traceparent> in the head, Server-Timing, x-ephem-trace, on the root span", async () => {
     for (const path of ["/"]) {
       const { spans, tracing } = recorder(); setTracing(tracing)
@@ -107,52 +104,12 @@ describe("traceparent", () => {
   })
   it("a synthetic document (x-ephem-load / x-ephem-smoke) says so to its RUM; a real one does not", async () => {
     const h = makeHandler(makeBlocks(origin))
-    expect(await (await h(new Request("http://x/", { headers: { "x-ephem-load": "J1" } }))).text()).toContain('<meta name="ephem-synthetic" content="1">')
-    expect(await (await h(new Request("http://x/", { headers: { "x-ephem-smoke": "s" } }))).text()).toContain('<meta name="ephem-synthetic" content="1">')
+    expect(await (await h(new Request("http://x/", { headers: { "x-ephem-load": "J1" } }))).text()).toContain('<meta name="ephem-synthetic" content="1"/>')
+    expect(await (await h(new Request("http://x/", { headers: { "x-ephem-smoke": "s" } }))).text()).toContain('<meta name="ephem-synthetic" content="1"/>')
     expect(await (await h(new Request("http://x/"))).text()).not.toContain(`<meta name="ephem-synthetic"`)
-  })
-  it("traceparentMeta renders only a valid hex traceparent", () => {
-    expect(traceparentMeta({ traceId: TID, spanId: SID, traceparent: TP })).toBe(`<meta name="traceparent" content="${TP}">`)
-    expect(traceparentMeta({ traceId: TID, spanId: SID, traceparent: `00-${TID}-${SID}-01"><x>` })).toBe("")
-    expect(traceparentMeta(undefined)).toBe("")
-  })
-  it("the page boot reads the meta tag first, then the navigation entry's serverTiming, then mints a fresh id", () => {
-    const boot = (meta: string | null, st: string | null) => {
-      const win: Record<string, unknown> = {}
-      const document = { querySelector: () => meta == null ? null : { getAttribute: () => meta } }
-      const performance = { now: () => 0, getEntriesByType: () => [{ serverTiming: st == null ? [] : [{ name: "total", description: "" }, { name: "trace", description: st }] }] }
-      new Function("window", "document", "performance", "crypto", CLIENT_TRACE_JS)(win, document, performance, globalThis.crypto)
-      return win.__ephemTrace as { traceId: string; parentSpanId: string | null; from: string }
-    }
-    const OTHER = `00-${"a".repeat(32)}-${"b".repeat(16)}-01`
-    expect(boot(TP, OTHER)).toMatchObject({ traceId: TID, parentSpanId: SID, from: "meta" })
-    expect(boot(null, OTHER)).toMatchObject({ traceId: "a".repeat(32), parentSpanId: "b".repeat(16), from: "server-timing" })
-    expect(boot("junk", null)).toMatchObject({ parentSpanId: null, from: "fresh" })
-    expect(boot(`00-${"0".repeat(32)}-${SID}-01`, null).from).toBe("fresh")
-    expect(boot(null, null).traceId).toMatch(/^[0-9a-f]{32}$/)
   })
   it("the front door forwards a valid traceparent to the Api, drops an invalid one", () => {
     expect(forwardHeaders({ "cf-ray": "r1-EWR", traceparent: TP })).toEqual({ "x-ephem-ray": "r1-EWR", traceparent: TP })
     expect(forwardHeaders({ "cf-ray": "r1-EWR", traceparent: "garbage" })).toEqual({ "x-ephem-ray": "r1-EWR" })
-  })
-  it("the page sends it on every API fetch (no bare fetch) and expose window.__ephemTrace", () => {
-    for (const html of [homePage(V)]) {
-      expect(html).toContain(CLIENT_TRACE_JS)
-      expect(html.replace(RUM_JS, "").match(/\bfetch\(/g)?.length).toBe(1)   // the one inside __tfetch (RUM_JS posts to /rum)
-      expect(html).toContain(RUM_JS)
-      expect(html).toContain('performance.mark("ephem:data")')
-    }
-  })
-  it("the browser snippet makes one trace id per load and a fresh span id per fetch", async () => {
-    const seen: Array<Headers> = []
-    const win: Record<string, unknown> = {}
-    const run = new Function("window", "fetch", "performance", "crypto", "Headers", CLIENT_TRACE_JS + "; return __tfetch;")
-    const tf = run(win, async (_u: string, i: { headers: Headers }) => { seen.push(i.headers); return new Response("{}", { headers: { "cf-ray": "abc-EWR", "x-ephem-trace": "t" } }) },
-      { now: () => 1 }, globalThis.crypto, Headers) as (u: string) => Promise<Response>
-    await tf("/a"); await tf("/b")
-    const ids = seen.map(h => parseTraceparent(h.get("traceparent")))
-    expect(ids[0]!.traceId).toBe(ids[1]!.traceId); expect(ids[0]!.spanId).not.toBe(ids[1]!.spanId)
-    const T = win.__ephemTrace as { traceId: string; fetches: Array<{ ray: string; status: number }> }
-    expect(T.traceId).toBe(ids[0]!.traceId); expect(T.fetches.map(f => f.ray)).toEqual(["abc-EWR", "abc-EWR"])
   })
 })

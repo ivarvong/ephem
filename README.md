@@ -59,7 +59,8 @@ Every quantity's definition is in `packages/api/src/index.ts` (`CONVENTIONS`) an
 ## License
 
 MIT (see `LICENSE`), except for the following:
-- **Ephem DIN** is a subset of D-DIN © 2017 Datto Inc., modified and renamed as the SIL Open Font License 1.1 requires (`licenses/OFL-D-DIN.txt`; built by `scripts/fonts/din.py`).
+- **Ephem DIN** is a subset of D-DIN © 2017 Datto Inc., modified and renamed as the SIL Open Font License 1.1 requires (`licenses/OFL-D-DIN.txt`; built by `scripts/fonts/din.py` into `packages/web/src/fonts/*.woff2`, self-hosted by the page and served at `/licenses/din.txt` with it).
+- **/docs/interactive** loads Scalar's API reference (`@scalar/api-reference@1.74.0`, MIT) from jsDelivr at runtime, pinned by version and SRI; it is not vendored or bundled. The page's npm dependencies (Preact, @preact/signals, preact-render-to-string, Tailwind CSS, Vite) are MIT and installed through npm.
 - **Third-party data** included for tests and the bundled model, all from US government sources and in the public domain:
   - JPL DE440 test blocks and test points;
   - the NGA EGM96 geoid;

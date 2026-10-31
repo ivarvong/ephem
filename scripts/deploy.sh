@@ -1,7 +1,8 @@
 #!/bin/bash
 # Deploy ephem (and ephem-tail, ephem-load) from a committed revision only: never from the shared working tree.
 #   scripts/deploy.sh <rev> "<message>" [auto|ephem|tail|load|all]     (DRY=1 runs the gate in the clean worktree and stops)
-# Checks out <rev> into a throwaway git worktree, links node_modules from the main checkout (no npm install), runs the full
+# Checks out <rev> into a throwaway git worktree, links node_modules from the main checkout (or, when <rev>'s lockfile differs,
+# from a cached `npm ci` of it), builds the web UI, runs the full
 # gate there, then deploys from that worktree:
 #   tail   ephem-tail (packages/tail) first: cf deploy, then (after ephem's smoke has sent it traffic) scripts/obs/tail-check.py
 #          must see its invocations ok and the smoke's route labels; otherwise ephem-tail is rolled back.
@@ -226,26 +227,67 @@ echo "== targets @ $SHA: $([ $DO_LOAD = 1 ] && echo "ephem-load ")$([ $DO_TAIL =
 MODE=gradual
 if [ "${GRADUAL:-1}" = 0 ] || { [ -n "$LAST" ] && git -C "$ROOT" diff "$LAST" "$SHA" -- packages/worker/cloudflare.config.ts | grep -qE '^[+-][^+-].*(tailConsumers|observability|logpush)'; }; then MODE=direct; fi
 
-# node_modules: link every package from the main checkout EXCEPT the workspace packages (@ephem/*). Those are relative
-# symlinks (../../packages/core), so linking the whole directory resolved @ephem/core and @ephem/api to the shared tree's
-# uncommitted files (found 2026-10-30); here they point at this worktree's packages.
+# node_modules: the commit's own dependencies. When the main checkout's node_modules holds exactly this commit's lockfile
+# (node_modules/.package-lock.json lists the same packages at the same versions), link from it; otherwise (a commit that adds
+# or bumps a dependency, before anyone installed it in the shared tree, where `npm install` is not run: guide "Gotchas") the
+# commit's lockfile is installed once with `npm ci` into $GITDIR/ephem-deps/<lockfile sha256[0:16]>/ and linked from there.
+# Link every package EXCEPT the workspace packages (@ephem/*): those are relative symlinks (../../packages/core), so linking
+# the whole directory resolved @ephem/core and @ephem/api to the shared tree's uncommitted files (found 2026-10-30); here
+# they point at this worktree's packages.
+LOCKSHA=$(shasum -a 256 "$WT/package-lock.json" | cut -c1-16)
+same_deps() { python3 - "$1" "$WT/package-lock.json" <<'PY'
+import json, sys
+try: have = json.load(open(sys.argv[1]))["packages"]
+except Exception: sys.exit(1)
+want = json.load(open(sys.argv[2]))["packages"]
+ver = lambda d: {k: (v.get("version"), v.get("link")) for k, v in d.items() if k.startswith("node_modules/") and not k.startswith("node_modules/@ephem/")}
+h, w = ver(have), ver(want)
+# the same versions of everything installed, nothing extra, and nothing missing but optional packages (other platforms' binaries)
+sys.exit(0 if all(w.get(k) == v for k, v in h.items()) and all(k in h or want[k].get("optional") for k in w) else 1)
+PY
+}
+DEPS=$ROOT
+if ! same_deps "$ROOT/node_modules/.package-lock.json"; then
+  DEPS="$GITDIR/ephem-deps/$LOCKSHA"
+  if [ ! -f "$DEPS/.ok" ]; then
+    echo "== deps: this commit's lockfile ($LOCKSHA) differs from the main checkout's node_modules: npm ci into $DEPS"
+    rm -rf "$DEPS"; mkdir -p "$DEPS"
+    cp "$WT/package.json" "$WT/package-lock.json" "$DEPS/"
+    for pj in "$WT"/packages/*/package.json; do n=$(basename "$(dirname "$pj")"); mkdir -p "$DEPS/packages/$n"; cp "$pj" "$DEPS/packages/$n/"; done
+    ( cd "$DEPS" && python3 "$WT/scripts/bounded.py" "${NPM_CI_S:-600}" "npm ci $LOCKSHA" npm ci --no-audit --no-fund --loglevel=error ) || { echo "npm ci failed for $LOCKSHA" >&2; rm -rf "$DEPS"; exit 1; }
+    date -u +%FT%TZ > "$DEPS/.ok"
+  fi
+  echo "== deps: node_modules from $DEPS"
+fi
 mkdir "$WT/node_modules"
-for e in "$ROOT"/node_modules/* "$ROOT"/node_modules/.[!.]*; do
+for e in "$DEPS"/node_modules/* "$DEPS"/node_modules/.[!.]*; do
   [ -e "$e" ] || continue; n=$(basename "$e"); [ "$n" = "@ephem" ] && continue
   ln -s "$e" "$WT/node_modules/$n"
 done
 mkdir "$WT/node_modules/@ephem"
-for e in "$ROOT"/node_modules/@ephem/*; do n=$(basename "$e"); ln -s "$WT/packages/$n" "$WT/node_modules/@ephem/$n"; done
-for p in "$ROOT"/packages/*/; do
+for p in "$WT"/packages/*/; do n=$(basename "$p"); ln -s "$WT/packages/$n" "$WT/node_modules/@ephem/$n"; done
+for p in "$DEPS"/packages/*/; do
   n=$(basename "$p"); [ -d "$p/node_modules" ] || continue
   mkdir -p "$WT/packages/$n/node_modules/.bin"
-  for e in "$p"/node_modules/*; do [ -e "$e" ] && ln -s "$(readlink -f "$e")" "$WT/packages/$n/node_modules/$(basename "$e")"; done
-  [ -e "$ROOT/node_modules/.bin/wrangler" ] && ln -sf "$ROOT/node_modules/.bin/wrangler" "$WT/packages/$n/node_modules/.bin/wrangler"
+  for e in "$p"/node_modules/*; do [ -e "$e" ] && [ "$(basename "$e")" != .bin ] && ln -s "$(readlink -f "$e")" "$WT/packages/$n/node_modules/$(basename "$e")"; done
+done
+# cf needs wrangler in each Worker package's own node_modules (an `npm install` drops those links: guide "Gotchas")
+for n in worker tail load; do
+  [ -d "$WT/packages/$n" ] || continue
+  mkdir -p "$WT/packages/$n/node_modules/.bin"
+  [ -e "$WT/packages/$n/node_modules/wrangler" ] || ln -s "$DEPS/node_modules/wrangler" "$WT/packages/$n/node_modules/wrangler"
+  ln -sf "$DEPS/node_modules/.bin/wrangler" "$WT/packages/$n/node_modules/.bin/wrangler"
 done
 # untracked-but-needed test inputs (gitignored binaries) come from the main checkout
 for d in data/jpl reference/terrain_sunset/inputs reference/geoid/inputs; do
   [ -d "$ROOT/$d" ] && { mkdir -p "$WT/$(dirname "$d")"; rm -rf "$WT/$d"; ln -s "$ROOT/$d" "$WT/$d"; }
 done
+# The web UI (packages/web, Vite): built once here, before the upload (wrangler's build command only re-checks it) and the
+# gate (typecheck and tests read packages/web/dist), so both see the same bytes. A failed build fails the deploy.
+( cd "$WT" && node --experimental-strip-types scripts/build-web.ts ) || { echo "web build failed" >&2; exit 1; }
+# Pages the live version served load their lazy core module and fonts later, by hashed URL: carry the live version's own files
+# into this upload so they keep working after it is replaced (scripts/keep-assets.py; best effort, the page falls back).
+python3 "$WT/scripts/keep-assets.py" "$B" "$WT/packages/web/dist/client" || true
 stage setup
 
 # Upload the ephem version while the gate runs: an uploaded version is in no deployment, so nothing can reach it (not even a
@@ -261,8 +303,8 @@ wait_upload() { [ -n "$UP_PID" ] && { wait "$UP_PID" || true; UP_PID=""; }; retu
 echo "== gate @ $SHA"
 cd "$WT"
 # Content-addressed pass cache: the gate's verdict depends on the tree and on node_modules (linked from the main checkout),
-# so a tree that already passed with the same node_modules skips it. Key: tree hash + hash of node_modules/.package-lock.json.
-GKEY="$(git -C "$WT" rev-parse "HEAD^{tree}")-$(shasum -a 256 "$ROOT/node_modules/.package-lock.json" 2>/dev/null | cut -c1-16)"
+# so a tree that already passed with the same node_modules skips it. Key: tree hash + hash of the linked node_modules' lockfile.
+GKEY="$(git -C "$WT" rev-parse "HEAD^{tree}")-$(shasum -a 256 "$DEPS/node_modules/.package-lock.json" 2>/dev/null | cut -c1-16)"
 GPASS="$GITDIR/ephem-gate-pass/$GKEY"
 if [ -f "$GPASS" ] && [ "${NO_GATE_CACHE:-}" != 1 ]; then
   echo "gate: tree $(echo "$GKEY" | cut -c1-12) already passed ($(cat "$GPASS")); skipped (NO_GATE_CACHE=1 re-runs it)"

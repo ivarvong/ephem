@@ -46,7 +46,7 @@ describe("Workers tracing bridge", () => {
     const st = spans.find(s => s.name === "html.stream"), home = spans.find(s => s.name === "home")
     expect(before).toBe(false)   // still open while the body has not been read
     expect(st?.attrs).toMatchObject({ "html.bytes": bytes, "html.stream_outcome": "done", status: "ok", "effect.parent_id": home!.attrs["effect.span_id"] })
-    expect(st!.attrs["html.chunks"]).toBeGreaterThanOrEqual(3)   // head, data + boot, font + end (FLUSH)
+    expect(st!.attrs["html.chunks"]).toBe(2)   // the head (+ header) at once, then the server-rendered frame + embeds + end
   })
   it("a tracer that throws on every call does not fail the request", async () => {
     setTracing({ startSpan: () => { throw new Error("boom") } })

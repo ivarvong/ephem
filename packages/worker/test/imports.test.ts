@@ -14,7 +14,7 @@ describe("bundle hygiene", () => {
     expect(bad.map(([f, i, l]) => `${f.slice(ROOT.length + 1)}:${i}: ${l.trim()}`)).toEqual([])
   })
   it("the Worker never imports the bundled EGM96 grid (it reads bands from R2)", () => {
-    const bad = files(join(ROOT, "worker", "src")).filter(f => !f.endsWith("dev.ts") && /egm96-grid|geoid-bundled/.test(readFileSync(f, "utf8")))
+    const bad = files(join(ROOT, "worker", "src")).filter(f => !f.endsWith("dev-handler.ts") && /egm96-grid|geoid-bundled/.test(readFileSync(f, "utf8")))
     expect(bad).toEqual([])
     expect(readFileSync(join(ROOT, "core", "src", "index.ts"), "utf8")).not.toMatch(/egm96-grid|geoid-bundled/)
   })

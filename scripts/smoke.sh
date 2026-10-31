@@ -61,11 +61,52 @@ chk_one() {
 # chk <chk_one args>: one check as a background job (its name joins ORDER, the print order). Check lines stay `chk …`.
 ORDER=()
 chk() { want "$1" || return 0; ORDER+=("$1"); chk_one "$@" & }
-# The homepage's in-browser compute (src/sky-assets.ts): the page names this commit's bundle, which is served (immutable) with
-# __ephemCore in it, and a DE440 block (8 144 B, through Blocks → BlockStore); a block past the file is a 404.
-SKY16=$(sed -n 's/^export const SKY_CORE_SHA256 = "\([0-9a-f]\{16\}\).*/\1/p' "$(dirname "$0")/../packages/worker/src/sky-core.generated.ts")
-chk home 200 "/" "/assets/$SKY16/ephem-sky.js"
-chk sky-core 200 "/assets/$SKY16/ephem-sky.js" "__ephemCore"
+# The page UI (@ephem/web): the homepage names this commit's build (its manifest, packages/web/dist/assets.json: deploy.sh
+# builds it before the gate), carries a strict CSP (script-src 'self', no inline script) and no inline executable script;
+# every asset it names is a Workers Static Asset, immutable for a year, with its type (`asset`: the bytes must be the build's,
+# by sha256). The DE440 blocks the browser computes from (src/sky-assets.ts): 8 144 B, through Blocks → BlockStore.
+MAN="$(dirname "$0")/../packages/web/dist/assets.json"
+[ -f "$MAN" ] || { echo "smoke.sh: no web build ($MAN): run npm run build" >&2; exit 2; }
+WEB=$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m["home"]["js"], m["core"]["js"], m["css"]["href"], m["fonts"]["regular"]["href"], m["fonts"]["bold"]["href"], m["scalar"]["js"])' "$MAN")
+read -r HOME_JS CORE_JS CSS_HREF FONT_R FONT_B SCALAR_JS <<< "$WEB"
+chk home 200 "/" "<script type=\"module\" src=\"$HOME_JS\">"
+# asset_one <name> <path> <content-type prefix>: a static asset as the build wrote it (sha256 of the bytes = the local file's)
+asset_one() {
+  local name=$1 p=$2 want=$3 b="$D/$1.b" h="$D/$1.h" c why=""
+  c=$(curl -s -o "$b" -D "$h" -w '%{http_code}' --max-time 30 ${H[@]+"${H[@]}"} "$B$p"); touch "$h" "$b"
+  hd() { tr -d '\r' < "$h" | awk -F': ' -v k="$1" 'tolower($1)==k{print $2}' | tail -1; }
+  [ "$c" = 200 ] || why="status $c"
+  [ -z "$why" ] && [[ "$(hd content-type)" != *"$want"* ]] && why="content-type $(hd content-type), want $want"
+  [ -z "$why" ] && { [[ "$(hd cache-control)" != *"max-age=31536000"* ]] || [[ "$(hd cache-control)" != *immutable* ]]; } && why="cache-control $(hd cache-control)"
+  [ -z "$why" ] && [ "$(shasum -a 256 < "$b" | cut -c1-64)" != "$(shasum -a 256 < "$(dirname "$0")/../packages/web/dist/client$p" | cut -c1-64)" ] && why="bytes differ from this commit's build"
+  [ -n "$MANIFEST" ] && echo "- $c GET $p $name" >> "$MANIFEST.assets"   # static assets never reach the Worker: no invocation to gate
+  if [ -z "$why" ]; then echo "ok   $name $c $(wc -c < "$b" | tr -d ' ') B $p" > "$D/$name.res"; else echo "FAIL $name: $why $p" > "$D/$name.res"; fi
+}
+asset() { want "$1" || return 0; ORDER+=("$1"); asset_one "$@" & }
+asset asset-home "$HOME_JS" "javascript"
+asset asset-core "$CORE_JS" "javascript"
+asset asset-css "$CSS_HREF" "text/css"
+asset asset-font "$FONT_R" "font/woff2"
+asset asset-font-bold "$FONT_B" "font/woff2"
+asset asset-scalar "$SCALAR_JS" "javascript"
+# csp: every page's CSP header and no inline executable script / event handler in its body (the rules of @ephem/web)
+csp_one() {
+  local name=$1 p=$2 b="$D/$1.b" h="$D/$1.h" c why="" csp v
+  c=$(curl -s -o "$b" -D "$h" -w '%{http_code}' --max-time 30 ${H[@]+"${H[@]}"} "$B$p"); touch "$h" "$b"
+  csp=$(tr -d '\r' < "$h" | awk -F': ' 'tolower($1)=="content-security-policy"{print $2}' | tail -1)
+  v=$(tr -d '\r' < "$h" | awk -F': ' 'tolower($1)=="x-ephem-version"{print $2}' | tail -1)
+  [ "$c" = 200 ] || why="status $c"
+  [ -z "$why" ] && [[ "$csp" != *"default-src 'none'"* ]] && why="CSP without default-src 'none': ${csp:-none}"
+  [ -z "$why" ] && [[ "$csp" == *"unsafe-eval"* || "$(echo "$csp" | sed -n "s/.*script-src \([^;]*\).*/\1/p")" == *"unsafe-inline"* ]] && why="CSP allows inline/eval script: $csp"
+  [ -z "$why" ] && python3 -c 'import re,sys; h=open(sys.argv[1],encoding="utf-8").read(); bad=[a for a,b in re.findall(r"<script\b([^>]*)>([\s\S]*?)</script>",h) if "application/json" not in a and b.strip()]+re.findall(r"<[a-z][^>]*\son[a-z]+\s*=",h,re.I); sys.exit(1 if bad else 0)' "$b" || { [ -z "$why" ] && why="inline executable script or event handler in the page"; }
+  [ -z "$why" ] && [ -n "$EXPECT" ] && [ "$v" != "$EXPECT" ] && why="answered by version ${v:-none}, want ${EXPECT:0:8}"
+  [ -n "$MANIFEST" ] && echo "$(tr -d '\r' < "$h" | awk -F': ' 'tolower($1)=="cf-ray"{print $2}' | tail -1 | grep . || echo -) $c GET ${p%%\?*} $name" >> "$MANIFEST"
+  if [ -z "$why" ]; then echo "ok   $name $c ${v:0:8} $p" > "$D/$name.res"; else echo "FAIL $name: $why $p" > "$D/$name.res"; fi
+}
+csp() { want "$1" || return 0; ORDER+=("$1"); csp_one "$@" & }
+csp csp-home "/?lat=40.7&lon=-74&tz=America/New_York"
+csp csp-docs "/docs"
+csp csp-docs-interactive "/docs/interactive"
 chk de440-block 200 "/assets/de440/29915576d0a65557/5442"
 chk de440-block-404 404 "/assets/de440/29915576d0a65557/12556" "no block"
 chk page-trace 200 "/?lat=40.7&lon=-74&tz=America/New_York" '<meta name="traceparent" content="00-'   # document trace context (src/clienttrace.ts)
@@ -99,7 +140,6 @@ chk blocks-miss 200 "/v1/position?lat=40.7&lon=-74&time=$(python3 -c 'import ran
 # Link preview (src/og-render.ts): the font glyph fetches, the touch icon, and a live card: a place name never asked for (a fresh
 # Og MISS: data from the Api, a real glyph render) must come back as a glyph PNG (x-ephem-og: glyph, not the fallback card),
 # image/png, 2400×1260, 20-300 KB; then the same URL again is a Workers Cache HIT.
-chk og-font 200 "/assets/316a72622a0926ee/ephem-din-regular.woff2"
 chk touch-icon 200 "/apple-touch-icon.png" "PNG"
 og_one() {   # og_one <name> <path> <want x-ephem-og-cache or "">
   local name=$1 p=$2 wc=$3 b="$D/$1.b" h="$D/$1.h" c t why=""

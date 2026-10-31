@@ -4,16 +4,20 @@ import { createHash } from "node:crypto"
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { makeHandler } from "../src/app.ts"
-import { CORE_JS } from "../src/home.ts"
+import * as chart from "@ephem/web/lib/chart"
+import { wrap180, wrap360 } from "@ephem/web/lib/angles"
+import { assets } from "@ephem/web/server"
 import { REC, direct, makeBlocks } from "../src/blocks.ts"
 import * as og from "../src/og.ts"
-import { DIN_SHA256, OG_FONTS, fontBytes, fontPath, ogFonts, servedFont } from "../src/og-fonts.ts"
+import { OG_FONTS, ogFonts } from "../src/og-fonts.ts"
 import { DIN_ADV } from "../src/din.ts"
 import { OG_CACHE, OG_FALLBACK_CACHE, fallbackPng, ogData, ogFront, renderGlyph } from "../src/og-render.ts"
 import { makeLoopback, ogCacheKey, type Binding, type Loopback } from "../src/loopback.ts"
 import { CACHE_TAG } from "../src/cache-version.ts"
 
 const FIX = resolve(__dirname, "../../core/test/fixtures/blocks")
+/** the escaping the page renderer applies to attribute values (Preact) */
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
 const fixtures = () => makeBlocks(direct(async (first, count) => {
   const out = new Uint8Array(count * REC)
   for (let i = 0; i < count; i++) out.set(readFileSync(`${FIX}/${first + i}.bin`), i * REC)
@@ -32,8 +36,8 @@ const PLACES = ["Tromsø", "São Paulo", "Zürich", "Reykjavík", "Kraków", "Ł
 const face = (t: string) => [...t].every(c => og.DIN_CHARS.has(c)) ? "din" : "noto"
 const isPng = (b: Uint8Array) => b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47
 
-describe("og: the chart is the page's (ported from CORE_JS, checked against it)", () => {
-  const core = new Function(CORE_JS + "; return { wrap180, wrap360, altU, chartCenter, chartGeom, chX, chY, crBezier, trackSpan, zenithArc }")() as any
+describe("og: the chart is the page's (ported from @ephem/web lib/chart.ts, checked against it)", () => {
+  const core = { ...chart, wrap180, wrap360 } as any   // fed the og port's own shapes
   it("projection, centre, curves", () => {
     for (const a of [-90, -60, -18, -0.5, 0, 12.3, 89.9, 95]) expect(og.altU(a)).toBe(core.altU(a))
     for (const x of [-725, -180, -0.1, 0, 179.9, 180, 540]) { expect(og.wrap180(x)).toBe(core.wrap180(x)); expect(og.wrap360(x)).toBe(core.wrap360(x)) }
@@ -77,14 +81,14 @@ describe("og: text in Ephem DIN, the font served for glyph", () => {
     expect(og.faceFor(og.din("Москва"))).toBe("noto"); expect(og.din("Hà Nội")).toBe("HÀ NỘI"); expect(og.faceFor("HÀ NỘI")).toBe("noto")
     expect(og.faceFor("東京")).toBeNull()
   })
-  it("the font paths are content-addressed by the sha256 of the bytes we serve", () => {
+  it("the fonts glyph fetches are the page's static assets, pinned by the sha256 of the bytes served", () => {
     for (const w of ["regular", "bold"] as const) {
-      expect(createHash("sha256").update(fontBytes(w)).digest("hex")).toBe(DIN_SHA256[w])
-      expect(fontPath(w)).toBe(`/assets/${DIN_SHA256[w].slice(0, 16)}/ephem-din-${w}.woff2`)
-      expect(servedFont(fontPath(w))).toEqual(fontBytes(w))
-      expect(OG_FONTS[w]).toEqual({ url: `https://ephem.ivar.workers.dev${fontPath(w)}`, sha256: DIN_SHA256[w] })
+      const f = assets().fonts[w], bytes = readFileSync(resolve(__dirname, `../../web/dist/client${f.href}`))
+      expect(createHash("sha256").update(bytes).digest("hex")).toBe(f.sha256)
+      expect(f.href).toMatch(new RegExp(`^/assets/ephem-din-${w}-[A-Za-z0-9_-]{8}\\.woff2$`))
+      expect(OG_FONTS[w]).toEqual({ url: `https://ephem.ivar.workers.dev${f.href}`, sha256: f.sha256 })
       // the rendering version's own preview URL: the spec never names a font another version serves
-      expect(ogFonts("fc692046-33c2-40cd-b152-4541642aa5d4")[w].url).toBe(`https://fc692046-ephem.ivar.workers.dev${fontPath(w)}`)
+      expect(ogFonts("fc692046-33c2-40cd-b152-4541642aa5d4")[w].url).toBe(`https://fc692046-ephem.ivar.workers.dev${f.href}`)
     }
   })
 })
@@ -104,13 +108,14 @@ describe("og: the image request (privacy: 0.01°, a 10-minute bucket)", () => {
   })
   it("head tags: absolute og:image with the rounded place and the bucket, sizes, alt, twitter card, touch icon; escaped", () => {
     const v = { lat: 40.71427, lon: -74.00597, city: "New \"York\" <City>", place: "x", tz: "America/New_York", source: "cloudflare" }
-    const h = og.ogHead({ origin: "https://ephem.example", v, now: AT })
+    const html = (tags: ReturnType<typeof og.ogHead>) => tags.map(t => "property" in t ? `<meta property="${t.property}" content="${esc(t.content)}">` : "name" in t ? `<meta name="${t.name}" content="${esc(t.content)}">` : `<link rel="${t.rel}" href="${t.href}">`).join("")
+    const h = html(og.ogHead({ origin: "https://ephem.example", v, now: AT }))
     expect(h).toContain(`<meta property="og:image" content="https://ephem.example/og.png?lat=40.71&amp;lon=-74.01&amp;place=New+York+City&amp;tz=America%2FNew_York&amp;t=${T}">`)
     for (const t of ['property="og:image:width" content="2400"', 'property="og:image:height" content="1260"', 'property="og:image:type" content="image/png"', 'name="twitter:card" content="summary_large_image"',
       'property="og:url" content="https://ephem.example/"', '<link rel="apple-touch-icon" href="/apple-touch-icon.png">', 'property="og:title" content="ephem · the sky over New &quot;York&quot; &lt;City&gt;"'])
       expect(h).toContain(t)
     expect(h).not.toContain("40.71427")
-    const q = og.ogHead({ origin: "https://ephem.example", v: { ...v, city: "Tromsø", source: "query", lat: 69.6492, lon: 18.9553, tz: "Europe/Oslo" }, now: AT })
+    const q = html(og.ogHead({ origin: "https://ephem.example", v: { ...v, city: "Tromsø", source: "query", lat: 69.6492, lon: 18.9553, tz: "Europe/Oslo" }, now: AT }))
     expect(q).toContain('property="og:url" content="https://ephem.example/?lat=69.6492&amp;lon=18.9553&amp;tz=Europe%2FOslo&amp;place=Troms%C3%B8"')   // the Copy-link URL
   })
 })
@@ -181,18 +186,15 @@ describe("og: routes and the render budget", () => {
       }
     } finally { vErr.mockRestore() }
   })
-  it("the font and the touch icon; anything else is not ours", async () => {
+  it("the touch icon; anything else is not ours (the font is a static asset)", async () => {
     const lb = makeLoopback(() => ({}))
-    const f = (await ogFront(new Request(`https://e${fontPath("bold")}`), lb))!
-    expect(f.headers.get("content-type")).toBe("font/woff2"); expect(f.headers.get("cache-control")).toBe("public, max-age=31536000, immutable")
-    expect(new Uint8Array(await f.arrayBuffer())).toEqual(fontBytes("bold"))
     for (const p of ["/apple-touch-icon.png", "/apple-touch-icon-precomposed.png"]) {
       const r = (await ogFront(new Request(`https://e${p}`), lb))!
       const b = new Uint8Array(await r.arrayBuffer())
       expect(r.headers.get("content-type")).toBe("image/png"); expect(isPng(b)).toBe(true)
       expect(new DataView(b.buffer).getUint32(16)).toBe(180); expect(new DataView(b.buffer).getUint32(20)).toBe(180)
     }
-    for (const p of ["/", "/og.pngx", "/assets/0000000000000000/ephem-din-bold.woff2", "/v1/position"]) expect(await ogFront(new Request(`https://e${p}`), lb), p).toBeUndefined()
+    for (const p of ["/", "/og.pngx", "/assets/0000000000000000/ephem-din-bold.woff2", assets().fonts.bold.href, "/v1/position"]) expect(await ogFront(new Request(`https://e${p}`), lb), p).toBeUndefined()
     expect(await ogFront(new Request("https://e/og.png", { method: "POST" }), lb)).toBeUndefined()
   })
   it("renderGlyph: the PNG within the budget; past it, null now and the render left running in waitUntil", async () => {
@@ -213,10 +215,10 @@ describe("og: the page head", () => {
     vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date(AT))
     try {
       const person = await page("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1")
-      expect(person).toContain(`<meta property="og:image" content="https://ephem.example/og.png?lat=40.71&amp;lon=-74.01&amp;place=New+York+City&amp;tz=America%2FNew_York&amp;t=${T}">`)
+      expect(person).toContain(`<meta property="og:image" content="https://ephem.example/og.png?lat=40.71&amp;lon=-74.01&amp;place=New+York+City&amp;tz=America%2FNew_York&amp;t=${T}"/>`)
       expect(person).toContain("Where the Sun and the Moon are over New York City right now")
       const bot = await page("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_1) AppleWebKit/601.2.4 (KHTML, like Gecko) Version/9.0.1 Safari/601.2.4 facebookexternalhit/1.1 Facebot Twitterbot/1.0")
-      expect(bot).toMatch(/<meta property="og:description" content="Moon −?\d+\.\d° [NESW]{1,3} · [^"]+ \d\d:\d\d · Sun −\d+° · [^"]+\. Live from JPL DE440\.">/)
+      expect(bot).toMatch(/<meta property="og:description" content="Moon −?\d+\.\d° [NESW]{1,3} · [^"]+ \d\d:\d\d · Sun −\d+° · [^"]+\. Live from JPL DE440\."\/>/)
       expect(bot.indexOf("og:image")).toBeLessThan(bot.indexOf("</head>"))
     } finally { vi.useRealTimers() }
   })

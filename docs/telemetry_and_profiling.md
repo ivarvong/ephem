@@ -60,13 +60,15 @@ fails loudly rather than returning a partial result).
 | `node --experimental-strip-types trace-view.ts <client trace id>\|--latest [--real] [--out dir]` | A real page view rebuilt from production RUM + request rows + o11y; same viewer. |
 | `[SIZES=390,375] node --experimental-strip-types home-states.ts <base> <outDir> [filter]` | Screenshots of `/` in every sky state (debug `?at=`), light and dark, with the chart's label layout from `window.__sky` (overlaps, dropped, crossed: must be empty). |
 | `node --experimental-strip-types scrub.ts <url> [--device iphone\|desktop] [--cpu 4] [--out dir]` | Time scrubbing measured: a ~60 Hz touch (or mouse) drag across the timeline under CPU throttling; the page's own per-frame work (`window.__compute.frames`: n, mean, max ms), rAF intervals during the drag (p50, p95, max, > 20 ms), a vertical swipe on the strip (must scroll, not scrub), screenshots mid-scrub, at the end and after LIVE. |
-| `node --experimental-strip-types sky-parity-chrome.ts [cases] [seed]` | The browser bundle (src/sky-core.generated.ts) in real headless Chrome vs the API's server path in Node, every position field; max \|Δ\| per field. The gate's test/sky-core.test.ts does the same (4 000 + 300 + 300 cases) in Node. |
-| `node --experimental-strip-types scripts/build-sky-core.ts [--check]` | Rebuilds src/sky-core.generated.ts (esbuild, from packages/core/src/browser.ts). Required in the same commit as any change to the core code position, track or day run: test/sky-core.test.ts fails on a stale bundle. |
+| `node --experimental-strip-types sky-parity-chrome.ts [cases] [seed]` | The page's built core module (packages/web/dist) in real headless Chrome vs the API's server path in Node, every position field; max \|Δ\| per field. The gate's packages/web/test/core-parity.test.ts does the same (4 000 + 300 + 300 cases) in Node. |
+| `node --experimental-strip-types page-console.ts <url>… [--wait ms] [--eval expr]` | Loads pages in headless Chrome and prints the served CSP and every console message, exception, CSP violation and failed request; exit 1 on any. Run it on `/`, `/docs`, `/docs/interactive` after a UI change. |
+| `python3 shot-diff.py <before> <after> <out> [--tol 24] [--max 0.5]` | Pixel diff of two home-states.ts runs: per shot the share of pixels off by more than `--tol`, their box, a diff image, and contact sheets (before \| after \| diff) per viewport. Needs Pillow. |
+| `npm run build`, `npm run dev` | The web UI (packages/web): the Vite build into packages/web/dist (static assets + the server's manifest; typecheck and tests run it `--if-stale`), and the local server with Vite dev modules and HMR (http://127.0.0.1:8787). See "Homepage". |
 | `node --experimental-strip-types load-remote.ts …`, `python3 load-check.py load-runs/<run>.json` | Remote load and its server side. See "Load". |
 | `scripts/obs/load.sh [rounds] [base]` | Laptop load for `profile.sh` (fresh keys, so the Api misses): default alignment + day; `LOAD=track`, `LOAD=search`, `LOAD=weather`. |
 | `<venv>/bin/python -I scripts/check-magvar.py --nasr-zip <DD_Mon_YYYY_APT_CSV.zip> [--metar …] [--csv out]` | Our WMM2025 declination vs FAA NASR airport magnetic variation, pygeomag and IGRF-14. Re-run each 28-day NASR cycle. Venv: `numpy ppigrf pygeomag`. |
 | `node --experimental-strip-types scripts/geoid-r2.ts upload\|verify\|manifest` | EGM96 bands in R2 (see "Geoid bands"). |
-| `node --experimental-strip-types scripts/openapi.ts`, `scripts/fonts/din.py`, `node --experimental-strip-types scripts/og/assets.ts` | Generators: reference/openapi.json; src/din.ts (the inline font: `python3 -I scripts/fonts/din.py <D-DIN.otf> <D-DIN-Bold.otf> <OFL.txt> packages/worker/src/din.ts`, needs fonttools + brotli; *not re-run*); the touch icon + fallback card (src/og-png.generated.ts, `--glyph-lib <glyph clone>`; *not re-run*). |
+| `node --experimental-strip-types scripts/openapi.ts`, `scripts/fonts/din.py`, `node --experimental-strip-types scripts/og/assets.ts` | Generators: reference/openapi.json; packages/web/src/fonts/*.woff2 + src/din.ts (the font and its advances: `python3 -I scripts/fonts/din.py <D-DIN.otf> <D-DIN-Bold.otf> <OFL.txt> packages/worker/src/din.ts`, needs fonttools + brotli; *not re-run*); the touch icon + fallback card (src/og-png.generated.ts, `--glyph-lib <glyph clone>`; *not re-run*). |
 
 ## Traces (one request)
 
@@ -128,7 +130,7 @@ src/rum.ts, scripts/obs/cdp/, journey.ts, trace-view.ts.
 | --- | --- |
 | document `/` | the front door adopts a valid `traceparent` (strict W3C, lower case, non-zero) or uses the root request span's trace id; returns `<meta name="traceparent" content="00-<trace>-<root span>-01">`, `Server-Timing: trace;desc="…"`, `x-ephem-trace`; `<meta name="ephem-synthetic">` when the request had `x-ephem-load` / `x-ephem-smoke` |
 | page boot | reads meta → navigation `serverTiming` → fresh id (`window.__ephemTrace.from`) |
-| every fetch (`__tfetch`) | `traceparent: 00-<trace>-<new span>-01`, `tracestate: ephem=<document span>` |
+| every fetch (`tfetch`, packages/web/src/client/trace.ts) | `traceparent: 00-<trace>-<new span>-01`, `tracestate: ephem=<document span>` |
 | root Effect span (front, Api) | `client.trace_id`, `client.span_id`, `client.parent_id`; documents: `client.document_span_id`, `client.trace_origin` (`adopted` / `minted`). Only the root: in-process router calls (`http://ephem.internal`: the homepage's embeds, MCP's tools) skip ClientTrace |
 | loopbacks | Api: the client's header; BlockStore, MetarFeed: the calling span's traceparent (`loopback.trace`). A block or band fetch shared by concurrent requests carries the trace of the request that started it |
 | never | anything beyond the two ids, tracestate other than `ephem=<16 hex>`, anything malformed (test/clienttrace.test.ts) |
@@ -142,7 +144,7 @@ Query: spans with `client.trace_id = <id>` give every trace of the view; Basin `
 CPU is not readable inside a request; it is `cpuTimeMs` in o11y. `Timing-Allow-Origin: *`; exposed headers
 `server-timing, x-ephem-trace, x-ephem-version, x-ephem-cache`.
 
-**Production RUM** (src/rum.ts, inline on `/`, no deps): navigation and every resource (Resource Timing + `serverTiming`),
+**Production RUM** (packages/web/src/client/rum.ts, part of the page module; the Worker side is src/rum.ts): navigation and every resource (Resource Timing + `serverTiming`),
 FCP, LCP, CLS, INP, long animation frames, every fetch with its span ids, app spans `boot`, `data-ready`,
 `first-sky-draw`, `core-takeover` (detail: fields compared), interactions (`drag`, `scrub` with detail `frames N max M`). Batches go to `POST /rum` (sendBeacon on pagehide / hidden, keepalive fetch every 15 s and
 2 s after data-ready).
@@ -574,17 +576,37 @@ tools/call span is the parent of the REST handler span. Attributes: `mcp.method`
 `jsonrpc.id`, `mcp.tool` or `mcp.client`; don't count with `$metadata.transactionName = mcp.tools/call` (it returned only
 some spans).
 
-### Homepage (`/`, src/home.ts)
+### Homepage (`/`, src/home.ts; the UI is packages/web)
 
-- **One round trip.** GET / flushes the head (CSS, markup, boot script) at once, then streams
-  `<script type="application/json" id="ephem-position|ephem-track|ephem-day">` with the API's own bodies (run through the
-  router in-process, src/embed.ts), then the inline font, then `</body>`. The page boots from the embed and fetches only
-  what is missing (and weather). Spans: `home.embed` (`home.embedded`: how many of three), `html.stream` (the streamed
-  body's end: last chunk handed to the runtime). Marks `ephem:embedded` or `ephem:fetched`, then `ephem:data`.
+- **One round trip, and the first frame is the server's.** GET / flushes the head (the built stylesheet inline,
+  `<script type="module" src="/assets/home-<hash>.js">`, the boot JSON `#ephem-boot`) and the header at once; when the
+  first-load answers are in (run through the router in-process, src/embed.ts: /v1/position, /v1/track, /v1/day today and
+  tomorrow, /v1/magnetic) it renders the whole first frame from them (@ephem/web renderHomeBody: the SVG sky chart, the
+  countdown, the timeline, the readouts) and streams it, then `<script type="application/json" id="ephem-…">` with the
+  API's own bodies, then `</body>`. The sky and the numbers paint when this is parsed: no script on the path. The module
+  (deferred) seeds the same state from the embeds at the server's instant, hydrates (no DOM change), then goes live.
+  Spans: `home.embed` (`home.embedded`: how many), `html.stream`. Marks: `ephem:data` at the browser's Element Timing of the
+  server's frame (`elementtiming="ephem-data"` on the readouts; `detail.source` = element-timing, or first-client-frame
+  when the server had no answer), then `ephem:embedded` or `ephem:fetched` when the module ran. `?at=` renders that
+  instant on the server too (debug states). The server lays out for a phone or a desktop by `Sec-CH-UA-Mobile` / UA (the
+  browser re-lays out for its real size; nominal: 390 × 337.6 chart, 358 px timeline / 1 440 × 504, 1 080 px).
+- **Static assets** (`/assets/<name>-<hash>.{js,css,woff2}`): Workers Static Assets, before the Worker, so no invocation,
+  no span and no request row; RUM still records them (resource rows, target `other`). Immutable for a year.
+- **Bytes (2026-10-31, web build 406980da, SVG chart + server first frame):** home module 92.9 KB / 36.4 KB gzip / 32.7 KB
+  brotli (Preact + signals ≈ 11 KB gzip of it), core module 14.1 / 6.4 / 5.9 KB, stylesheet 11.1 / 3.1 / 2.7 KB (inlined in
+  the document), Ephem DIN 10.6 + 10.8 KB (loaded after boot, src/client/fonts.ts), document ≈ 25.7 KB on the wire (it
+  carries the rendered frame). Before (4722a49, inline): document 161.7 KB / 70.7 KB gzip (inline JS 87.0 / 28.7 KB gzip,
+  CSS + base64 font 37.2 / 24.6 KB gzip), ephem-sky.js 15.0 / 6.9 KB.
+- **The server's first frame vs the inline script** (journey.ts, local, same machine, interleaved with d6ba49e, medians of 2
+  runs): iPhone Fast 3G CPU 4× cold: data drawn 704 vs 868 ms (FCP 654 vs 640, LCP 703 vs 657), warm 692 vs 868; 104.2 vs
+  90.1 KB transferred cold (the module, after data drawn), 27.6 vs 71.9 KB warm. Desktop unthrottled: 84 / 52 vs 58 / 63 ms
+  (the reference's mark is its canvas draw, before paint; ours is the paint, Element Timing). The longest task is the
+  hydration + boot after data drawn: 150 vs 55 ms on the iPhone profile. Before the server rendered the frame (the module
+  on the critical path) cold was 1 565 ms.
 - **Debug states:** `/?lat=&lon=&tz=&place=&at=<ISO>[&pose=<az>,<alt>]` freezes the page clock and asks
   `/v1/position?time=` (the embed is ignored). `home-states.ts` shoots every state.
-- **Server first frame, then the browser (2026-10-31).** The first frame is the embedded answers. At boot the page loads
-  `/assets/<sha16>/ephem-sky.js` (@ephem/core position, track, day; 15.0 KB, 6.9 KB gzip; src/sky-core.generated.ts) and the
+- **Server first frame, then the browser (2026-10-31).** The first frame is the embedded answers. At boot the page imports its
+  core module `/assets/core-<hash>.js` (@ephem/core position, track, day, bundled by Vite; a static asset) and the
   DE440 blocks for its UTC day −2…+3 from `/assets/de440/<de440 sha16>/<i>` (usually one; 8 144 B, through `Blocks` →
   BlockStore; both immutable, so a returning browser fetches neither). It recomputes the embedded position (31 fields),
   track (every sample) and day (every event) and takes over only if all agree (1e-9°, 1e-6 km, 1 ms); otherwise it stays on
@@ -601,13 +623,15 @@ some spans).
   an action, so no live-blue) or Escape returns; letting go within a minute of now returns to live. The NOW bar and the
   cursor stay inside the gap between the line and the label rows (`mark`; the timeline sweep in test/home.test.ts checks
   both every 5 px against every label over 1 200 windows). `scrub.ts` measures it.
-- **The chart draws only on change** (data, resize, theme, drag, pointing, fonts; a once-a-second check whether a live
-  marker moved half a pixel). No rAF loop. `window.__sky.draws` counts frames.
-- **Chart model (CORE_JS, pure):** `skyModel` (`trackSpan`: one azimuth revolution cut at the seam; `altU`: linear above
-  the horizon, 36·tanh(alt/36) below, C2), `layoutLabels`. test/home.test.ts: zero label crossings, one connected track per
-  body, no kinks over 13 sky states at 390 and 375.
-- **Font:** "Ephem DIN" (D-DIN subset, OFL; src/din.ts generated by scripts/fonts/din.py, byte-reproducible, sha256
-  pinned), inline in the streamed tail, licence at /licenses/din.txt. Printable ASCII caps, Latin-1 and Latin Extended-A
+- **The chart is SVG** (components/home/SkyChart.tsx), re-rendered by Preact when its inputs change (data, the clock, a
+  resize, a pan, pointing). No rAF loop. `window.__sky.draws` counts frames, `window.__sky.labels` the layout.
+- **Chart model (packages/web/src/lib/chart.ts, labels.ts, pure):** `skyModel` (`trackSpan`: one azimuth revolution cut at
+  the seam; `altU`: linear above the horizon, 36·tanh(alt/36) below, C2), `layoutLabels`. packages/worker/test/home.test.ts:
+  zero label crossings, one connected track per body, no kinks over 13 sky states at 390 and 375; packages/web/test: the
+  timeline sweep, label properties, words, parity.
+- **Font:** "Ephem DIN" (D-DIN subset, OFL; packages/web/src/fonts/*.woff2 and src/din.ts's advances, generated by
+  scripts/fonts/din.py, byte-reproducible, sha256 pinned), self-hosted hashed static assets, `font-display: swap` from the
+  inlined stylesheet; licence at /licenses/din.txt. Printable ASCII caps, Latin-1 and Latin Extended-A
   capitals (but Ŋ), Ș Ț, ° · ’ – — − arrows (composed by din.py). Every DIN element is set in caps; the `--din` stack keeps
   system fallbacks per glyph (never tofu).
 
@@ -616,7 +640,7 @@ some spans).
 A shared link previews as a live 2400×1260 card of that place's sky, rendered by **glyph** (glyph.ivar.workers.dev: JSON
 scene → PNG) over the `GLYPH` service binding (a public fetch between two `*.ivar.workers.dev` Workers is refused).
 
-- **Scene** (src/og.ts, pure): the homepage chart ported from CORE_JS (test/og.test.ts runs both over the same inputs),
+- **Scene** (src/og.ts, pure): the homepage chart ported from @ephem/web lib/chart.ts (test/og.test.ts runs both over the same inputs),
   EPHEM + place, the countdown to the next event, Sun/Moon alt/az. Text is caps (`din()`: NFC + toUpperCase, never folded:
   TROMSØ). glyph refuses a missing glyph, so `faceFor()` picks Ephem DIN, else Noto Sans (pinned by commit + sha256), else
   coordinates; ~50 real place names are tested.
@@ -656,6 +680,8 @@ The latest measurement of each, with its version. Older and superseded numbers: 
 | homepage, iPhone Fast 3G 4× CPU, cold | TTFB 807, FCP 979, data drawn 1230 ms; 21/21 requests joined; θ 22.2 ± 12.7 ms | b4694777 / ac16823e (mid-deploy), J20261031T044455Z-1xi2 |
 | homepage in-browser compute (local dev, streaming + gzip), iPhone Fast 3G 4× cold, 5 interleaved pairs | data drawn median 890 → 887 ms, FCP 667 → 638, LCP 667 → 662; takeover (`ephem:core`) ~1.6 s cold, ~0.95 s warm; requests in the 60 s after load 18 → 3 (weather, 2 × /rum); `load` 952 → 1 565 ms (the async bundle) | uncommitted, 2026-10-31 |
 | scrubbing, iPhone CPU 4× (scrub.ts) | 89 frames, page work mean 9.5 / max 23.3 ms; rAF p95 16.7 ms, 1 of 215 intervals > 20 ms (33.3) | uncommitted, 2026-10-31 |
+| homepage, server-rendered first frame (local dev), iPhone Fast 3G 4× cold / warm, 2 interleaved pairs | data drawn median 704 / 692 ms vs 868 / 868 (d6ba49e); FCP 654 vs 640; longest task 150 vs 55 ms (hydration, after data drawn) | web 406980da, 2026-10-31 |
+| scrubbing, SVG chart, iPhone CPU 4× (scrub.ts), 3 runs | 89 frames, page work mean 4.8–5.0 / max 23.7–24.5 ms; rAF p95 16.7–16.8 ms, 0–1 of ~205 intervals > 20 ms (ref canvas: mean 6.6 / max 18.6, 0) | web 406980da, 2026-10-31 |
 | browser vs server parity | Node: 0 on 4 000 positions + 300 tracks + 300 days (4 902 events); Chrome 156: ≤ 2.3e-13°; Safari not run | sky-core 0c32f42f |
 | remote load, client p50 (enam + weur) | position 8 ms, warm HIT 11 ms, weather 15 ms, cold track 288 ms, cold scan 238 ms | d489af37, L20261031T045109Z-uqz8 |
 | front-door CPU p50 / p99 | `/v1/alignment` 2 / 35, `/v1/day` 2 / 22, `/v1/alignment/search` merge 29 / 39 ms | d489af37, same run |
@@ -726,7 +752,10 @@ a client leaving early often still gets a 200 recorded).
 - Re-deploying an older rev is a rollback of whatever is live (it once replaced another agent's fresh deploy for ~2 min):
   check `cf workers deployments list` first.
 - `npm install` in the shared tree removes the per-package `node_modules/wrangler` symlinks cf needs. Restore with
-  `ln -sfn "$PWD/node_modules/wrangler" packages/<p>/node_modules/wrangler` (worker, tail, load).
+  `ln -sfn "$PWD/node_modules/wrangler" packages/<p>/node_modules/wrangler` (worker, tail, load). After a commit changes
+  package-lock.json, update the shared tree with `scripts/install-deps.sh` (npm ci, the wrangler links, the web build). deploy.sh
+  never needs it: when a commit's lockfile differs from the shared tree's node_modules it `npm ci`s that lockfile once into
+  `.git/ephem-deps/<lockfile sha16>/` and links from there.
 - A pipeline binding for a new stream once failed a version upload with `[10021] Pipeline binding error` (transient).
 - `/v1/day` needs `tz`; `/v1/track` rejects a start/end off the stepSeconds grid (snap on the client so keys are shared). The
   homepage's live poll sends no `time` (with one it would leave a single-use immutable entry).

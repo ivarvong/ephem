@@ -9,7 +9,12 @@
 // every attribute. Five key numbers; the rest in "Run details". Dark only (the site's mission-control style), 390 px:
 // the name column narrows and the waterfall scrolls sideways inside its own container.
 // The client script lives in a String.raw template: no backticks and no dollar-brace inside it; comments as /* */.
-import { DIN_CSS } from "../../../packages/worker/src/din.ts"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
+
+/** The page's font (packages/web/src/fonts), inline: the viewer is one offline file. */
+const DIN_CSS = (["regular", "bold"] as const).map((w, i) => `@font-face{font-family:"Ephem DIN";src:url("data:font/woff2;base64,${
+  readFileSync(join(import.meta.dirname, `../../../packages/web/src/fonts/ephem-din-${w}.woff2`)).toString("base64")}") format("woff2");font-weight:${i ? 700 : 400};font-display:swap}`).join("")
 
 const CSS = String.raw`
 :root{--bg:#060708;--panel:#0b0d10;--raise:#11141a;--ink:#f2f4f7;--ink2:#c3c8d0;--muted:#8d939c;--faint:#555b64;

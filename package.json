@@ -6,10 +6,12 @@
     "packages/*"
   ],
   "scripts": {
+    "build": "node --experimental-strip-types scripts/build-web.ts",
+    "dev": "EPHEM_VITE=1 node --experimental-strip-types packages/worker/src/dev.ts",
     "golden:record": "GOLDEN_RECORD=1 vitest run packages/worker/test/golden.test.ts",
-    "test": "vitest run",
+    "test": "node --experimental-strip-types scripts/build-web.ts --if-stale && vitest run",
     "lint": "oxlint packages",
-    "typecheck": "tsc -p packages/core && tsc -p packages/api && tsc -p packages/worker && tsc -p packages/tail && tsc -p packages/load"
+    "typecheck": "node --experimental-strip-types scripts/build-web.ts --if-stale && tsc -p packages/core && tsc -p packages/api && tsc -p packages/web && tsc -p packages/worker && tsc -p packages/tail && tsc -p packages/load"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

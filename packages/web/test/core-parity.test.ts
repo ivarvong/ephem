@@ -1,22 +1,15 @@
-// The homepage's in-browser compute (src/sky-core.generated.ts, src/sky-assets.ts):
-//   1. the bundle is fresh: rebuilt from packages/core/src/browser.ts by scripts/build-sky-core.ts, byte for byte;
-//   2. it carries only the modules position, track and day run: no geoid (grid or band manifest), WMM, search, alignment;
-//   3. parity: the bundle (evaluated as the browser does) vs the API's server path (core's positionRequest / trackRequest /
-//      dayRequest, the functions the handlers call) on thousands of random cases, 1900–2150, every latitude, both bodies,
-//      every output field, within tolerances far inside the accuracy bars (not bit-equality: V8 and JavaScriptCore may
-//      differ in Math's last bit; scripts/obs/sky-parity-chrome.ts runs the same comparison in real Chrome);
-//   4. the routes serve those bytes, immutable.
+// The homepage's in-browser compute is @ephem/core bundled by Vite (packages/web/src/client/core.ts → the web build's core
+// module). Parity: that built file (imported as the browser imports it) vs the API's server path (core's positionRequest /
+// trackRequest / dayRequest, the functions the handlers call) on thousands of random cases, 1900–2150, every latitude, both
+// bodies, every output field, within tolerances far inside the accuracy bars (not bit-equality: V8 and JavaScriptCore may
+// differ in Math's last bit; scripts/obs/sky-parity-chrome.ts runs the same comparison in real Chrome). What the module
+// carries (no geoid, WMM or search): test/build.test.ts.
 import { describe, expect, it } from "vitest"
 import { existsSync, readFileSync } from "node:fs"
 import { resolve } from "node:path"
-import { createHash } from "node:crypto"
+import { pathToFileURL } from "node:url"
 import { DE440, dayRequest, positionRequest, trackRequest } from "@ephem/core"
 import { diskBlocks } from "../../core/test/helpers/blocks.ts"
-import { buildSkyCore, generated, OUT } from "../../../scripts/build-sky-core.ts"
-import { SKY_CORE_INPUTS, SKY_CORE_JS, SKY_CORE_SHA256 } from "../src/sky-core.generated.ts"
-import { DE440_ASSET_BASE, SKY_CORE_PATH } from "../src/sky-assets.ts"
-import { makeHandler } from "../src/app.ts"
-import { direct, makeBlocks } from "../src/blocks.ts"
 
 // Blocks: the full local DE440 file (data/jpl, linked into deploy.sh's worktree) when present, else the per-block cache.
 const FILE = resolve(__dirname, "../../../data/jpl", DE440.file)
@@ -27,7 +20,8 @@ const src = (i: number): ArrayBuffer => {
   b = whole ? whole.buffer.slice(whole.byteOffset + (2 + i) * DE440.recBytes, whole.byteOffset + (3 + i) * DE440.recBytes) as ArrayBuffer : diskBlocks(i)
   memo.set(i, b); return b
 }
-const browser = new Function(`${SKY_CORE_JS}; return __ephemCore`)() as {
+const DIST = resolve(__dirname, "../dist"), manifest = JSON.parse(readFileSync(resolve(DIST, "assets.json"), "utf8"))
+const browser = await import(pathToFileURL(resolve(DIST, "client", manifest.core.js.slice(1))).href) as {
   position: (s: typeof src, q: object) => any; track: (s: typeof src, q: object) => any; day: (s: typeof src, q: object) => any
 }
 
@@ -50,20 +44,7 @@ const diff = (a: unknown, b: unknown, path: string, max: Map<string, number>, ba
 const TOL = (k: string) => (k.endsWith("distanceKm") ? 1e-6 : 1e-9)   // km; else days (86 µs), degrees, deg/min, hours
 const inputs = (o: any) => ({ geo: { lat: o.observer.lat, lon: o.observer.lon, height: o.observer.heightEllipsoid } })
 
-describe("the browser bundle", () => {
-  it("is fresh: scripts/build-sky-core.ts rebuilds it byte for byte", async () => {
-    const b = await buildSkyCore()
-    expect(readFileSync(OUT, "utf8"), "stale: run node --experimental-strip-types scripts/build-sky-core.ts").toBe(generated(b))
-    expect(createHash("sha256").update(SKY_CORE_JS).digest("hex")).toBe(SKY_CORE_SHA256)
-  }, 30_000)
-  it("carries only what position, track and day run: no geoid, WMM, search or alignment", () => {
-    expect([...SKY_CORE_INPUTS].map(p => p.split("/").pop())).toEqual(["aim.ts", "block.ts", "browser.ts", "day.ts", "ephemeris.ts", "frames.ts", "horizon.ts", "linalg.ts", "observe.ts", "position.ts", "time.ts", "track.ts"])
-    for (const w of ["EGM96", "egm96", "WMM", "bandRows", "alignment", "search"]) expect(SKY_CORE_JS.includes(w), w).toBe(false)
-    expect(SKY_CORE_JS.length).toBeLessThan(20_000)
-  })
-})
-
-describe("parity: browser bundle vs the API's server path", () => {
+describe("parity: the built browser core vs the API's server path", () => {
   const report: string[] = []
   it("position: 4 000 random instants 1900–2150, every latitude, Sun and Moon, every field", () => {
     const r = rng(SEED), max = new Map<string, number>(), bad: string[] = []
@@ -107,21 +88,6 @@ describe("parity: browser bundle vs the API's server path", () => {
     expect(events).toBeGreaterThan(1500)
     expect(maxMs).toBeLessThanOrEqual(1)
     report.push(`day 300 days, ${events} events: max |Δ| ${maxMs} ms`)
-    console.log(`sky-core parity (seed ${SEED}): ${report.join("; ")}`)
+    console.log(`browser core parity (seed ${SEED}): ${report.join("; ")}`)
   }, 120_000)
-})
-
-describe("the routes", () => {
-  const h = makeHandler(makeBlocks(direct(async i => src(i))))
-  it("serve the bundle and DE440 blocks, immutable; anything else is a 404", async () => {
-    const js = await h(new Request(`http://x${SKY_CORE_PATH}`))
-    expect(js.status).toBe(200); expect(js.headers.get("content-type")).toMatch(/^text\/javascript/)
-    expect(js.headers.get("cache-control")).toBe("public, max-age=31536000, immutable")
-    expect(await js.text()).toBe(SKY_CORE_JS)
-    const blk = await h(new Request(`http://x${DE440_ASSET_BASE}5442`))
-    expect(blk.status).toBe(200); expect(blk.headers.get("cache-control")).toBe("public, max-age=31536000, immutable")
-    expect(Buffer.from(await blk.arrayBuffer()).equals(Buffer.from(src(5442)))).toBe(true)
-    for (const p of [`${DE440_ASSET_BASE}12556`, `${DE440_ASSET_BASE}-1`, `${DE440_ASSET_BASE}1e3`, "/assets/de440/0000000000000000/5442", "/assets/0000000000000000/ephem-sky.js"])
-      expect((await h(new Request(`http://x${p}`))).status, p).toBe(404)
-  })
 })

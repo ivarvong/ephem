@@ -1,12 +1,9 @@
-// The site icon. Every HTML page inlines it as a data URI (`ICON_LINK`), so a browser makes no icon request at all; before
-// 2026-10-30 `/` had no <link rel=icon>, so Chrome fetched /favicon.ico after load, a 404 through the whole Effect app with a
-// Basin row in waitUntil (journey J20261031T000045Z-y64q). `/favicon.ico` itself (crawlers, old clients, direct hits) is
-// answered by `favicon()` in the front door before the app: no router, no spans of ours, no request row.
-// Glyph: the home page's sky: near-black disk, horizon hairline, the Sun (--sun) above it and the Moon (--moon).
-export const ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#05070b"/><path d="M4 22h24" stroke="#586174" stroke-width="1.5"/><circle cx="12" cy="14" r="5" fill="#ffc361"/><circle cx="23" cy="9" r="3" fill="#d9e3ff"/><circle cx="24.4" cy="8" r="2.4" fill="#05070b"/></svg>`
-
-/** `<link rel="icon">` for every HTML page: an inline SVG, zero requests. */
-export const ICON_LINK = `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,${encodeURIComponent(ICON_SVG)}">`
+// `/favicon.ico` (crawlers, old clients, direct hits), answered by `favicon()` in the front door before the app: no router, no
+// spans of ours, no request row. Every HTML page inlines the same icon as a data URI (@ephem/web lib/icon.ts), so a browser on
+// our pages makes no icon request at all (before 2026-10-30 `/` had none, so Chrome fetched /favicon.ico after load, a 404
+// through the whole Effect app with a Basin row in waitUntil: journey J20261031T000045Z-y64q).
+import { ICON_SVG } from "@ephem/web/server"
+export { ICON_SVG }
 
 const ICON_HEADERS = { "content-type": "image/svg+xml", "cache-control": "public, max-age=31536000, immutable", "x-content-type-options": "nosniff" }
 

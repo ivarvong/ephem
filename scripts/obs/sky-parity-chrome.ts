@@ -1,12 +1,13 @@
-// The homepage's browser bundle (packages/worker/src/sky-core.generated.ts) run in real headless Chrome (our CDP client) on
-// random cases, against the API's server path (core's positionRequest) run here in Node. The gate's
-// packages/worker/test/sky-core.test.ts does the same in Node's V8; this is the check on a browser's own Math.
+// The homepage's in-browser core (the web build's core module, packages/web/dist: @ephem/core bundled by Vite) run in real
+// headless Chrome (our CDP client) on random cases, against the API's server path (core's positionRequest) run here in Node.
+// The gate's packages/web/test/core-parity.test.ts does the same in Node's V8; this is the check on a browser's own Math.
 //   node --experimental-strip-types scripts/obs/sky-parity-chrome.ts [cases=400] [seed=20261031]
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { DE440, blocksFor, instant, positionRequest, setGeoidSource } from "../../packages/core/src/index.ts"
 import { bundledGeoidBand } from "../../packages/core/src/geoid-bundled.ts"
-import { SKY_CORE_JS, SKY_CORE_SHA256 } from "../../packages/worker/src/sky-core.generated.ts"
+const MANIFEST = JSON.parse(readFileSync(join(import.meta.dirname, "../../packages/web/dist/assets.json"), "utf8"))
+const CORE_JS = readFileSync(join(import.meta.dirname, "../../packages/web/dist/client", MANIFEST.core.js), "utf8")
 import { launch } from "./cdp/cdp.ts"
 import { evaluate } from "./cdp/page.ts"
 
@@ -27,7 +28,8 @@ const b64 = Object.fromEntries(need.map(i => [i, Buffer.from(src(i)).toString("b
 const b = await launch({ headless: true })
 try {
   const s = await b.newPage(); await s.send("Runtime.enable")
-  await evaluate(s, `${SKY_CORE_JS}; window.__B = ${JSON.stringify(b64)}; window.__src = i => { const s = atob(__B[i]); const u = new Uint8Array(s.length); for (let k = 0; k < s.length; k++) u[k] = s.charCodeAt(k); return (__B[i] = u.buffer) }; 1`)
+  await evaluate(s, `import(URL.createObjectURL(new Blob([${JSON.stringify(CORE_JS)}], { type: "text/javascript" }))).then(m => { window.__ephemCore = m; return 1 })`)
+  await evaluate(s, `window.__B = ${JSON.stringify(b64)}; window.__src = i => { const s = atob(__B[i]); const u = new Uint8Array(s.length); for (let k = 0; k < s.length; k++) u[k] = s.charCodeAt(k); return (__B[i] = u.buffer) }; 1`)
   await evaluate(s, `window.__src2 = i => typeof __B[i] === "string" ? __src(i) : __B[i]; 1`)
   const out = await evaluate<any[]>(s, `(${JSON.stringify(cases.map(c => c.q))}).map(q => { const p = __ephemCore.position(__src2, q); return { time: p.time, sun: p.sun, moon: p.moon } })`)
   const ua = await evaluate<string>(s, "navigator.userAgent")
@@ -40,7 +42,7 @@ try {
   out.forEach((o, i) => diff(o, { time: cases[i]!.api.time, sun: cases[i]!.api.sun, moon: cases[i]!.api.moon }, ""))
   const worst = Math.max(...[...max].filter(([k]) => !/distanceKm/.test(k)).map(([, v]) => v)), km = Math.max(max.get("sun.distanceKm") ?? 0, max.get("moon.distanceKm") ?? 0)
   const nonzero = [...max].filter(([, v]) => v > 0).toSorted((a, z) => z[1] - a[1])
-  console.log(JSON.stringify({ chrome: ua.match(/Chrome\/[\d.]+/)?.[0], bundle: SKY_CORE_SHA256.slice(0, 16), cases: N, seed: SEED, blocks: need.length, fields: max.size, mismatches: bad.slice(0, 5),
+  console.log(JSON.stringify({ chrome: ua.match(/Chrome\/[\d.]+/)?.[0], bundle: MANIFEST.core.js, cases: N, seed: SEED, blocks: need.length, fields: max.size, mismatches: bad.slice(0, 5),
     maxAbsNonDistance: worst, maxDistanceKm: km, nonzeroFields: Object.fromEntries(nonzero.map(([k, v]) => [k, +v.toPrecision(3)])), ok: bad.length === 0 && worst <= 1e-9 && km <= 1e-6 }, null, 1))
   if (bad.length || worst > 1e-9 || km > 1e-6) process.exitCode = 1
 } finally { await b.close() }

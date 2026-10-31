@@ -44,7 +44,7 @@ try {
         await p.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: scheme }, { name: "prefers-reduced-motion", value: "reduce" }] })
         await p.send("Network.setExtraHTTPHeaders", { headers: { "x-ephem-smoke": "1" } })
         await navigate(p, url)
-        await waitForFn(p, `window.__sky && window.__sky.labels && performance.getEntriesByName("ephem:track").length && document.getElementById("next").textContent.trim().length > 2 && document.getElementById("liveT").textContent === "Fixed time" && /COMPASS|MAG/i.test(document.getElementById("bodies").textContent)`, 30_000)
+        await waitForFn(p, `window.__sky && window.__sky.labels && performance.getEntriesByName("ephem:track").length && document.getElementById("next").textContent.trim().length > 2 && document.getElementById("liveT").textContent === "Fixed time" && /COMPASS|MAG/i.test(document.getElementById("bodies").textContent) && document.fonts.status === "loaded" && [...document.fonts].some(f => f.family.includes("Ephem DIN") && f.status === "loaded")`, 30_000)
         await new Promise(r => setTimeout(r, 600))
         if (keys) {   // after the browser has taken over: focus the timeline and press the keys (R<n>, L<n>: arrows n times; Esc)
           await waitForFn(p, `window.__compute && window.__compute.ready`, 30_000)

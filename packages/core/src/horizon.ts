@@ -8,7 +8,7 @@ export const R_MEAN_M = 6_371_008.8
 // ─────────────── heights ───────────────
 export type HeightRef = "ellipsoid" | "msl"
 // observerHeights (ellipsoid / MSL through the EGM96 geoid) lives in geoid.ts: this file (refraction, dip) stays free of the
-// geoid, so the browser's bundle of position/track/day (src/sky-core.ts in the worker) carries no geoid code or manifest.
+// geoid, so the browser's bundle of position/track/day (@ephem/web's core module) carries no geoid code or manifest.
 
 // ─────────────── dip of the sea horizon ───────────────
 /** Apparent dip of the sea horizon (degrees, ≥ 0) for an eye `hMsl` metres above sea level, in the same terrestrial-refraction

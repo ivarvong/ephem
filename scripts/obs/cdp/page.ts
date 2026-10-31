@@ -33,7 +33,9 @@ export async function throttle(s: Session, net: Net | null, cpu = 1) {
 /** Cold: empty HTTP cache and origin storage, cache disabled. Warm: cache on. */
 export async function cache(s: Session, mode: "cold" | "warm", origin?: string) {
   if (mode === "cold") {
-    await s.send("Network.clearBrowserCache")
+    // Every launch has a fresh temporary profile, so this is belt and braces; Chrome 156 sometimes never answers it (2026-10-31,
+    // 30 s timeouts in a row), so a slow reply is skipped rather than failing the run.
+    await s.send("Network.clearBrowserCache", undefined, 5000).catch(() => console.error("cdp: Network.clearBrowserCache did not answer in 5 s (fresh profile: cold anyway)"))
     if (origin) await s.send("Storage.clearDataForOrigin", { origin, storageTypes: "all" })
   }
   await s.send("Network.setCacheDisabled", { cacheDisabled: mode === "cold" })

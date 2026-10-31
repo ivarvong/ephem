@@ -115,7 +115,7 @@ try {
   const mark = (n: string) => marks.push({ wall: Date.now(), name: n })
   await new Promise(r => setTimeout(r, 1500))
   if (script === "home-drag") {
-    const c = await P.center(s, "canvas")
+    const c = await P.center(s, "#cv")
     mark("drag sky ←"); await P.drag(s, c.x + 120, c.y, -240, 0, device.touch); await new Promise(r => setTimeout(r, 800))
     mark("drag sky →"); await P.drag(s, c.x - 120, c.y, 240, 0, device.touch); await new Promise(r => setTimeout(r, 800))
   }
@@ -208,7 +208,7 @@ const srcEv = trace.find(e => (e.name === "ephem:embedded" || e.name === "ephem:
 const cmarks: CMark[] = [
   ...(fcpEv ? [{ t: rel(fcpEv.ts / 1000), name: "first contentful paint", kind: "paint", src: "CDP trace: firstContentfulPaint" }] : []),
   ...(lcpEv ? [{ t: rel(lcpEv.ts / 1000), name: "largest contentful paint", kind: "paint", src: "CDP trace: last largestContentfulPaint::Candidate" }] : []),
-  ...(tData != null ? [{ t: tData, name: "data drawn (ephem:data)", kind: "data", src: "CDP trace: user timing mark ephem:data (the first sky frame with an answer)" }] : []),
+  ...(tData != null ? [{ t: tData, name: "data drawn (ephem:data)", kind: "data", src: "CDP trace: user timing mark ephem:data: the browser's Element Timing of the server-rendered frame (renderTime of the readouts, re-marked at that instant by the page), or the first frame the page drew with an answer" }] : []),
   ...(srcEv ? [{ t: rel(srcEv.ts / 1000), name: srcEv.name, kind: "app", src: "CDP trace: user timing mark " + srcEv.name + " (boot: where the first answers came from)" }] : []),
   ...trace.filter(e => e.name === "ephem:core" && e.pid === mainPid).slice(0, 1).map(e => ({ t: rel(e.ts / 1000), name: "browser takes over (ephem:core)", kind: "app", src: "CDP trace: user timing mark ephem:core (the page's own compute agreed with the server's first frame and took over)" })),
   ...trace.filter(e => (e.name === "MarkDOMContent" || e.name === "MarkLoad") && e.pid === mainPid && e.args?.data?.isOutermostMainFrame).map(e => ({ t: rel(e.ts / 1000), name: e.name === "MarkLoad" ? "load" : "DOMContentLoaded", kind: "nav", src: "CDP trace: " + e.name })),

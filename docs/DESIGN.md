@@ -434,19 +434,71 @@ blocks range-read from a local copy of the DE440 file (`data/jpl/`) with the sam
 as R2; this is what the cross-check harness targets.
 
 **The homepage computes in the browser after the server's first frame (2026-10-31; ivar: "Try it. But initial server render
-too right").** `/` still streams the API's own answers for the first frame (src/embed.ts). The page then loads
-`/assets/<sha16>/ephem-sky.js`, @ephem/core's `position`, `track` and `day` bundled by esbuild from
-`packages/core/src/browser.ts` (15.0 KB, 6.9 KB gzip; no geoid code or manifest, WMM, search or alignment: `observerHeights`
-moved from horizon.ts to geoid.ts for this), and the DE440 blocks it needs from `/assets/de440/<de440 sha16>/<i>` (the
-`Blocks` service: isolate LRU → BlockStore → Workers Caching → R2). Both are content-addressed and immutable and are not
-part of `/v1`: they are the page's implementation, not a question anyone asks. The observer comes from the embedded
-answer itself (lat, lon, ellipsoid height = the geoid N as a number, refraction temperature and pressure, horizon
+too right").** `/` still streams the API's own answers for the first frame (src/embed.ts). The page then loads its core
+module (@ephem/core's `position`, `track` and `day` from `packages/core/src/browser.ts`, bundled by Vite into a
+content-hashed static asset, §12.3; no geoid code or manifest, WMM, search or alignment: `observerHeights` moved from
+horizon.ts to geoid.ts for this), and the DE440 blocks it needs from `/assets/de440/<de440 sha16>/<i>` (the `Blocks`
+service: isolate LRU → BlockStore → Workers Caching → R2; src/sky-assets.ts). Both are content-addressed and immutable and
+are not part of `/v1`: they are the page's implementation, not a question anyone asks. The observer comes from the
+embedded answer itself (lat, lon, ellipsoid height = the geoid N as a number, refraction temperature and pressure, horizon
 altitude), so the browser needs no geoid. Before it takes over, the page recomputes the server's position (31 fields),
 track (every sample) and day (every event) at the server's instant and inputs and requires agreement within 1e-9° /
-1e-6 km / 1 ms; otherwise it stays on the API. The gate runs the same bundle against the server path on 4 000 + 300 + 300
-random cases from 1900 to 2150 (test/sky-core.test.ts; Node: bit-identical) and requires the generated bundle to be fresh;
-headless Chrome 156 differs in the last bits only (≤ 2.3e-13°, scripts/obs/sky-parity-chrome.ts). JavaScriptCore (Safari)
-has not been run. The page's clock is the server's (offset from Navigation Timing, ± half the request window).
+1e-6 km / 1 ms; otherwise it stays on the API. The gate imports the built core module and runs it against the server path
+on 4 000 + 300 + 300 random cases from 1900 to 2150 (packages/web/test/core-parity.test.ts; Node: bit-identical); headless
+Chrome differs in the last bits only (scripts/obs/sky-parity-chrome.ts). JavaScriptCore (Safari) has not been run. The
+page's clock is the server's (offset from Navigation Timing, ± half the request window).
+
+### 12.3 The web UI: `packages/web` (2026-10-31; ivar: "we need a professional, modern web stack here dude. make this serious")
+
+Until 2026-10-31 every page was HTML and `var`/global-function JS in TS template strings (home.ts 1 521 lines, docs.ts,
+embed.ts): no types, modules, lint, tests or build for the client. Now:
+
+```
+packages/web (@ephem/web)                    packages/worker (the server)
+  src/lib/         pure typed logic ◀──────── og.ts (ported, tested equal), home.ts (the first-load queries)
+  src/components/  Preact TSX view ─┐
+  src/client/      browser controller│ hydrate        src/home.ts  GET / ─▶ renderHomeHead (stream) + embeds ─▶ renderHomeTail
+  src/server/      render + CSP ◀───┴────────────── src/app.ts   /docs, /docs/interactive ─▶ renderDocs / renderScalar
+  src/styles/      Tailwind v4 @theme             wrangler.config.ts assetsDirectory = packages/web/dist/client
+  dist/  (built, not committed) ─────────────────▶ Workers Static Assets: /assets/<name>-<hash>.{js,css,woff2}, immutable
+```
+
+- **Stack.** TypeScript strict, ES modules; Preact + @preact/signals in TSX; Tailwind CSS v4 with the design system as
+  `@theme` tokens (colours, the Ephem DIN font, type scale, breakpoints; `lib/tokens.ts` carries the colours for canvas and
+  SVG, tested equal); Vite builds the client (entries: `home`, the lazy `core`, the stylesheet, `scalar`). The Worker is
+  still built by `cf`/wrangler (wrangler.config.ts runs the web build first and points `assetsDirectory` at its output):
+  @cloudflare/vite-plugin would own the Worker build and its config, which is `cf`'s cloudflare.config.ts (exports with
+  per-entrypoint caching, tail consumers, pipelines) and deploy.sh's versioned 0 % canary; so Vite builds only the client.
+- **Rendering: the first frame is the server's, whole.** The Worker sends the head (the build's stylesheet inline, the module,
+  the boot JSON) and the header at once; when its in-process answers are in (embed.ts: position, track, today, tomorrow,
+  magnetic) it renders the entire first frame from them with preact-render-to-string: the sky chart (SVG: sky colour,
+  tracks, discs with the Moon's phase, labels), the countdown, the timeline, the readouts, the details; then the answers
+  as `<script type="application/json">`, then `</body>`. The sky and the numbers are on screen when the HTML is parsed, with
+  the inline CSS and no script: data drawn is the browser's own Element Timing of the readouts (`ephem-data`), re-marked
+  `ephem:data` at that instant by the module once it runs. The components read module-level signals; the server seeds them
+  (client/home/frame.ts), renders synchronously and resets them, so requests in an isolate never share state. The
+  deferred module seeds the same state from the same embedded answers at the server's instant and hydrates: nothing
+  changes (test/hydrate.test.tsx: no node added, removed or rewritten, five sky states, phone and desktop frames); then it
+  goes live (the corrected clock, the measured size, the takeover, weather). Text is laid out from Ephem DIN's own advances
+  (lib/din-metrics.ts), not measured, so server and browser lay out alike, before and after the font arrives (it loads
+  after boot: src/client/fonts.ts). The server cannot see the viewport: it lays the frame out for a phone (390 × 337.6,
+  the 358 px timeline) or a desktop (1 440 × 504, 1 080 px) by the request's `Sec-CH-UA-Mobile` / user agent; the chart's
+  sky, ground and tracks stretch with the box and its discs, labels and letters are anchored at percentages, so the frame
+  is right at any size, exact at the nominal one; the browser measures and re-lays out (only labels can move, by a few px,
+  off the nominal sizes). Preact's Suspense streaming is not used: it moves late content with an inline script.
+- **The chart is SVG** (components/home/SkyChart.tsx; it was a canvas until the server rendered the first frame): one
+  renderer for the server's frame and every live and scrubbed frame, re-rendered by Preact when its inputs change. Scrub
+  at iPhone CPU 4×: see the guide "Homepage".
+- **No inline executable JS.** Every page's CSP is `default-src 'none'; script-src 'self'` (no `'unsafe-inline'`, no
+  nonces, no hashes for scripts); the homepage's one inline `<style>` is the built stylesheet, allowed by its sha256 (the
+  build computes it). `/docs` runs no script at all; `/docs/interactive` loads Scalar from jsDelivr pinned by version and
+  SRI, then our module configures it (Scalar injects its own styles: `style-src 'unsafe-inline'` on that page only). No
+  `on*=` or `style=` attributes anywhere. Tests: packages/web/test/render.test.tsx, packages/worker/test/home.test.ts (every
+  page as served); smoke `csp-*` checks the deployed pages.
+- **Assets.** Content-hashed (`/assets/<name>-<hash>`), served by Workers Static Assets ahead of the Worker (no invocation),
+  `public, max-age=31536000, immutable` from `_headers`. Fonts are self-hosted woff2 files (glyph pins the OG card's fonts by
+  the sha256 the build records). `/assets/de440/…` is not a file, so it reaches the Worker. The old hand-rolled
+  `/assets/<sha16>/ephem-sky.js` and the inline base64 font are gone.
 
 ### 12.0 One Worker: front door and cache-enabled entrypoints (decided by A/B, 2026-10-30)
 
@@ -492,7 +544,7 @@ One trace id per page view, from the browser through every server entrypoint, fo
   fresh Api run only: a cached answer would replay another request's numbers), `blocks`, `geoid`, `feed`, `trace`, `total`.
   Durations are the Workers clock, which only moves on I/O. There is deliberately no CPU entry: CPU is not readable inside
   a request; it is `cpuTimeMs` in Workers Observability, joined by trace id or ray. `Timing-Allow-Origin: *`.
-- **RUM** (`src/rum.ts`): an inline client on both pages (6.9 KB, 2.6 KB gzip; trace glue 1.7 KB) (navigation + resource timing with serverTiming, FCP, LCP,
+- **RUM** (`src/rum.ts`; the client is packages/web/src/client/rum.ts and trace.ts, in the page module) (navigation + resource timing with serverTiming, FCP, LCP,
   CLS, INP, long animation frames, every fetch with its ids, app spans) batched to `POST /rum` (uncached; ≤ 64 KiB, ≤ 300
   spans, per-trace and per-isolate limits), validated to route ids and fixed patterns, stored in Basin `ephem_rum` →
   `ephem.rum`. Request rows (`ephem.requests`) carry the trace ids. DNT/GPC and unsampled traceparents send and store nothing; synthetic traffic is flagged.

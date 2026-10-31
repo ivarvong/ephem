@@ -1,6 +1,6 @@
 // Production RUM: the page's own spans (navigation, every resource with its serverTiming, paints, LCP, CLS, INP, long animation
 // frames, every fetch with its traceparent ids, app spans: boot, data-ready, first-sky-draw, key presses, drags), batched by the
-// browser (RUM_JS) to POST /rum, validated here and written to the Basin stream `ephem_rum` (ops/basin/rum.schema.json; Iceberg
+// browser (packages/web/src/client/rum.ts) to POST /rum, validated here and written to the Basin stream `ephem_rum` (ops/basin/rum.schema.json; Iceberg
 // ephem.rum), one row per span, keyed by trace_id + span_id. ephem.requests has the same trace_id, so SQL joins client spans
 // to server request rows (scripts/obs/trace-view.ts).
 // Privacy (hard rule; test/rum.test.ts): no IP, no user agent (family only), no URL or query: targets are route ids (ROUTES,
@@ -144,67 +144,6 @@ export const rumPipelineSink = (rum: { send(r: ReadonlyArray<RumRow>): Promise<v
   emit: rows => waitUntil(rum.send(rows).catch((e: unknown) => console.error(JSON.stringify({ basin_send_failed: { stream: "ephem_rum", rows: rows.length, error: e instanceof Error ? `${e.name}: ${e.message}` : String(e) } })))),
 })
 
-/** Browser side, inlined in both pages after CLIENT_TRACE_JS. `window.__rum` = { span(name, t0, t1, detail), mark(name, detail),
+/** The batch format the page (packages/web/src/client/rum.ts) sends. `window.__rum` = { span(name, t0, t1, detail), mark(name, detail),
  *  interaction(name, t0, t1, detail), flush(), off }. Field names are short (k kind, n name, sid/pid ids, t start, d dur, v value,
  *  tg target path, ph [dns, connect, tls, request, ttfb, download], b bytes, st status, pr protocol, sv serverTiming, r ray, dt detail). */
-export const RUM_JS = String.raw`
-(function () {
-  var T = window.__ephemTrace, N = navigator, noop = function () {};
-  var off = !T ? "no-trace" : (N.doNotTrack === "1" || window.doNotTrack === "1" || N.globalPrivacyControl === true) ? "privacy" : null;
-  var tp = null; try { var m = document.querySelector('meta[name="traceparent"]'); tp = m && m.getAttribute("content"); } catch (e) {}
-  if (!off && T) { if (!tp || tp.indexOf(T.traceId) < 0) tp = "00-" + T.traceId + "-" + (T.parentSpanId || T.hex(8)) + "-01"; if (!/-01$/.test(tp)) off = "unsampled"; }
-  if (off || !window.PerformanceObserver) { window.__rum = { off: off || "unsupported", span: noop, mark: noop, interaction: noop, flush: noop }; return; }
-  var SYN = !!document.querySelector('meta[name="ephem-synthetic"]');   // the document request was synthetic (src/clienttrace.ts)
-  var buf = [], seq = 0, DOC = T.parentSpanId, r1 = function (x) { return x == null ? undefined : Math.round(x * 10) / 10; };
-  function add(o) { if (buf.length < 600) buf.push(o); }
-  function sid() { return T.hex(8); }
-  function stOf(e) { try { return (e.serverTiming || []).map(function (s) { return s.name + (s.description ? ';desc="' + s.description + '"' : "") + (s.duration ? ";dur=" + s.duration : ""); }).join(", ").slice(0, 400); } catch (er) { return undefined; } }
-  function phases(e) {
-    var tls = e.secureConnectionStart > 0 ? e.connectEnd - e.secureConnectionStart : 0;
-    return [r1(e.domainLookupEnd - e.domainLookupStart), r1((e.secureConnectionStart > 0 ? e.secureConnectionStart : e.connectEnd) - e.connectStart), r1(tls),
-      e.responseStart > 0 ? r1(e.responseStart - e.requestStart) : undefined, e.responseStart > 0 ? r1(e.responseStart - e.startTime) : undefined, e.responseStart > 0 ? r1(e.responseEnd - e.responseStart) : undefined];
-  }
-  function fetchFor(u, t) { var f = T.fetches; for (var i = 0; i < f.length; i++) if (!f[i].used && f[i].url && new URL(f[i].url, location.href).href === u && Math.abs(f[i].t0 - t) < 50) { f[i].used = 1; return f[i]; } return null; }
-  function resource(e) {
-    var u; try { u = new URL(e.name, location.href); } catch (er) { return; }
-    if (u.origin === location.origin && u.pathname === "/rum") return;
-    var f = e.initiatorType === "fetch" ? fetchFor(u.href, e.startTime) : null;
-    add({ k: "resource", n: e.initiatorType || "other", sid: f ? f.spanId : sid(), pid: DOC, t: r1(e.startTime), d: r1(e.duration), tg: u.origin === location.origin ? u.pathname : "external",
-      ph: phases(e), b: e.transferSize, st: e.responseStatus, pr: e.nextHopProtocol, sv: stOf(e), r: f ? f.ray : undefined });
-  }
-  function obs(type, fn, opts) { try { var o = new PerformanceObserver(function (l) { l.getEntries().forEach(fn); }); o.observe(Object.assign({ type: type, buffered: true }, opts || {})); return o; } catch (e) { return null; } }
-  var nav = performance.getEntriesByType("navigation")[0];
-  if (nav) add({ k: "navigation", n: (nav.type || "navigate").replace(/_/g, "-"), sid: DOC || sid(), pid: undefined, t: 0, d: r1(nav.duration || nav.loadEventEnd), tg: location.pathname,
-    ph: phases(nav), b: nav.transferSize, st: nav.responseStatus, pr: nav.nextHopProtocol, sv: stOf(nav), v: r1(nav.domContentLoadedEventEnd) });
-  obs("resource", resource);
-  obs("paint", function (e) { add({ k: "paint", n: e.name === "first-contentful-paint" ? "fcp" : "fp", sid: sid(), pid: DOC, t: r1(e.startTime) }); });
-  var lcp = null; obs("largest-contentful-paint", function (e) { lcp = e; });
-  var cls = 0, sess = 0, last = 0, first = 0; obs("layout-shift", function (e) { if (e.hadRecentInput) return; if (e.startTime - last > 1000 || e.startTime - first > 5000) { sess = 0; first = e.startTime; } sess += e.value; last = e.startTime; if (sess > cls) cls = sess; });
-  var inter = {}; obs("event", function (e) { if (!e.interactionId) return; var p = inter[e.interactionId]; if (!p || e.duration > p.d) inter[e.interactionId] = { d: e.duration, t: e.startTime, n: e.name }; if (e.duration >= 40) add({ k: "event", n: e.name, sid: sid(), pid: DOC, t: r1(e.startTime), d: r1(e.duration), v: r1(e.processingStart - e.startTime) }); }, { durationThreshold: 16 });
-  if (!obs("long-animation-frame", function (e) { add({ k: "loaf", n: "frame", sid: sid(), pid: DOC, t: r1(e.startTime), d: r1(e.duration), v: r1(e.blockingDuration) }); })) obs("longtask", function (e) { add({ k: "longtask", n: "task", sid: sid(), pid: DOC, t: r1(e.startTime), d: r1(e.duration) }); });
-  var done = {};
-  function fetches() { T.fetches.forEach(function (f) { if (f.t1 == null || f.sent) return; f.sent = 1; var u; try { u = new URL(f.url, location.href); } catch (e) { return; }
-    add({ k: "fetch", n: "fetch", sid: f.spanId, pid: f.parent || DOC, t: r1(f.t0), d: r1(f.t1 - f.t0), tg: u.origin === location.origin ? u.pathname : "external", st: f.status, r: f.ray || undefined }); }); }
-  function vitals(final) {
-    if (lcp && !done.lcp && final) { done.lcp = 1; add({ k: "lcp", n: "lcp", sid: sid(), pid: DOC, t: r1(lcp.startTime), v: r1(lcp.startTime), dt: (lcp.element && lcp.element.tagName || "").toLowerCase().slice(0, 16) || undefined }); }
-    if (final && !done.cls) { done.cls = 1; add({ k: "cls", n: "cls", sid: sid(), pid: DOC, t: r1(performance.now()), v: Math.round(cls * 10000) / 10000 }); }
-    var worst = null; for (var k in inter) if (!worst || inter[k].d > worst.d) worst = inter[k];
-    if (final && worst && !done.inp) { done.inp = 1; add({ k: "inp", n: worst.n, sid: sid(), pid: DOC, t: r1(worst.t), d: r1(worst.d), v: r1(worst.d) }); }
-  }
-  function flush(final) {
-    fetches(); vitals(final);
-    while (buf.length) {
-      var body = JSON.stringify({ tp: tp, page: location.pathname, seq: seq++, to: performance.timeOrigin, vw: innerWidth, dpr: devicePixelRatio, wd: N.webdriver === true || SYN, s: buf.splice(0, 250) });
-      try { if (final && N.sendBeacon && N.sendBeacon("/rum", new Blob([body], { type: "application/json" }))) continue; } catch (e) {}
-      try { fetch("/rum", { method: "POST", body: body, keepalive: body.length < 60000, headers: { "content-type": "application/json" } }).catch(noop); } catch (e) {}
-    }
-  }
-  addEventListener("visibilitychange", function () { if (document.visibilityState === "hidden") flush(true); });
-  addEventListener("pagehide", function () { flush(true); });
-  setInterval(function () { flush(false); }, 15000);
-  function app(k) { return function (name, t0, t1, detail) { add({ k: k, n: name, sid: sid(), pid: DOC, t: r1(t0), d: t1 == null ? undefined : r1(t1 - t0), dt: detail }); }; }
-  var span = app("app"), interaction = app("interaction");
-  window.__rum = { off: null, span: span, interaction: interaction, mark: function (name, detail) { span(name, performance.now(), null, detail); if (name === "data-ready") setTimeout(function () { flush(false); }, 2000); }, flush: flush };
-  span("boot", 0, performance.now());
-})();
-`

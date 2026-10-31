@@ -24,6 +24,9 @@ export default defineConfig({
 			// src/og-render.ts: the link-preview PNG per rounded place and 10-minute bucket (public, max-age=600), rendered by glyph.
 			Og: exports.worker({ cache: { enabled: true } }),
 		},
+		// Workers Static Assets: packages/web/dist/client (wrangler.config.ts assetsDirectory): /assets/<name>-<hash>.{js,css,woff2},
+		// immutable for a year (_headers). A request for a file there never reaches the Worker; everything else does (/assets/de440/…).
+		assets: {},
 		// ephem-tail (packages/tail): one ephem_invocations row per invocation, incl. exceededCpu / exceededMemory / exception.
 		tailConsumers: [{ worker: "ephem-tail" }],
 		env: {

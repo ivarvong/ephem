@@ -6,6 +6,7 @@
   "dependencies": {
     "@ephem/api": "*",
     "@ephem/core": "*",
+    "@ephem/web": "*",
     "effect": "4.0.5"
   },
   "devDependencies": {

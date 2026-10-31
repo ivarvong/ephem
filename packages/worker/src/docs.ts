@@ -2,10 +2,9 @@
 // endpoint table. Parameter lists come from QUERY_PARAMS and definitions from CONVENTIONS (both @ephem/api), so they cannot
 // drift from the contract; test/docs.test.ts checks every parameter of every route is listed.
 import { CONVENTIONS, PARAM_DOCS, QUERY_PARAMS } from "@ephem/api"
-import { ICON_LINK } from "./favicon.ts"
+import { renderDocs, renderScalar, type DocsContent } from "@ephem/web/server"
 
 export const BASE = "https://ephem.ivar.workers.dev"
-export const SCALAR = "https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.74.0"
 
 interface Endpoint { readonly path: string; readonly question: string; readonly summary: string; readonly required: ReadonlyArray<string>; readonly example: string }
 /** The three questions most people come with, answered by one copy-paste call each (docs/API.md opens with the same three). */
@@ -85,25 +84,15 @@ export const llmsTxt = (): string => [
   "",
 ].join("\n")
 
-const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
-const endpointHtml = (e: Endpoint) => `<dt><code>${e.path}</code></dt><dd><strong>${esc(e.question)}</strong> ${esc(e.summary)}<br>Parameters: <code>${params(e.path, e.required).join(", ") || "none"}</code><br>Example: <a href="${esc(e.example)}"><code>${esc(e.example)}</code></a></dd>`
-const searchHtml = `<dt><code>POST ${SEARCH_POST.path}</code></dt><dd><strong>${esc(SEARCH_POST.question)}.</strong> ${esc(SEARCH_POST.summary)}<br>JSON body: <code>${esc(SEARCH_POST.fields)}</code><br>Example: <code>curl -X POST -H 'content-type: application/json' ${BASE}${SEARCH_POST.path} -d '${esc(SEARCH_POST.example)}'</code></dd>`
-/** /docs: readable without JavaScript; opens with three copy-paste calls, then every endpoint, parameter and convention. */
-export const docsHtml = (): string => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${ICON_LINK}<title>ephem API</title>
-<style>body{font:15px/1.5 system-ui,sans-serif;max-width:52rem;margin:2rem auto;padding:0 1rem;color:#111;background:#fff}code,pre{font:13px ui-monospace,monospace;background:#f3f3f3;padding:0 .2em;overflow-wrap:anywhere}pre{padding:.6em .8em;white-space:pre-wrap}h2{margin-top:2rem}dt{margin-top:1rem;font-weight:600}dd{margin:.2rem 0 0 1rem}@media(prefers-color-scheme:dark){body{color:#eee;background:#111}code,pre{background:#222}a{color:#8bf}}</style></head><body>
-<h1>ephem API</h1>
-<p>The Sun and Moon from JPL DE440: where they are, what they do on a day, when they reach an altitude, and where to stand so one sits on a landmark. JSON over HTTPS, CORS open, no key. Every answer is checked against an independent implementation (Skyfield for the sky, PROJ and GeographicLib for geometry, NOAA test values and pygeomag for the magnetic field) and states the conventions it used.</p>
-${QUICKSTART.map(q => `<p><strong>${esc(q.question)}</strong></p><pre>curl '${esc(BASE + q.path)}'</pre>`).join("\n")}
-<ul>
-<li>OpenAPI 3.1 spec: <a href="/openapi.json"><code>/openapi.json</code></a></li>
-<li>For agents: <a href="/llms.txt"><code>/llms.txt</code></a> · MCP server: <code>${BASE}/mcp</code> (Streamable HTTP; one tool per endpoint, same names and arguments)</li>
-<li>Interactive reference (needs JavaScript): <a href="/docs/interactive"><code>/docs/interactive</code></a></li>
-<li>Page: <a href="/">the live sky</a> (<code>?lat&amp;lon&amp;tz</code> override the location)</li>
-</ul>
-<h2>Rules</h2><ul>${RULES.map(r => `<li>${esc(r)}</li>`).join("")}</ul>
-<h2>Endpoints</h2><p>One question each. GET unless noted. <code>*</code> = required.</p><dl>${ENDPOINTS.map(e => endpointHtml(e) + (e.path === "/v1/alignment" ? searchHtml : "")).join("")}</dl>
-<h2>Parameters</h2><p>The same name means the same thing on every endpoint.</p><dl>${PARAM_NAMES.map(k => `<dt><code>${k}</code></dt><dd>${esc(PARAM_DOCS[k]!)}</dd>`).join("")}</dl>
-<h2>Conventions</h2><dl>${CONVENTION_KEYS.map(k => `<dt>${k}</dt><dd>${esc(CONVENTIONS[k])}</dd>`).join("")}</dl>
-</body></html>`
-
-export const SCALAR_HTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${ICON_LINK}<title>ephem API reference</title></head><body><noscript>This page needs JavaScript; <a href="/docs">/docs</a> is plain HTML and <a href="/openapi.json">/openapi.json</a> the spec.</noscript><script id="api-reference" data-url="/openapi.json"></script><script src="${SCALAR}"></script></body></html>`
+/** /docs's content, rendered by @ephem/web (packages/web/src/server/docs.tsx): readable without JavaScript; opens with three
+ *  copy-paste calls, then every endpoint, parameter and convention. */
+export const docsContent = (): DocsContent => ({
+  base: BASE, quickstart: QUICKSTART, rules: RULES,
+  endpoints: ENDPOINTS.flatMap(e => [{ path: e.path, question: e.question, summary: e.summary, params: params(e.path, e.required).join(", ") || "none", example: e.example },
+    ...(e.path === "/v1/alignment" ? [{ post: true as const, path: SEARCH_POST.path, question: SEARCH_POST.question, summary: SEARCH_POST.summary, fields: SEARCH_POST.fields,
+      example: `curl -X POST -H 'content-type: application/json' ${BASE}${SEARCH_POST.path} -d '${SEARCH_POST.example}'` }] : [])]),
+  params: PARAM_NAMES.map(k => [k, PARAM_DOCS[k]!] as const),
+  conventions: CONVENTION_KEYS.map(k => [k, CONVENTIONS[k]] as const),
+})
+export const docsHtml = (): string => renderDocs(docsContent())
+export const scalarHtml = (): string => renderScalar()

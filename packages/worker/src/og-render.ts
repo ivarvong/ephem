@@ -3,7 +3,6 @@
 //   GET /og.png?lat&lon&place&tz&t     the live sky card. Normalised (0.01°, the 10-minute bucket t, a valid zone; no lat/lon:
 //                                      the requester's request.cf location, rounded) and fetched from the cache-enabled `Og`
 //                                      entrypoint over src/loopback.ts, keyed /og/v<N>/png?<normalised query>.
-//   GET /assets/<sha16>/ephem-din-{regular,bold}.woff2   the page's font for glyph (src/og-fonts.ts), immutable.
 //   GET /apple-touch-icon.png (and -precomposed)          the 180×180 icon iMessage and iOS show (src/og-png.generated.ts).
 // Og (cache ON): reads the bucket's /v1 answers from the Api (loopback; all deterministic, so cached and shared with the
 // page), builds the scene and POSTs it to glyph (service binding GLYPH → the `glyph` Worker, /render?dpr=2: 2400×1260).
@@ -11,14 +10,12 @@
 // (max-age=60, x-ephem-og: fallback) and the render runs on in waitUntil, so glyph's own cache has it for the next request.
 import type { Loopback } from "./loopback.ts"
 import { OG_DPR, ogApiQueries, parseOgQuery, ogQueryString, BUCKET_MS, type OgData, type OgQuery } from "./og.ts"
-import { servedFont } from "./og-fonts.ts"
 import { FALLBACK_PNG_B64, ICON_PNG_B64 } from "./og-png.generated.ts"
 import type { Tracing } from "./trace.ts"
 
 export const OG_CACHE = "public, max-age=600"
 export const OG_FALLBACK_CACHE = "public, max-age=60"
 export const GLYPH_BUDGET_MS = 2500
-const IMMUTABLE = "public, max-age=31536000, immutable"
 const DEFAULT_PLACE = { lat: 40.6892, lon: -74.0445, place: "Liberty Island", tz: "America/New_York" }
 
 const b64 = (s: string) => Uint8Array.from(atob(s), c => c.charCodeAt(0)) as Uint8Array<ArrayBuffer>
@@ -37,8 +34,6 @@ export const ogFront = async (request: Request, lb: Loopback, tracing?: Tracing,
   const url = new URL(request.url), p = url.pathname, head = request.method === "HEAD"
   if (p === "/apple-touch-icon.png" || p === "/apple-touch-icon-precomposed.png")
     return new Response(head ? null : iconPng(), { headers: { "content-type": "image/png", "cache-control": "public, max-age=86400", "x-content-type-options": "nosniff" } })
-  const font = p.startsWith("/assets/") ? servedFont(p) : null
-  if (font) return new Response(head ? null : font, { headers: { "content-type": "font/woff2", "cache-control": IMMUTABLE, "access-control-allow-origin": "*" } })
   if (p !== "/og.png") return undefined
   const cf = (request as { cf?: Cf }).cf, lat = Number(cf?.latitude), lon = Number(cf?.longitude)
   const here = cf?.latitude && cf.longitude && Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon, place: cf.city ?? "", tz: cf.timezone ?? "UTC" } : DEFAULT_PLACE

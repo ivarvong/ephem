@@ -14,18 +14,20 @@ import { Home } from "./home.ts"
 import { SkyAssets } from "./sky-assets.ts"
 import { WeatherNone, type Weather } from "./weather.ts"
 import { Mcp } from "./mcp.ts"
-import { SCALAR_HTML, docsHtml, llmsTxt } from "./docs.ts"
+import { docsCsp, scalarCsp } from "@ephem/web/server"
+import { docsHtml, llmsTxt, scalarHtml } from "./docs.ts"
+import { pageHeaders } from "./home.ts"
 import { RequestLogging } from "./requestlog.ts"
 import { ClientTrace } from "./clienttrace.ts"
 import { Rum } from "./rum.ts"
 import { Cors, provideApp, toHandler } from "./router.ts"
 
-/** /docs (plain HTML), /llms.txt and /docs/interactive (Scalar from jsDelivr, ~0 bundle cost): src/docs.ts. */
-let docsPages: { html: string; llms: string } | undefined
-const pages = () => (docsPages ??= { html: docsHtml(), llms: llmsTxt() })
+/** /docs (plain HTML), /llms.txt and /docs/interactive (Scalar from jsDelivr, ~0 bundle cost): src/docs.ts, rendered by @ephem/web. */
+let docsPages: { html: string; scalar: string; llms: string } | undefined
+const pages = () => (docsPages ??= { html: docsHtml(), scalar: scalarHtml(), llms: llmsTxt() })
 const Docs = Layer.mergeAll(
-  HttpRouter.add("GET", "/docs", Effect.sync(() => HttpServerResponse.html(pages().html))),
-  HttpRouter.add("GET", "/docs/interactive", HttpServerResponse.html(SCALAR_HTML)),
+  HttpRouter.add("GET", "/docs", Effect.sync(() => HttpServerResponse.text(pages().html, { contentType: "text/html; charset=utf-8", headers: pageHeaders(docsCsp()) }))),
+  HttpRouter.add("GET", "/docs/interactive", Effect.sync(() => HttpServerResponse.text(pages().scalar, { contentType: "text/html; charset=utf-8", headers: pageHeaders(scalarCsp()) }))),
   HttpRouter.add("GET", "/llms.txt", Effect.sync(() => HttpServerResponse.text(pages().llms, { contentType: "text/plain; charset=utf-8" }))),
 )
 
@@ -35,7 +37,7 @@ export const makeApp = (blocks: Layer.Layer<Blocks>, edge: Role = { role: "local
   provideApp(Layer.mergeAll(
     HttpApiBuilder.layer(EphemApi, { openapiPath: "/openapi.json" }),
     Home,
-    SkyAssets,   // /assets/<sha16>/ephem-sky.js and /assets/de440/<sha16>/<i>: the page's in-browser compute (src/sky-assets.ts)
+    SkyAssets,   // /assets/de440/<sha16>/<i>: the page's in-browser compute reads DE440 blocks (src/sky-assets.ts)
     Rum,   // POST /rum: browser RUM batches → Basin ephem_rum (src/rum.ts)
     Docs,
     RequestLogging,   // first global middleware = outermost: it sees every request, including those Gateway forwards

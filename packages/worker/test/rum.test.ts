@@ -4,7 +4,7 @@ import { resolve } from "node:path"
 import { describe, expect, it } from "vitest"
 import { makeHandler } from "../src/app.ts"
 import { REC, direct, makeBlocks } from "../src/blocks.ts"
-import { RUM_JS, RUM_LIMITS, makeLimiter, targetOf, validateRum, type RumRow, type RumSinkI } from "../src/rum.ts"
+import { RUM_LIMITS, makeLimiter, targetOf, validateRum, type RumRow, type RumSinkI } from "../src/rum.ts"
 import { buildRow, type RequestLogSink, type RequestRow } from "../src/requestlog.ts"
 import { makeLoopback } from "../src/loopback.ts"
 
@@ -153,23 +153,5 @@ describe("loopback trace propagation", () => {
     await makeHandler(blocks)(new Request("http://x/v1/day?date=2026-10-28&tz=America/New_York&lat=40.6892&lon=-74.0445", { headers: { traceparent: TP } }))
     expect(tps.length).toBeGreaterThan(0)
     for (const t of tps) expect(t).toMatch(new RegExp(`^00-${TID}-[0-9a-f]{16}-01$`))
-  })
-})
-
-describe("RUM_JS", () => {
-  it("parses, and is off under DNT / GPC / no trace / unsampled", () => {
-    expect(() => new Function(RUM_JS)).not.toThrow()
-    const boot = (nav: Record<string, unknown>, trace: unknown, meta: string | null) => {
-      const win: Record<string, unknown> = { __ephemTrace: trace, PerformanceObserver: function () {} }
-      const document = { querySelector: () => meta == null ? null : { getAttribute: () => meta } }
-      new Function("window", "navigator", "document", "performance", "addEventListener", "setInterval", "innerWidth", "devicePixelRatio", RUM_JS)(win, nav, document,
-        { now: () => 1, getEntriesByType: () => [] }, () => {}, () => 0, 390, 3)
-      return (win.__rum as { off: string | null }).off
-    }
-    const T = { traceId: TID, parentSpanId: SID, fetches: [], hex: (n: number) => "a".repeat(n * 2) }
-    expect(boot({ doNotTrack: "1" }, T, TP)).toBe("privacy")
-    expect(boot({ globalPrivacyControl: true }, T, TP)).toBe("privacy")
-    expect(boot({}, undefined, TP)).toBe("no-trace")
-    expect(boot({}, T, `00-${TID}-${SID}-00`)).toBe("unsampled")
   })
 })

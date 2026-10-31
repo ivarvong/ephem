@@ -1,16 +1,17 @@
 // The link preview (Open Graph): a 1200×630 PNG of the live sky for a shared link, and the head tags that point at it.
 // Pure: no I/O. src/og-render.ts fetches the data (the Api, over the loopback) and renders the scene with glyph
-// (https://glyph.ivar.workers.dev, Ivar's renderer: a JSON scene spec → PNG); src/home.ts puts `ogHead` in the page head.
+// (https://glyph.ivar.workers.dev, Ivar's renderer: a JSON scene spec → PNG); src/home.ts puts `ogHead`'s tags in the page head (rendered by @ephem/web).
 //
-// The chart is the homepage's (src/home.ts CORE_JS): the same projection (all 360° of azimuth centred between the bodies, the
+// The chart is the homepage's (@ephem/web lib/chart.ts): the same projection (all 360° of azimuth centred between the bodies, the
 // C2 tanh altitude scale below the horizon), the same one-revolution track spans, the same Catmull-Rom curves, the sky colour
-// from the Sun's altitude. CORE_JS is client JS in a string (a Worker cannot eval it), so the few functions the image needs
-// are ported here, and test/og.test.ts runs both over the same inputs: the preview cannot drift from the page.
+// from the Sun's altitude. The image's scale and frame differ, so the few functions it needs are ported here (its own
+// chartGeom), and test/og.test.ts runs both over the same inputs: the preview cannot drift from the page.
 // Privacy: everything that keys or names an image is rounded to 0.01° (≈1 km); no IP, no exact location in any URL we mint.
+import type { HeadTag } from "@ephem/web/server"
 import { isValidZone } from "@ephem/core"
 import { NOTO_FONTS, OG_DIN_ADV, notoHas } from "./og-fonts.ts"
 
-// ---------- the homepage's projection, ported from CORE_JS (test/og.test.ts checks them against it) ----------
+// ---------- the homepage's projection, ported from @ephem/web lib/chart.ts (test/og.test.ts checks them against it) ----------
 export const wrap360 = (x: number) => ((x % 360) + 360) % 360
 export const wrap180 = (x: number) => ((x % 360) + 540) % 360 - 180
 const DEPTH_S = 36
@@ -202,7 +203,6 @@ export const ogAlt = (d: Pick<OgData, "sun" | "moon" | "events" | "tz" | "at" | 
   return `Sky chart over ${d.place} at ${hm(d.at, d.tz)}: Sun ${deg(altOf(d.sun))} at ${compass(d.sun.azimuth)}, Moon ${deg(altOf(d.moon))} at ${compass(d.moon.azimuth)}` +
     (nx ? `; ${evName(nx)} in ${hhmmss(Date.parse(nx.time) - d.at).slice(0, 5).replace(":", " h ")} min` : "")
 }
-const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
 /** Link-preview fetchers (they read the head only): the head waits for live numbers for them, never for a person. */
 export const PREVIEW_BOT = /facebookexternalhit|Facebot|Twitterbot|Slackbot|Slack-ImgProxy|Discordbot|LinkedInBot|WhatsApp|TelegramBot|Applebot|SkypeUriPreview|redditbot|Embedly|Iframely|vkShare|Pinterestbot|Mastodon|Bluesky|Cardyb|Google-PageRenderer|Signal/i
 export interface OgHeadInput { readonly origin: string; readonly v: { readonly lat: number; readonly lon: number; readonly city: string; readonly place: string; readonly tz: string; readonly source: string }; readonly now: number; readonly live?: Pick<OgData, "sun" | "moon" | "events"> | null }
@@ -216,11 +216,11 @@ export const ogHead = ({ origin, v, now, live }: OgHeadInput) => {
   const d = live ? { ...live, tz: v.tz, at: now, place: v.city } : null
   const desc = d ? `${ogDescription(d)}. Live from JPL DE440.` : `Where the Sun and the Moon are over ${v.city} right now, and what rises or sets next. Live from JPL DE440.`
   const alt = d ? ogAlt(d) : `Live sky chart over ${v.city}: the Sun's and Moon's paths, a countdown to the next rise or set, their altitude and azimuth`
-  const m = (p: string, c: string) => `<meta property="${p}" content="${esc(c)}">`, n = (p: string, c: string) => `<meta name="${p}" content="${esc(c)}">`
+  const m = (property: string, content: string) => ({ property, content }), n = (name: string, content: string) => ({ name, content })
   return [m("og:type", "website"), m("og:site_name", "ephem"), m("og:title", title), m("og:description", desc), m("og:url", page),
     m("og:image", img), m("og:image:type", "image/png"), m("og:image:width", String(OG_PX[0])), m("og:image:height", String(OG_PX[1])), m("og:image:alt", alt),
     n("twitter:card", "summary_large_image"), n("twitter:title", title), n("twitter:description", desc), n("twitter:image", img), n("twitter:image:alt", alt),
-    `<link rel="apple-touch-icon" href="/apple-touch-icon.png">`].join("")
+    { rel: "apple-touch-icon", href: "/apple-touch-icon.png" }] satisfies ReadonlyArray<HeadTag>
 }
 
 // ---------- the glyph scene ----------

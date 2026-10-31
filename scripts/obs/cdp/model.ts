@@ -177,12 +177,15 @@ export function buildModel(c: Client, srvIn: Server, meta: Record<string, unknow
       { what: "document first byte", t: docR.ph.wait[1], src: "CDP ResourceTiming receiveHeadersEnd (includes the emulated latency when throttled)" },
       ea && ea.t != null ? { what: `embedded answers complete in the body (bytes ≤ ${ea.need} of ${ea.body})`, t: ea.t, src: "CDP Network.dataReceived: first chunk whose cumulative decoded bytes reach the last embed's end (offsets from the document body)" }
         : { what: "embedded answers complete in the body", t: null, src: ea ? ea.note : "not recorded (no Network.dataReceived chunks or embed offsets in this run)" },
-      { what: "boot read the embed (ephem:embedded)", t: ds.t, src: "CDP trace: user timing mark ephem:embedded" },
-      { what: "data drawn (ephem:data)", t: c.data, src: "CDP trace: user timing mark ephem:data" })
-    if (ea?.t != null && ea.t > ds.t + 0.5) crit.none = `recorded events disagree: the embed's last byte arrived at ${ea.t.toFixed(1)} ms, after the boot read it at ${ds.t.toFixed(1)} ms`
+      ...(c.data < ds.t
+        // the server rendered the frame (since 2026-10-31): data drawn is its paint, before any script; the boot comes after
+        ? [{ what: "data drawn: the server's frame painted (ephem:data, the browser's Element Timing)", t: c.data, src: "CDP trace: user timing mark ephem:data (at the Element Timing renderTime)" }]
+        : [{ what: "boot read the embed (ephem:embedded)", t: ds.t, src: "CDP trace: user timing mark ephem:embedded" },
+          { what: "data drawn (ephem:data)", t: c.data, src: "CDP trace: user timing mark ephem:data" }]))
+    if (ea?.t != null && ea.t > Math.min(ds.t, c.data) + 0.5) crit.none = `recorded events disagree: the embed's last byte arrived at ${ea.t.toFixed(1)} ms, after the boot read it at ${ds.t.toFixed(1)} ms`
     else {
       crit.req.push(docR.i); crit.until = ea?.t ?? null
-      for (const t of [ds.t, c.data]) { const tk = taskAt(t); if (tk && !crit.main.includes(c.main.indexOf(tk))) crit.main.push(c.main.indexOf(tk)) }
+      for (const t of c.data < ds.t ? [c.data] : [ds.t, c.data]) { const tk = taskAt(t); if (tk && !crit.main.includes(c.main.indexOf(tk))) crit.main.push(c.main.indexOf(tk)) }
       // server: the front door, the embed (home.embed and every Effect span under it, by effect.parent_id) and html.stream
       const mine = srv.filter(x => x.req === docR.i), byEff = new Map(mine.filter(x => x.a["effect.span_id"]).map(x => [x.a["effect.span_id"], x]))
       const underEmbed = (x: typeof mine[number]) => { for (let y: typeof x | undefined = x, g = 0; y && g < 30; y = byEff.get(y.a["effect.parent_id"]), g++) if (y.name === "home.embed") return true; return false }
