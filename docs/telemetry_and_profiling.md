@@ -651,9 +651,11 @@ Measured on prod 7c99bb80 with `abort-probe.ts` + `abort-read.py` (2026-10-31):
 | `POST /mcp` with half the body sent | nothing: the edge never invokes the Worker |
 
 `request.signal` does not fire on a disconnect at our compatibility date (lab Worker, 2026-10-31), so Effect's
-`ClientAbort` (499) never triggers. src/abort.ts `deliver()`: the front door returns a native stream
-(FixedLengthStream when Content-Length is known and there is no content-encoding, else IdentityTransformStream) and pumps
-the body into it from waitUntil; a failed write is the client leaving → span `client.abort` (`client.aborted=true`,
+`ClientAbort` (499) never triggers. src/abort.ts `deliver()`: the front door returns a native stream and
+writes the body into it from waitUntil. Known length (Content-Length, no content-encoding: the JSON answers): read it, one
+FixedLengthStream write with the close queued together (awaiting the write before closing let a client that had every
+byte hang up first: outcome canceled, no status, on a delivered `/day`, canary a2d91cc3). Unknown length (streamed `/`,
+forwarded Api streams): IdentityTransformStream, chunk by chunk. A failed write is the client leaving → span `client.abort` (`client.aborted=true`,
 `ephem.outcome=canceled`), log `{"evt":"client_aborted","phase":"body",…}` at info, request row `error_tag = ClientAbort`
 (the row waits for delivery). A failed read of our own body is still a server error: `{"response_stream_failed":…}` at
 error level. Count them: o11y `source.evt = client_aborted`; Basin `error_tag = 'ClientAbort'`.

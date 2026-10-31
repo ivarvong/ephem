@@ -17,45 +17,61 @@ export interface Delivery { readonly response: Response; /** Settles once the bo
 
 const errText = (e: unknown) => (e instanceof Error ? `${e.name}: ${e.message}` : String(e)).slice(0, 200)
 
-/** Native stream for the runtime to send: FixedLengthStream when the length is known and the bytes are the ones it counts
- *  (no content-encoding), so Content-Length survives; else chunked (the header is dropped: it could not be trusted). */
-const nativePair = (h: Headers): TransformStream<Uint8Array, Uint8Array> => {
-  const len = h.get("content-length")
-  if (typeof FixedLengthStream === "undefined" || typeof IdentityTransformStream === "undefined") return new TransformStream()   // Node (tests, dev)
-  if (len !== null && /^\d+$/.test(len) && !h.has("content-encoding")) return new FixedLengthStream(Number(len))
-  h.delete("content-length")
-  return new IdentityTransformStream()
-}
+const native = typeof FixedLengthStream !== "undefined" && typeof IdentityTransformStream !== "undefined"   // false in Node (tests, dev)
 
-export const deliver = (res: Response, waitUntil: (p: Promise<unknown>) => void, route: string | undefined, tracing: Tracing | undefined): Delivery => {
+/** The client went away: a countable event, never at error level. */
+const recordAbort = (e: unknown, route: string | undefined, bytes: number, tracing: Tracing | undefined) => {
+  console.log(JSON.stringify({ evt: "client_aborted", phase: "body", route: route ?? null, bytes, error: errText(e) }))
+  try {
+    const sp = tracing?.startSpan("client.abort")
+    if (sp) { sp.setAttribute("client.aborted", true); sp.setAttribute("ephem.outcome", "canceled"); sp.setAttribute("client.abort_phase", "body"); sp.setAttribute("client.abort_bytes", bytes); if (route) sp.setAttribute("http.route", route); sp.end() }
+  } catch { /* tracing must never fail a request */ }
+  return true
+}
+const streamFailed = (e: unknown, route: string | undefined, bytes: number) =>
+  console.error(JSON.stringify({ response_stream_failed: { route: route ?? null, bytes, error: errText(e) } }))
+
+/** Known length (Content-Length, no content-encoding: every JSON answer): read it, then hand the runtime a FixedLengthStream
+ *  with the one write and the close queued together. Awaiting the write before closing let a client that had all N bytes
+ *  hang up before our close: the runtime then saw outcome canceled, no status, on a delivered /day (canary a2d91cc3,
+ *  2026-10-31). Unknown length (the streamed homepage, forwarded Api streams): IdentityTransformStream, chunk by chunk (the
+ *  client cannot finish before our close: chunked framing ends with it). */
+export const deliver = async (res: Response, waitUntil: (p: Promise<unknown>) => void, route: string | undefined, tracing: Tracing | undefined): Promise<Delivery> => {
   if (!res.body || res.webSocket) return { response: res, aborted: Promise.resolve(false) }
-  const headers = new Headers(res.headers), { readable, writable } = nativePair(headers)
+  const headers = new Headers(res.headers), init = { status: res.status, statusText: res.statusText, headers }
+  const len = headers.get("content-length")
+  if (len !== null && /^\d+$/.test(len) && !headers.has("content-encoding")) {
+    let buf: Uint8Array<ArrayBuffer>
+    try { buf = new Uint8Array(await res.arrayBuffer()) } catch (e) { streamFailed(e, route, 0); throw e }   // a server error: the runtime answers 500
+    if (!native) return { response: new Response(buf, init), aborted: Promise.resolve(false) }
+    headers.set("content-length", String(buf.byteLength))
+    const { readable, writable } = new FixedLengthStream(buf.byteLength), out = writable.getWriter()
+    const aborted = Promise.all([out.write(buf), out.close()]).then(() => false, (e: unknown) => recordAbort(e, route, 0, tracing))
+    waitUntil(aborted)
+    return { response: new Response(readable, init), aborted }
+  }
+  headers.delete("content-length")
+  const { readable, writable } = native ? new IdentityTransformStream() : new TransformStream<Uint8Array, Uint8Array>()
   const src = res.body.getReader(), out = writable.getWriter()
   let bytes = 0
   const pump = async (): Promise<boolean> => {
     for (;;) {
       let chunk: ReadableStreamReadResult<Uint8Array>
       try { chunk = await src.read() } catch (e) {   // our own body failed: a server error
-        console.error(JSON.stringify({ response_stream_failed: { route: route ?? null, bytes, error: errText(e) } }))
-        await out.abort(e).catch(() => {}); return false
+        streamFailed(e, route, bytes); await out.abort(e).catch(() => {}); return false
       }
       try {
         if (chunk.done) { await out.close(); return false }
         await out.write(chunk.value); bytes += chunk.value.byteLength
       } catch (e) {   // the client is gone
         src.cancel(e).catch(() => {})
-        console.log(JSON.stringify({ evt: "client_aborted", phase: "body", route: route ?? null, bytes, error: errText(e) }))
-        try {
-          const sp = tracing?.startSpan("client.abort")
-          if (sp) { sp.setAttribute("client.aborted", true); sp.setAttribute("ephem.outcome", "canceled"); sp.setAttribute("client.abort_phase", "body"); sp.setAttribute("client.abort_bytes", bytes); if (route) sp.setAttribute("http.route", route); sp.end() }
-        } catch { /* tracing must never fail a request */ }
-        return true
+        return recordAbort(e, route, bytes, tracing)
       }
     }
   }
   const aborted = pump()
   waitUntil(aborted)
-  return { response: new Response(readable, { status: res.status, statusText: res.statusText, headers }), aborted }
+  return { response: new Response(readable, init), aborted }
 }
 
 /** A request row that waits for delivery: emitted once the body is written or the client left (then error_tag ClientAbort). */
