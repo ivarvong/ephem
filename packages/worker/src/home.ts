@@ -222,10 +222,16 @@ function ringLabelSpot(y, w, h, bounds, segs, obstacles, pad) {
   return null;
 }
 // ---- the sky chart: all 360° of azimuth by the whole altitude range, zenith to nadir ----
-// Altitude to chart units: true scale from the zenith down to -18° (the sky and the three twilight bands), a quarter scale
-// below (the deep ground, -18° to the nadir). 126 units in all; the sky above the horizon gets 90 of them.
-var DEEP = 0.25;
-function altU(a) { a = Math.max(-90, Math.min(90, a)); return a >= -18 ? a : -18 + (a + 18) * DEEP; }
+// Altitude to chart units, smooth everywhere: linear above the horizon (y = alt), and below it a tanh compression with the same
+// slope at 0° (s·tanh(alt/s): C2 at the horizon, no kink anywhere), so a track keeps its true sinusoid-like shape. s = 36: -18°
+// maps to -16.6, -90° to -35.5 (the ground holds the whole depth). (Before 2026-10-31 it was piecewise linear, true to -18° and
+// a quarter below: every track kinked at the break; Ivar: "that path… what!?")
+var DEPTH_S = 36;
+// The chart draws TRUE (geometric) altitude, for tracks and markers alike: the API's apparent altitude stops at the horizon
+// (null below), so apparent-above / true-below would jump ~0.57° there, and any refraction taper below the horizon wiggles
+// the curve. True altitude is smooth; refraction is at most 0.57° (about 1.5 px here). Every number on the page is the API's.
+function chartAlt(h) { return h; }
+function altU(a) { a = Math.max(-90, Math.min(90, a)); return a >= 0 ? a : DEPTH_S * Math.tanh(a / DEPTH_S); }
 var U_TOP = 90, U_BOT = altU(-90);
 // A continuous azimuth sequence (no 360° jumps), so a track crosses the chart's seam as one line.
 function unwrapAz(azs) { var out = [], prev = null; for (var i = 0; i < azs.length; i++) { var a = prev == null ? azs[i] : prev + wrap180(azs[i] - prev); out.push(a); prev = a; } return out; }
@@ -330,6 +336,17 @@ function layoutLabels(items, hard, segs, bounds, pad) {
     placed.push(r2); out.push(r2);
   });
   return out;
+}
+// A smooth curve through the 20-minute samples: centripetal Catmull-Rom (alpha 0.5: no cusps, no overshoot loops), as the
+// cubic Bezier control points of the piece from sample i to i + 1 (the ends reuse their neighbours).
+function crBezier(xs, ys, i) {
+  var n = xs.length, i0 = Math.max(0, i - 1), i3 = Math.min(n - 1, i + 2);
+  var p0 = [xs[i0], ys[i0]], p1 = [xs[i], ys[i]], p2 = [xs[i + 1], ys[i + 1]], p3 = [xs[i3], ys[i3]];
+  function dist(a, b) { return Math.pow(Math.hypot(b[0] - a[0], b[1] - a[1]), 0.5); }
+  var d1 = dist(p0, p1), d2 = dist(p1, p2), d3 = dist(p2, p3), b1 = p1.slice(), b2 = p2.slice();
+  if (d1 > 1e-6 && d2 > 1e-6) for (var k = 0; k < 2; k++) b1[k] = (d1 * d1 * p2[k] - d2 * d2 * p0[k] + (2 * d1 * d1 + 3 * d1 * d2 + d2 * d2) * p1[k]) / (3 * d1 * (d1 + d2));
+  if (d3 > 1e-6 && d2 > 1e-6) for (k = 0; k < 2; k++) b2[k] = (d3 * d3 * p1[k] - d2 * d2 * p3[k] + (2 * d3 * d3 + 3 * d3 * d2 + d2 * d2) * p2[k]) / (3 * d3 * (d3 + d2));
+  return [b1[0], b1[1], b2[0], b2[1]];
 }
 // One revolution of a body's track around now, ending on the frame's seam (centre ± 180°), so both ends sit at the frame's
 // edges and never mid-sky. pts: [{t, az, alt}] in time order with now at nowIdx; period: the body's day (ms). The azimuth is
@@ -667,7 +684,7 @@ function meas(t) { if (mw[t] == null) { ctx.font = LABEL_FONT; if ("letterSpacin
 function livePos(now) {
   var p = S.to; if (!p) return null;
   var dt = AT != null || !p.time ? 0 : (now - Date.parse(p.time.utc)) / 60e3;
-  function mv(b) { return { az: wrap360(b.azimuth + (b.azimuthRate || 0) * dt), alt: Math.max(-90, Math.min(90, altOf(b) + (b.altitudeRate || 0) * dt)) }; }
+  function mv(b) { return { az: wrap360(b.azimuth + (b.azimuthRate || 0) * dt), alt: chartAlt(Math.max(-90, Math.min(90, b.altitude + (b.altitudeRate || 0) * dt))) }; }
   return { sun: mv(p.sun), moon: mv(p.moon) };
 }
 function drawMoon(x, y, r, m) {
@@ -716,7 +733,7 @@ function draw() {
   var p = S.to, nowMs = tNow(), live = livePos(nowMs), r = 5, c = S.center == null ? (loc.lat >= 0 ? 180 : 0) : S.center;
   var ce = $("ctl"), ctlR = !$("point").hidden || !$("recenter").hidden ? { id: "ctl", x: W - ce.offsetWidth, y: 0, w: ce.offsetWidth, h: ce.offsetHeight } : null;
   var bodies = live ? [["sun", "Sun"], ["moon", "Moon"]].map(function (o) {
-    var L = live[o[0]], pts = S.track.map(function (x) { return { t: x.t, az: x[o[0]].azimuth, alt: altOf(x[o[0]]) }; });
+    var L = live[o[0]], pts = S.track.map(function (x) { return { t: x.t, az: x[o[0]].azimuth, alt: chartAlt(x[o[0]].altitude) }; });
     var at = pts.findIndex(function (x) { return x.t > nowMs; }); if (at < 0) at = pts.length;
     pts.splice(at, 0, { t: nowMs, az: L.az, alt: L.alt });
     return { key: o[0], name: o[1], az: L.az, alt: L.alt, r: o[0] === "moon" ? 6 : r, pts: S.track.length ? pts : [], nowIdx: at, period: PERIOD[o[0]] };
@@ -744,7 +761,7 @@ function draw() {
     [[0, tl.split, 0.7], [tl.split, tl.xs.length - 1, 0.35]].forEach(function (seg) {
       if (seg[1] <= seg[0]) return;
       ctx.beginPath(); ctx.moveTo(tl.xs[seg[0]], tl.ys[seg[0]]);
-      for (var j = seg[0] + 1; j <= seg[1]; j++) ctx.lineTo(tl.xs[j], tl.ys[j]);
+      for (var j = seg[0]; j < seg[1]; j++) { var cb = crBezier(tl.xs, tl.ys, j); ctx.bezierCurveTo(cb[0], cb[1], cb[2], cb[3], tl.xs[j + 1], tl.ys[j + 1]); }
       ctx.strokeStyle = COLOR[key]; ctx.globalAlpha = seg[2]; ctx.lineWidth = 1.25; ctx.lineJoin = "round"; ctx.stroke(); ctx.globalAlpha = 1;
     });
   });

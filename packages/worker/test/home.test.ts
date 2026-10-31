@@ -253,10 +253,15 @@ describe("home: sky chart geometry", () => {
     trackEvents(s: { t: number; alt: number; az: number }[], h0: number): { kind: string; t: number; az: number; alt: number }[]
     poseFrom(e: object, decl: number | null): { az: number; alt: number } | null; aimText(name: string, b: { az: number; alt: number }, pose: { az: number; alt: number }): string
   }
-  it("altitude scale: true down to -18°, a quarter below; monotonic over the whole range", () => {
-    expect(chart.altU(90)).toBe(90); expect(chart.altU(0)).toBe(0); expect(chart.altU(-18)).toBe(-18); expect(chart.altU(-90)).toBe(-36)
-    expect(chart.U_TOP - chart.U_BOT).toBe(126)
-    for (let a = -90; a < 90; a += 0.5) expect(chart.altU(a + 0.5)).toBeGreaterThan(chart.altU(a))
+  it("altitude scale: linear above the horizon, a smooth (C2) compression below; monotonic; the slope continuous everywhere", () => {
+    expect(chart.altU(90)).toBe(90); expect(chart.altU(0)).toBe(0); expect(chart.altU(30)).toBe(30)
+    expect(chart.altU(-18)).toBeCloseTo(-16.64, 2); expect(chart.altU(-90)).toBeCloseTo(-35.52, 2)
+    const d = (a: number, h = 1e-4) => (chart.altU(a + h) - chart.altU(a - h)) / (2 * h)
+    for (let a = -89.5; a < 89.5; a += 0.25) {
+      expect(chart.altU(a + 0.25)).toBeGreaterThan(chart.altU(a))
+      expect(Math.abs(d(a + 0.25) - d(a)), `slope jump at ${a}`).toBeLessThan(0.01)   // no kink: the slope changes by < 1 % per 0.25°
+    }
+    expect(d(1e-3)).toBeCloseTo(1, 4); expect(d(-1e-3)).toBeCloseTo(1, 4)   // the same slope either side of the horizon
   })
   it("unwrapped azimuths never jump", () => {
     const u = chart.unwrapAz([350, 355, 2, 9, 359, 340])
@@ -353,10 +358,10 @@ describe("home: the chart in every sky state", () => {
     for (let i = 0; i < count; i++) out.set(readFileSync(`${FIX}/${first + i}.bin`), i * REC)
     return out.buffer
   })))
-  const ch = new Function(CORE_JS + "; return { skyModel, layoutLabels, chartCenter, overlapArea, segHitsRect, altOf }")() as {
-    skyModel(st: object): { lines: Record<string, { xs: number[]; ys: number[]; split: number }>; items: object[]; hard: Rect[]; segs: number[][]; bounds: { x0: number; y0: number; x1: number; y1: number }; g: { W: number } }
+  const ch = new Function(CORE_JS + "; return { skyModel, layoutLabels, chartCenter, overlapArea, segHitsRect, altOf, chartAlt }")() as {
+    skyModel(st: object): { lines: Record<string, { xs: number[]; ys: number[]; split: number }>; items: object[]; hard: Rect[]; segs: number[][]; bounds: { x0: number; y0: number; x1: number; y1: number }; g: { W: number; top: number; ky: number } }
     layoutLabels(items: object[], hard: Rect[], segs: number[][], b: object, pad: number): Array<Rect & { dropped?: boolean; crossed?: boolean }>
-    chartCenter(lat: number, azs: number[]): number; overlapArea(a: Rect, b: Rect): number; segHitsRect(s: number[], r: Rect): boolean; altOf(b: object): number
+    chartCenter(lat: number, azs: number[]): number; overlapArea(a: Rect, b: Rect): number; segHitsRect(s: number[], r: Rect): boolean; altOf(b: object): number; chartAlt(h: number): number
   }
   const STATES: Array<[string, number, number, string]> = [
     ["nyc day, Moon up", 40.7128, -74.006, "2026-10-30T14:00:00Z"], ["nyc day, Moon down", 40.7128, -74.006, "2026-10-30T19:00:00Z"],
@@ -367,19 +372,18 @@ describe("home: the chart in every sky state", () => {
     ["Tromsø polar night", 69.6492, 18.9553, "2026-12-15T10:45:00Z"], ["Tromsø polar day", 69.6492, 18.9553, "2026-06-21T22:30:00Z"],
     ["Sydney", -33.8688, 151.2093, "2026-10-30T02:00:00Z"], ["Singapore, Sun near the zenith", 1.3521, 103.8198, "2026-09-23T04:55:00Z"],
   ]
-  const PERIOD = { sun: 864e5, moon: 89428e3 }
+  const PERIOD = { sun: 864e5, moon: 89428e3 }, TURN: string[] = []
   const get = async (path: string) => (await handler(new Request(`https://ephem.example${path}`))).json()
   for (const [name, lat, lon, at] of STATES) it(name, async () => {
     const now = Date.parse(at), D = Math.floor(now / 864e5), iso = (ms: number) => new Date(ms).toISOString().slice(0, 19) + "Z"
     const pos = await get(`/v1/position?lat=${lat}&lon=${lon}&time=${at}`)
     const tr = await get(`/v1/track?lat=${lat}&lon=${lon}&start=${iso((D - 1) * 864e5)}&end=${iso((D + 2) * 864e5)}`)
     const s0 = Date.parse(tr.start)
-    const alt = (x: { altitude: number[]; apparentAltitude: Array<number | null> }, i: number) => x.apparentAltitude[i] ?? x.altitude[i]!
-    const bodies = (["sun", "moon"] as const).map(k => {
-      const b = pos[k], a = ch.altOf(b), pts: Array<{ t: number; az: number; alt: number }> = []
-      for (let i = 0; i < tr.count; i++) pts.push({ t: s0 + i * tr.stepSeconds * 1000, az: tr[k].azimuth[i], alt: alt(tr[k], i) })
-      const nowIdx = pts.findIndex(p => p.t > now); pts.splice(nowIdx, 0, { t: now, az: b.azimuth, alt: a })
-      return { key: k, name: k === "sun" ? "Sun" : "Moon", az: b.azimuth, alt: a, r: k === "sun" ? 5 : 6, pts, nowIdx, period: PERIOD[k] }
+        const bodies = (["sun", "moon"] as const).map(k => {
+      const b = pos[k], pts: Array<{ t: number; az: number; alt: number }> = []
+      for (let i = 0; i < tr.count; i++) pts.push({ t: s0 + i * tr.stepSeconds * 1000, az: tr[k].azimuth[i], alt: ch.chartAlt(tr[k].altitude[i]) })
+      const nowIdx = pts.findIndex(p => p.t > now); pts.splice(nowIdx, 0, { t: now, az: b.azimuth, alt: ch.chartAlt(b.altitude) })
+      return { key: k, name: k === "sun" ? "Sun" : "Moon", az: b.azimuth, alt: ch.chartAlt(b.altitude), r: k === "sun" ? 5 : 6, pts, nowIdx, period: PERIOD[k] }
     })
     for (const [W, H] of [[390, 354.5], [375, 280.1]] as const) {
       const st = { W, H, insetL: 0, insetR: 0, center: ch.chartCenter(lat, [pos.sun.azimuth, pos.moon.azimuth]), now, ctl: { id: "ctl", x: W - 44, y: 0, w: 44, h: 44 }, pose: null,
@@ -391,6 +395,19 @@ describe("home: the chart in every sky state", () => {
         expect(l.xs.length, `${where}: ${k} track`).toBeGreaterThan(30)
         for (let i = 0; i < l.xs.length; i++) { expect(l.xs[i]!).toBeGreaterThanOrEqual(-0.001); expect(l.xs[i]!).toBeLessThanOrEqual(W + 0.001) }
         for (let i = 1; i < l.xs.length; i++) expect(Math.abs(l.xs[i]! - l.xs[i - 1]!), `${where}: ${k} jump at ${i}`).toBeLessThan(W / 4)
+        // smooth: no kink. The direction's turn at a sample may be large where the curve really bends (a culmination, the
+        // zenith), but it changes smoothly along the track: a kink is a turn that stands out from its neighbours' (the old
+        // piecewise scale bent every track by ~20-40° at -18° between two straight pieces).
+        let worst = 0
+        const turn: number[] = []
+        for (let i = 1; i < l.xs.length - 1; i++) {
+          const a1 = Math.atan2(l.ys[i]! - l.ys[i - 1]!, l.xs[i]! - l.xs[i - 1]!), a2 = Math.atan2(l.ys[i + 1]! - l.ys[i]!, l.xs[i + 1]! - l.xs[i]!)
+          const seg = Math.min(Math.hypot(l.xs[i]! - l.xs[i - 1]!, l.ys[i]! - l.ys[i - 1]!), Math.hypot(l.xs[i + 1]! - l.xs[i]!, l.ys[i + 1]! - l.ys[i]!))
+          turn.push(seg < 1.5 || l.ys[i]! < m.g.top + 10 * (m.g as unknown as { ky: number }).ky ? NaN : ((a2 - a1) * 180 / Math.PI + 540) % 360 - 180)
+        }
+                for (let i = 1; i < turn.length - 1; i++) if (![turn[i - 1], turn[i], turn[i + 1]].some(Number.isNaN)) worst = Math.max(worst, Math.abs(turn[i]! - (turn[i - 1]! + turn[i + 1]!) / 2))
+        TURN.push(`${where} ${k} ${worst.toFixed(1)}`)
+        expect(worst, `${where}: ${k} kinks by ${worst.toFixed(1)}°`).toBeLessThan(6)
         const ends = [l.xs[0]!, l.xs[l.xs.length - 1]!], low = [l.ys[0]!, l.ys[l.ys.length - 1]!]
         const round = Math.min(...ends) < 0.01 && Math.max(...ends) > W - 0.01   // a full revolution: one end on each edge
         // or (azimuth not all the way round, |dec| > |lat|) a loop cut at its lowest point: ends together, deep below the horizon
