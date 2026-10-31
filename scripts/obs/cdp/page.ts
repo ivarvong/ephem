@@ -156,6 +156,8 @@ export interface Req {
   start: number; wallTime: number          // monotonic s (trace timebase / 1e6) and epoch s at requestWillBeSent
   status?: number; protocol?: string; mime?: string; fromCache?: "disk" | "memory" | "prefetch" | "sw" | undefined
   timing?: Timing; end?: number; encoded?: number; failed?: string
+  /** documents only: every Network.dataReceived as [monotonic s, decoded bytes]: when each part of the body arrived */
+  chunks?: Array<[number, number]>
   headers: Record<string, string>; reqHeaders: Record<string, string>
 }
 const lower = (h: Record<string, string> = {}) => Object.fromEntries(Object.entries(h).map(([k, v]) => [k.toLowerCase(), v]))
@@ -177,6 +179,7 @@ export async function recordNetwork(s: Session) {
   })
   s.on("Network.responseReceivedExtraInfo", e => { const r = reqs.get(e.requestId); if (r) Object.assign(r.headers, lower(e.headers)) })
   s.on("Network.requestServedFromCache", e => { const r = reqs.get(e.requestId); if (r) r.fromCache = "memory" })
+  s.on("Network.dataReceived", e => { const r = reqs.get(e.requestId); if (r && r.type === "Document") (r.chunks ??= []).push([e.timestamp, e.dataLength]) })
   s.on("Network.loadingFinished", e => { const r = reqs.get(e.requestId); if (r) { r.end = e.timestamp; r.encoded = e.encodedDataLength } })
   s.on("Network.loadingFailed", e => { const r = reqs.get(e.requestId); if (r) { r.end = e.timestamp; r.failed = e.errorText } })
   await s.send("Network.enable", { maxPostDataSize: 0 })

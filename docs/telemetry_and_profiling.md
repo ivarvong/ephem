@@ -848,7 +848,7 @@ per span, on one time axis (browser clock, ms since navigation start; server spa
 | Row | What it shows |
 | --- | --- |
 | browser request | `GET /v1/day` + type + cache badge; its network phases (queue, dns, connect, tls, send, wait, download) inside the bar; duration and size after it |
-| front door (child) | headers (solid, to `time_to_first_byte_ms`), then for a streamed document the **streaming body** (lighter solid, to `bodyEnd`), then a thin line while the invocation stays alive for waitUntil; ± θ as a whisker; label `headers · body · cpu · wall` |
+| front door (child) | start → first byte (solid), then for a streamed document the **streaming body** (lighter solid, to the `html.stream` end, or a dashed "body end not recorded" stub), then a thin line while the invocation keeps running (waitUntil); ± θ as a whisker; label `first byte · body end · invocation (ended with …) · cpu` |
 | Effect spans, subrequests | nested by `effect.parent_id`; a runtime `fetch` sits under the Effect span that made it, a loopback entrypoint (Api, BlockStore, MetarFeed) under that `fetch`. Frozen clock: subrequests print `I/O <n> ms`; an Effect span with I/O below it (or 0 ms) prints `—`; the detail panel keeps the true wall |
 | Basin send | the only hatched bars: waitUntil, after the response |
 | main thread | one row: long tasks (≥ 50 ms, labelled) over a category-activity strip; expand for the call tree |
@@ -861,13 +861,41 @@ shift-wheel, drag the axis, the minimap. Keys: ↑↓ rows, ←→ fold, Enter d
 to row, Esc. Header: five numbers (TTFB, first paint, data drawn, requests joined, server CPU); everything else in "Run
 details". Dark only, Ephem DIN; at 390 px the waterfall scrolls inside its own container.
 
-- **Streaming body** (model.ts `bodyEnd`, `bodyEndFrom`): no span marks a streamed document's last chunk (the Effect request
-  span closes at the first byte), so its end is the browser's download end on the same clock, capped by the invocation's end
-  (an upper bound: DevTools throttling delays receipt). J20261031T032654Z-jejr: headers 7 ms, body to the invocation end (773 ms;
-  the browser's download end, 1164 ms, is later under Fast 3G).
-- **Critical path** (model.ts): back from data drawn, the latest request that completed before each task; if none, the
-  document once its first byte has arrived (streamHtml delivers the embed before the last byte). Before this the walk found
-  nothing on `/` (data drawn 1113 ms, document done 1164 ms): now document → data drawn.
+**Every element and the recorded fields behind it** (2026-10-31, ivar: "render what actually happened, clearly the trace is a
+total lie"). Rule: a bar's start and end are recorded events (CDP, a server span's start/end, a RUM entry, a Workers
+invocation event); server times are shifted by θ and drawn with its ± whisker; a missing end is drawn open-ended (dashed stub,
+"end not recorded"), never capped or extended; derived values say "derived" in the detail panel; nesting says whether it is
+recorded (`effect.parent_id`, Workers parent id, cf-ray) or inferred (time containment). Each source is in the detail panel.
+
+| Element | Start | End | Notes |
+| --- | --- | --- | --- |
+| request bar (CDP) | `Network.requestWillBeSent` | `Network.loadingFinished` / `loadingFailed` (redirect: next `requestWillBeSent`) | no end → open-ended |
+| CDP phases | queue: requestWillBeSent → first of dnsStart/connectStart/sendStart; dns, connect (→ sslStart or connectEnd), tls, send: ResourceTiming pairs | wait: sendEnd → receiveHeadersEnd (incl. emulated latency); download: receiveHeadersEnd → loadingFinished | all from `responseReceived.timing` |
+| document chunk ticks, embed tick | `Network.dataReceived` timestamp (bytes per chunk) | (instants) | embed tick: first chunk whose cumulative decoded bytes reach the last embed's end offset (offsets from `Network.getResponseBody`; only when the chunks sum to the body length) |
+| request bar (RUM) | `startTime` | `startTime + duration` (navigation: + ttfb + download) | |
+| RUM phases | setup: startTime → requestStart (derived: responseStart − request_ms); dns/connect/tls are durations only: **not drawn** (before: laid end to end, a placement nobody measured) | wait: requestStart → responseStart; download: → responseEnd | derived from exact field arithmetic |
+| front door: start → first byte | root span `startTime` | derived: start + `cloudflare.response.time_to_first_byte_ms` | |
+| front door: streaming body | first byte | `html.stream` span end (src/embed.ts, since 7f4c1be / 6e2c19a1) | no `html.stream` → "body end not recorded" (before: capped at the invocation end = the Basin send, 773 ms in J20261031T032654Z-jejr) |
+| front door: invocation running | body end (or first byte) | root span `endTime` = the invocation's end | thin line, "not response time"; label/detail name what kept it alive: the waitUntil `jsRpcCall send` spans and which span ended with the invocation |
+| Effect spans, `html.stream`, subrequests, loopback entrypoints, Basin send | span `startTime` | span `endTime` (else `durationMS`; else open-ended) | nesting: `effect.parent_id` recorded; runtime `fetch` under its Effect span and loopback under its subrequest: inferred by containment (said so) |
+| main thread tasks, call tree | CDP trace `X` event `ts` | `ts + dur` | RUM: LoAF / longtask / event rows. Category strip and "self time" are derived (event minus children); self time before data drawn is exact clipping now (before: pro-rated) |
+| FCP, LCP, DCL, load | CDP `firstContentfulPaint`, last `largestContentfulPaint::Candidate`, `MarkDOMContent`, `MarkLoad` | (lines) | RUM: paint / lcp rows |
+| data drawn, embedded/fetched | user timing `ephem:data`, `ephem:embedded` / `ephem:fetched` | (lines) | RUM: `data-ready` |
+| inputs | the `EventDispatch` the drag caused (else the harness's send time, labelled) | (lines) | the "next Paint after input" latency was a heuristic: removed; INP is the page's Event Timing (RUM) |
+| critical path (cyan) | recorded links only: document start → first byte → embed complete (dataReceived) → `ephem:embedded` → `ephem:data`, each main-thread task that contains a mark; server: front door, `home.embed` subtree (by `effect.parent_id`), `html.stream` | | `ephem:fetched`, RUM, or runs without the marks: **none, with the reason** (before: an "ended-before" walk plus a document fallback) |
+| TTFB | navigation start | document `receiveHeadersEnd` (RUM: responseStart) | |
+| first paint, data drawn | the marks above | | |
+| requests joined | count of cf-ray matches | | |
+| server CPU | sum of invocations' `cpuTimeMs` | | |
+
+Perfetto (`.perfetto.json`) follows the same rule: `args.src` on every slice; an open span is a `B` with no `E`; first byte,
+body end, invocation end (with what kept it alive), document chunks and critical-path links are instants; no capped ends.
+
+**Measured** (fresh prod run J20261031T042219Z-gik4, ephem 124756f4, iPhone Fast 3G 4× cold): `html.stream` ends +9 ms after
+the root span starts (3 chunks, 144,350 B = CDP's decoded body exactly); first byte also +9 ms; the invocation runs to +616 ms
+on the Basin send. The browser's download is 696 → 1054 ms: network, not the Worker. Embed complete 1054.6 ms →
+`ephem:embedded` 1089.1 ms → data drawn 1112.4 ms. trace-now (J20261031T032654Z-jejr, 62965fcb, before html.stream): body
+end not recorded, critical path none (no `ephem:embedded` mark in that run).
 
 **Clock offset** (model.ts). Each request with a server root span bounds θ = server − client: the root span starts after the
 browser sent (t2 > t1 + θ) and its first byte (`cloudflare.response.time_to_first_byte_ms`) leaves before the browser had the

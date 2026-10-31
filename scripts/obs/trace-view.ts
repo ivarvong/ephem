@@ -39,18 +39,20 @@ const page = R[0]!.page as string, t0Wall = Date.parse(R.find(r => r.time_origin
 const typeOf = (r: any) => r.kind === "navigation" ? "Document" : (r.target ?? "").endsWith(".woff2") ? "Font" : r.name === "fetch" ? "Fetch" : r.name === "link" || r.name === "css" ? "Stylesheet" : "Other"
 const reqOf = (r: any): CReq => {
   const s = n(r.start_ms) ?? 0, ttfb = n(r.ttfb_ms), reqMs = n(r.request_ms), dl = n(r.download_ms)
-  const ph: Record<string, [number, number]> = {}
-  let t = s
-  for (const [k, v] of [["dns", n(r.dns_ms)], ["connect", n(r.connect_ms)], ["ssl", n(r.tls_ms)]] as const) if (v) { ph[k] = [t, t + v]; t += v }
+  // RUM keeps dns / connect / tls as durations only (src/rum.ts): their starts are not recorded, so they are not drawn
+  // (before: laid end to end from startTime, a placement nobody measured). Drawn: what the recorded fields fix exactly,
+  // requestStart = responseStart − request_ms, responseStart = startTime + ttfb_ms, responseEnd = responseStart + download_ms.
+  const ph: Record<string, [number, number]> = {}, phFrom: Record<string, string> = {}
   const head = ttfb != null ? s + ttfb : null, sent = head != null && reqMs != null ? head - reqMs : null
-  if (sent != null && sent > t + 0.05) ph.queue = [t, sent]
-  if (sent != null && head != null) { ph.send = [sent, sent]; ph.wait = [sent, head] }
-  if (head != null && dl != null) ph.download = [head, head + dl]
+  if (sent != null && sent > s + 0.05) { ph.setup = [s, sent]; phFrom.setup = `derived: startTime → requestStart (queue, dns ${n(r.dns_ms) ?? "?"} ms, connect ${n(r.connect_ms) ?? "?"} ms, tls ${n(r.tls_ms) ?? "?"} ms: RUM records their durations, not where they fall)` }
+  if (sent != null && head != null) { ph.wait = [sent, head]; phFrom.wait = "derived: requestStart → responseStart (startTime + ttfb_ms − request_ms → startTime + ttfb_ms)" }
+  if (head != null && dl != null) { ph.download = [head, head + dl]; phFrom.download = "derived: responseStart → responseStart + download_ms (= responseEnd)" }
   const end = r.kind === "navigation" ? (head != null && dl != null ? head + dl : null) : n(r.dur_ms) != null ? s + n(r.dur_ms)! : null
   const fetchSpan = r.name === "fetch" && R.some(x => x.kind === "fetch" && x.span_id === r.span_id)
   const tb = n(r.transfer_bytes)
   const url = r.kind === "navigation" ? origin + page : r.target === "external" ? "https://external.invalid/" : origin + (r.target?.startsWith("/") ? r.target : "/other")
   return { url, method: "GET", type: typeOf(r), status: n(r.status) ?? 0,
+    phFrom, endFrom: end == null ? undefined : r.kind === "navigation" ? "derived: RUM startTime + ttfb_ms + download_ms (responseEnd)" : "RUM: startTime + duration (Resource Timing)",
     protocol: r.protocol ?? undefined, fromCache: tb === 0 && !r.ray ? "disk (transferSize 0)" : null, start: s, ph, end, bytes: tb ?? 0, ray: r.ray ?? undefined, cache: r.cache ?? undefined,
     serverTiming: r.server_timing ?? undefined, traceId, spanId: r.kind === "navigation" ? r.span_id : fetchSpan ? r.span_id : undefined,
     sendWall: sent != null ? t0Wall + sent : undefined, headWall: head != null ? t0Wall + head : undefined }

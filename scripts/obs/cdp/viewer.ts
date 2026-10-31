@@ -15,7 +15,7 @@ const CSS = String.raw`
 :root{--bg:#060708;--panel:#0b0d10;--raise:#11141a;--ink:#f2f4f7;--ink2:#c3c8d0;--muted:#8d939c;--faint:#555b64;
 --line:rgba(242,244,247,.09);--grid:rgba(242,244,247,.04);--hover:rgba(242,244,247,.035);--accent:#6fd8f2;--sun:#f5b860;--moon:#c9d1de;
 --caution:#e8a64a;--alert:#ef6a5e;--ok:#7cc9a0;
---queue:rgba(201,209,222,.16);--dns:#5fa8a0;--connect:#7d8fd6;--ssl:#a98bd8;--send:#c9d1de;--wait:rgba(201,209,222,.30);--download:#c9d1de;
+--queue:rgba(201,209,222,.16);--setup:rgba(125,143,214,.35);--dns:#5fa8a0;--connect:#7d8fd6;--ssl:#a98bd8;--send:#c9d1de;--wait:rgba(201,209,222,.30);--download:#c9d1de;
 --front:#f5b860;--eff:rgba(245,184,96,.58);--int:#f3d39f;--store:#c98f4c;
 --din:"Ephem DIN","DIN Alternate","DIN 2014",Bahnschrift,-apple-system,system-ui,sans-serif;
 --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,"Segoe UI",Roboto,sans-serif;
@@ -92,6 +92,7 @@ button.ic{width:30px;padding:0;font-size:14px;letter-spacing:0}
 .b.base{background:rgba(201,209,222,.07)}
 .b.p-queue{background:var(--queue)}.b.p-dns{background:var(--dns)}.b.p-connect{background:var(--connect)}.b.p-ssl{background:var(--ssl)}
 .b.p-send{background:var(--send)}.b.p-wait{background:var(--wait)}.b.p-download{background:var(--download)}
+.b.p-setup{background:var(--setup)}
 .b.front{background:var(--front)}.b.eff{background:var(--eff)}.b.int{background:var(--int)}.b.int2{background:rgba(243,211,159,.55)}.b.store{background:var(--store)}
 .b.sub{background:rgba(245,184,96,.10);box-shadow:inset 0 0 0 1px rgba(245,184,96,.65)}
 .b.after{background:repeating-linear-gradient(135deg,rgba(245,184,96,.34) 0 2px,transparent 2px 5px);box-shadow:inset 0 0 0 1px rgba(245,184,96,.38)}
@@ -99,6 +100,10 @@ button.ic{width:30px;padding:0;font-size:14px;letter-spacing:0}
 .b.body{background:linear-gradient(to bottom,rgba(245,184,96,.5),rgba(245,184,96,.32));box-shadow:inset 0 1px 0 rgba(245,184,96,.8)}
 .b.alive{top:calc(var(--rh) / 2 - 1px);height:2px;background:rgba(245,184,96,.35);border-radius:0}
 .b.zero{width:2px;min-width:2px;background:var(--eff)}
+.b.open{top:calc(var(--rh) / 2 - 1px);height:2px;min-width:0;background:repeating-linear-gradient(90deg,rgba(201,209,222,.75) 0 3px,transparent 3px 6px);border-radius:0}
+.olb{position:absolute;top:1px;font:500 8.5px/1 var(--din);letter-spacing:.1em;text-transform:uppercase;color:var(--ink2);white-space:nowrap;pointer-events:none;text-shadow:0 0 2px var(--bg),0 0 2px var(--bg)}
+.b.chunk{top:calc(var(--rh) / 2 + 6px);height:4px;width:1px;min-width:1px;background:rgba(242,244,247,.55);border-radius:0}
+.b.emb{top:2px;bottom:2px;height:auto;width:2px;min-width:2px;background:var(--accent);border-radius:0}
 .b.wh{top:calc(var(--rh) / 2 - 4px);height:8px;border-left:1px solid rgba(245,184,96,.35);border-right:1px solid rgba(245,184,96,.35);background:linear-gradient(to bottom,transparent 3.5px,rgba(245,184,96,.28) 3.5px 4.5px,transparent 4.5px);border-radius:0}
 .tk .b.cl,.row.req .tk .b.cl{top:auto;bottom:2px;height:2px;background:var(--accent);border-radius:1px}
 .lb{position:absolute;top:0;line-height:var(--rh);font:400 11px/var(--rh) var(--din);letter-spacing:.06em;color:var(--ink2);white-space:nowrap;text-transform:uppercase;pointer-events:none;font-variant-numeric:tabular-nums}
@@ -226,18 +231,22 @@ if (!busy) { busy = {}; for (const e of ev) if (CATS.includes(e.c)) busy[e.c] = 
 const busyToData = k.mainBusyToData && Object.keys(k.mainBusyToData).length ? k.mainBusyToData : null;
 
 /* ---------- requests + spans: one tree ---------- */
+/* a request's end is CDP loadingFinished / loadingFailed or RUM responseEnd; without one the bar stops at its last recorded
+   edge and is drawn open-ended ("end not recorded"), never extended */
 const rEnd = r => r.end != null ? r.end : Math.max(r.start, ...Object.values(r.ph || {}).map(p => p[1]));
+const rOpen = r => r.end == null;
 const reqByI = new Map(M.reqs.map(r => [r.i, r]));
 const byId = new Map(M.srv.map(x => [x.id, x]));
 const byEff = new Map(); for (const x of M.srv) if (x.a["effect.span_id"]) byEff.set(x.trace + ":" + x.a["effect.span_id"], x);
 for (const x of M.srv) { let y = x, g = 0; while (y && y.req < 0 && g++ < 30) y = byId.get(y.parent); x.ri = y && y.req >= 0 ? y.req : -1; }
-const parentOf = new Map(), claimed = new Set();
+const parentOf = new Map(), claimed = new Set(), nestFrom = new Map();
 const isRuntimeFetch = x => x.name === "fetch" && !x.a["effect.span_id"] && !x.root;
 for (const x of M.srv) {
-  if (x.root && x.ep === "default") parentOf.set(x.k, "r" + x.ri);
+  if (x.root && x.ep === "default") { parentOf.set(x.k, "r" + x.ri); nestFrom.set(x.k, "cf-ray of the browser request (recorded on both sides)"); }
   else if (x.a["effect.span_id"]) {
-    const p = byEff.get(x.trace + ":" + x.a["effect.parent_id"]) || byId.get(x.parent);
+    const e = byEff.get(x.trace + ":" + x.a["effect.parent_id"]), p = e || byId.get(x.parent);
     parentOf.set(x.k, p && p !== x ? "s" + p.k : "r" + x.ri);
+    nestFrom.set(x.k, e ? "effect.parent_id (recorded)" : p ? "Workers parent span id (recorded)" : "request (no recorded parent)");
   }
 }
 /* a runtime fetch (subrequest) under the Effect span that made it: same trace, contains it, nearest in emission order */
@@ -246,9 +255,9 @@ for (const x of M.srv) {
   if (isRuntimeFetch(x)) {
     const c = M.srv.filter(y => y.trace === x.trace && y.a["effect.span_id"] && /fetch|load|feed/.test(y.name) && !claimed.has(y.k) && y.s <= x.s + 0.5 && y.e >= x.e - 0.5)
       .sort((a, b) => Math.abs(a.k - x.k) - Math.abs(b.k - x.k))[0];
-    if (c) { claimed.add(c.k); parentOf.set(x.k, "s" + c.k); continue; }
+    if (c) { claimed.add(c.k); parentOf.set(x.k, "s" + c.k); nestFrom.set(x.k, "inferred: the Effect span whose interval contains it (runtime spans carry no Effect parent); timing is the span's own"); continue; }
   }
-  const p = byId.get(x.parent); parentOf.set(x.k, p ? "s" + p.k : "r" + x.ri);
+  const p = byId.get(x.parent); parentOf.set(x.k, p ? "s" + p.k : "r" + x.ri); nestFrom.set(x.k, p ? "Workers parent span id (recorded)" : "request (no recorded parent)");
 }
 /* a loopback entrypoint's invocation under the front door's subrequest that contains it (± the clock) */
 for (const x of M.srv) {
@@ -256,6 +265,7 @@ for (const x of M.srv) {
   const f = M.srv.filter(y => y.ri === x.ri && y.ep === "default" && isRuntimeFetch(y) && y.s <= x.s + 1 && y.e >= x.e - 1).sort((a, b) => (a.e - a.s) - (b.e - b.s))[0];
   const front = M.srv.find(y => y.ri === x.ri && y.root && y.ep === "default");
   parentOf.set(x.k, f ? "s" + f.k : front ? "s" + front.k : "r" + x.ri);
+  nestFrom.set(x.k, f ? "inferred: the front door subrequest whose interval (± 1 ms) contains it; joined by cf-ray prefix (recorded)" : "cf-ray prefix (recorded)");
 }
 
 let END = 1;
@@ -264,8 +274,8 @@ for (const e of ev) END = Math.max(END, e.s + e.d);
 for (const x of M.srv) END = Math.max(END, x.e);
 for (const m of M.marks) if (m.kind !== "nav") END = Math.max(END, m.t);
 
-/* critical path: the model's walk back from data drawn; the document is always on it (it carries the page) */
-const crit = { req: new Set(M.crit.req), srv: new Set(M.crit.srv) };
+/* critical path: the model's recorded links only (model.ts crit.links); none when the dependency is not recorded */
+const crit = { req: new Set(M.crit.req), srv: new Set(M.crit.srv), links: M.crit.links || [], none: M.crit.none, until: M.crit.until };
 const doc = M.reqs.find(r => r.type === "Document");
 
 const nodes = new Map();
@@ -283,7 +293,7 @@ for (const x of M.srv) {
 const sortKids = n => { n.kids.sort((a, b) => a.s - b.s || ((a.x && a.x.track === "waituntil") - (b.x && b.x.track === "waituntil")) || (b.e - b.s) - (a.e - a.s) || (a.x && b.x ? b.x.k - a.x.k : 0)); n.kids.forEach(sortKids); };
 reqNs.forEach(sortKids);
 const decorate = (n, after) => {
-  if (n.kind === "srv") { n.after = after || n.x.track === "waituntil"; n.crit = crit.srv.has(n.x.k) || (crit.req.has(n.x.ri) && !n.after); }
+  if (n.kind === "srv") { n.after = after || n.x.track === "waituntil"; n.crit = crit.srv.has(n.x.k); }
   n.kids.forEach(c => decorate(c, n.after));
 };
 reqNs.forEach(n => decorate(n, false));
@@ -299,12 +309,9 @@ for (const e of tasks) if (e.s <= tKey) L1 = Math.max(L1, e.s + e.d);
 if (!(L1 > 0)) L1 = END;
 const LOAD = [0, Math.min(END * 1.01, L1 * 1.035 + 4)];
 const ALL = [0, END * 1.015];
-/* the critical-path window: from the first element on the path to data drawn (and the path's responses) */
-let c0 = Infinity, c1 = k.data || 0;
-for (const n of nodes.values()) if (n.crit && (n.kind === "req" || n.kind === "srv") && !n.after) {
-  c0 = Math.min(c0, n.s);
-  c1 = Math.max(c1, n.kind === "srv" && n.x.root ? (n.x.bodyEnd != null ? n.x.bodyEnd : n.x.respEnd != null ? n.x.respEnd : n.e) : n.e);
-}
+/* the critical-path window: its recorded links, first to last */
+const lt = crit.links.map(l => l.t).filter(t => t != null);
+let c0 = lt.length ? Math.min(...lt) : Infinity, c1 = lt.length ? Math.max(...lt) : 0;
 const CRITW = isFinite(c0) && c1 > c0 ? [Math.max(0, c0 - (c1 - c0) * 0.02), c1 + (c1 - c0) * 0.05] : LOAD;
 const PHONE = matchMedia("(max-width:480px)").matches;
 
@@ -316,8 +323,8 @@ for (const n of reqNs) if (n.s <= tKey || n.crit) open.add(n.key);
 for (const n of nodes.values()) if (n.kind === "srv" && n.kids.length) open.add(n.key);
 
 /* ---------- labels ---------- */
-const PH = ["queue", "dns", "connect", "ssl", "send", "wait", "download"];
-const PHN = { queue: "queue", dns: "dns", connect: "connect", ssl: "tls", send: "send", wait: "wait (ttfb)", download: "download" };
+const PH = ["queue", "setup", "dns", "connect", "ssl", "send", "wait", "download"];
+const PHN = { queue: "queue", setup: "setup (rum)", dns: "dns", connect: "connect", ssl: "tls", send: "send", wait: "wait (ttfb)", download: "download" };
 const badge = v => {
   if (v == null || v === "") return "";
   const s = String(v), u = s.toUpperCase(), c = /^(HIT|L1|LOCAL|REVALIDATED|UPDATING)/.test(u) ? "hit" : /^(MISS|EXPIRED|STALE|BYPASS|DYNAMIC)/.test(u) ? "miss" : "";
@@ -351,10 +358,13 @@ function srvLabel(n) {
   const x = n.x, d = n.e - n.s;
   if (x.root && x.ep === "default") {
     const r = reqByI.get(x.ri), cpu = r && r.front ? r.front.cpu : x.a.cpu_time_ms;
-    if (x.respEnd == null) return ms0(d) + ' <span class="c">· cpu ' + ms0(cpu) + "</span>";
-    return (x.bodyEnd != null ? "headers " + ms0(x.respEnd - x.s) + " · body " + ms0(x.bodyEnd - x.s) : "resp " + ms0(x.respEnd - x.s)) + ' <span class="c">· cpu ' + ms0(cpu) + " · wall " + ms0(d) + "</span>";
+    const al = x.alive && x.alive.last && x.alive.note.startsWith("the invocation ended") ? " (" + (/waitUntil/.test(x.alive.last) ? "ended with the waitUntil Basin send" : "ended with " + x.alive.last) + ")" : "";
+    if (x.respEnd == null) return "invocation " + ms0(d) + al + ' <span class="c">· cpu ' + ms0(cpu) + "</span>";
+    const body = x.bodyEnd != null ? " · body end " + ms0(x.bodyEnd - x.s) : x.bodyNote ? " · body end not recorded" : "";
+    return "first byte " + ms0(x.respEnd - x.s) + body + ' <span class="c">· invocation ' + ms0(d) + al + " · cpu " + ms0(cpu) + "</span>";
   }
   if (x.root) { const v = internalOf(x); return ms0(d) + (v ? ' <span class="c">· cpu ' + ms0(v.cpu) + "</span>" : ""); }
+  if (x.endFrom === "none") return "end not recorded";
   if (n.after) return ms0(d);
   if (isIO(x)) return d < 0.5 ? '<span class="z">—</span>' : '<span class="c">i/o</span> ' + ms0(d);
   return frozen(n) ? '<span class="z">—</span>' : ms0(d);
@@ -362,7 +372,7 @@ function srvLabel(n) {
 
 /* ---------- view ---------- */
 let v0 = LOAD[0], v1 = LOAD[1], sel = null, selEv = null, critOn = false, detOpen = false;
-if (PHONE) { v0 = CRITW[0]; v1 = CRITW[1]; critOn = true; }   /* phones: start on the path to data drawn */
+if (PHONE && !crit.none && crit.links.length) { v0 = CRITW[0]; v1 = CRITW[1]; critOn = true; }   /* phones: start on the path to data drawn, when one is recorded */
 const P = t => (t - v0) / (v1 - v0) * 100;
 const f3 = x => x.toFixed(3);
 function bar(s, e, cls, title) {
@@ -414,11 +424,13 @@ const tickFmt = (t, step) => t === 0 ? "0" : Math.abs(t) >= 1000 ? (t / 1000).to
 
 /* markers */
 const MK = [];
-if (k.fcp != null) MK.push({ t: k.fcp, n: "FCP", c: "#6fb38a", w: "first contentful paint" });
-if (k.lcp != null) MK.push({ t: k.lcp, n: "LCP", c: "#6fb38a", w: "largest contentful paint" });
-if (k.data != null) MK.push({ t: k.data, n: "DATA DRAWN", c: "#6fd8f2", w: "first frame with an answer (ephem:data)", strong: 1 });
-for (const m of M.marks) if (m.kind === "input") MK.push({ t: m.t, n: m.name.toUpperCase(), c: "#c9d1de", w: m.name + (m.latency != null ? ", latency " + fmt(m.latency) : ""), dash: 1 });
-for (const nm of ["DOMContentLoaded", "load"]) { const m = M.marks.find(x => x.kind === "nav" && x.name === nm); if (m) MK.push({ t: m.t, n: nm === "load" ? "LOAD" : "DCL", c: "#555b64", w: nm, faint: 1 }); }
+const KS = M.kpiSrc || {};
+if (k.fcp != null) MK.push({ t: k.fcp, n: "FCP", c: "#6fb38a", w: "first contentful paint · " + (KS.fcp || "") });
+if (k.lcp != null) MK.push({ t: k.lcp, n: "LCP", c: "#6fb38a", w: "largest contentful paint" + ((M.marks.find(x => /largest/.test(x.name)) || {}).src ? " · " + M.marks.find(x => /largest/.test(x.name)).src : "") });
+if (k.data != null) MK.push({ t: k.data, n: "DATA DRAWN", c: "#6fd8f2", w: "first frame with an answer · " + (KS.data || ""), strong: 1 });
+for (const m of M.marks) if (m.kind === "app") MK.push({ t: m.t, n: m.name.replace("ephem:", "").toUpperCase(), c: "#6fd8f2", w: m.name + (m.src ? " · " + m.src : ""), dash: 1 });
+for (const m of M.marks) if (m.kind === "input") MK.push({ t: m.t, n: m.name.toUpperCase(), c: "#c9d1de", w: m.name + (m.latency != null ? ", latency " + fmt(m.latency) : "") + (m.src ? " · " + m.src : ""), dash: 1 });
+for (const nm of ["DOMContentLoaded", "load"]) { const m = M.marks.find(x => x.kind === "nav" && x.name === nm); if (m) MK.push({ t: m.t, n: nm === "load" ? "LOAD" : "DCL", c: "#555b64", w: nm + (m.src ? " · " + m.src : ""), faint: 1 }); }
 for (const m of M.marks) if (m.kind === "paint" && !/contentful/.test(m.name)) MK.push({ t: m.t, n: m.name.toUpperCase(), c: "#6fb38a", w: m.name });
 MK.sort((a, b) => a.t - b.t);
 const MKG = [];
@@ -484,20 +496,27 @@ function trackCell(n) {
   if (n.kind === "req") {
     const r = n.r;
     t += bar(n.s, n.e, "base");
-    for (const p of PH) if (r.ph && r.ph[p]) t += bar(r.ph[p][0], r.ph[p][1], "p-" + p, PHN[p] + " " + fmt(r.ph[p][1] - r.ph[p][0]));
-    if (n.crit) t += bar(n.s, n.e, "cl");
-    t += lab(n.s, n.e, esc(fmt(n.e - n.s)) + (r.bytes ? ' <span class="c">· ' + kb(r.bytes) + "</span>" : ""));
+    for (const p of PH) if (r.ph && r.ph[p]) t += bar(r.ph[p][0], r.ph[p][1], "p-" + p, PHN[p] + " " + fmt(r.ph[p][1] - r.ph[p][0]) + (r.phFrom && r.phFrom[p] ? " · " + r.phFrom[p] : ""));
+    for (const c of r.chunks || []) t += bar(c[0], c[0], "chunk", "chunk " + c[1] + " B at " + fmt(c[0], 1) + " (CDP Network.dataReceived)");
+    if (r.embedAt && r.embedAt.t != null) t += bar(r.embedAt.t, r.embedAt.t, "emb", "embedded answers complete in the body at " + fmt(r.embedAt.t, 1) + " (byte " + r.embedAt.need + " of " + r.embedAt.body + ", CDP Network.dataReceived)");
+    if (n.crit) t += bar(n.s, crit.until != null ? crit.until : r.ph && r.ph.wait ? r.ph.wait[1] : n.s, "cl");
+    if (rOpen(r)) { const a = P(n.e); if (a >= 0 && a <= 100) t += '<i class="b open" style="left:' + f3(a) + '%;width:26px" title="end not recorded"></i>'; }
+    t += lab(n.s, n.e, rOpen(r) ? esc(fmt(n.e - n.s)) + '+ <span class="c">· end not recorded</span>' : esc(fmt(n.e - n.s)) + (r.bytes ? ' <span class="c">· ' + kb(r.bytes) + "</span>" : ""), rOpen(r) ? 34 : 0);
     return '<div class="tk">' + t + "</div>";
   }
   const x = n.x;
   if (x.root && PM) t += bar(n.s - PM, n.e + PM, "wh", "± " + fmt(PM, 1) + " clock offset");
   const respDone = x.bodyEnd != null ? x.bodyEnd : x.respEnd;
+  const aliveT = "invocation still running: " + (x.alive ? (x.alive.by.join("; ") || "no waitUntil span") + ". " + (x.alive.last ? "Last span to end: " + x.alive.last + " (" + x.alive.note + ")" : "") : "") + ". Not response time.";
   if (x.root && x.ep === "default" && x.respEnd != null && !n.after) {
-    t += bar(n.s, x.respEnd, "front", "headers: first byte " + ms0(x.respEnd - x.s));
-    if (x.bodyEnd != null) t += bar(x.respEnd, x.bodyEnd, "body", "streaming body until " + fmt(x.bodyEnd, 1) + " (" + x.bodyEndFrom + ")");
-    t += bar(respDone, n.e, "alive", "invocation alive after the response (waitUntil below)");
+    t += bar(n.s, x.respEnd, "front", "start → first byte " + ms0(x.respEnd - x.s) + " (derived: root span start + time_to_first_byte_ms)");
+    if (x.bodyEnd != null) t += bar(x.respEnd, x.bodyEnd, "body", "streaming body: first byte → html.stream end " + fmt(x.bodyEnd, 1));
+    t += bar(respDone, n.e, "alive", aliveT);
+    if (x.bodyNote) { const a = P(x.respEnd); if (a >= 0 && a <= 100) t += '<i class="b open" style="left:' + f3(a) + '%;width:26px;top:calc(var(--rh) / 2 - 7px)" title="' + esc("body end not recorded: " + x.bodyNote) + '"></i><span class="olb" style="left:calc(' + f3(a) + '% + 30px)">body end not recorded</span>'; }
+  } else if (x.endFrom === "none") {
+    t += bar(n.s, n.s, srvCls(n) + " zero", "end not recorded"); const a = P(n.s); if (a >= 0 && a <= 100) t += '<i class="b open" style="left:' + f3(a) + '%;width:26px" title="end not recorded"></i>';
   } else t += bar(n.s, n.e, srvCls(n) + (n.e - n.s < 0.5 ? " zero" : ""), frozen(n) ? ZERO : "");
-  if (n.crit) t += bar(n.s, x.root && respDone != null ? respDone : n.e, "cl");
+  if (n.crit) t += bar(n.s, x.root && x.ep === "default" && respDone != null ? respDone : n.e, "cl");
   t += lab(n.s, n.e, srvLabel(n) + (x.cache ? ' <span class="mc">· ' + esc(x.cache) + "</span>" : ""), x.root ? PM : 0, n.after ? false : !x.root ? true : x.bodyEnd != null ? "light" : false);
   return '<div class="tk">' + t + "</div>";
 }
@@ -640,10 +659,16 @@ function detailHtml(n) {
   if (n.kind === "req") {
     const r = n.r, tot = Math.max(0.001, n.e - n.s);
     const ph = PH.filter(p => r.ph && r.ph[p]).map(p => { const [a, z] = r.ph[p]; return '<i style="background:var(--' + p + ')"></i><span class="cap">' + PHN[p] + '</span><span class="bar"><span style="left:' + ((a - n.s) / tot * 100) + "%;width:" + Math.max(0.5, (z - a) / tot * 100) + "%;background:var(--" + p + ')"></span></span><span class="tn">' + esc(fmt(z - a)) + "</span>"; }).join("");
+    const phSrc = PH.filter(p => r.ph && r.ph[p] && r.phFrom && r.phFrom[p]).map(p => [PHN[p], r.phFrom[p]]);
+    const ea = r.embedAt;
     const f = r.front;
     return head(esc(String(r.type || "request").toLowerCase()) + (n.crit ? ' · <span style="color:var(--accent)">critical path</span>' : ""), esc(r.method) + " " + esc(r.url)) +
-      "<h3 class=cap>timing</h3>" + kv([["start", fmt(r.start, 1)], ["end", fmt(n.e, 1)], ["duration", fmt(n.e - n.s, 1)], ["size", r.bytes ? kb(r.bytes) + " (" + r.bytes + " B)" : null], ["status", String(r.status || "")], ["protocol", r.protocol]]) +
+      "<h3 class=cap>timing</h3>" + kv([["start", fmt(r.start, 1) + (rumSrc ? " (RUM startTime)" : " (CDP requestWillBeSent)")], ["end", rOpen(r) ? "end not recorded (last recorded edge " + fmt(n.e, 1) + ")" : fmt(n.e, 1) + (r.endFrom ? " (" + r.endFrom + ")" : "")],
+        ["duration", rOpen(r) ? null : fmt(n.e - n.s, 1) + " (derived: end − start)"], ["size", r.bytes ? kb(r.bytes) + " (" + r.bytes + " B)" : null], ["status", String(r.status || "")], ["protocol", r.protocol]]) +
       (ph ? '<div class="ph" style="margin-top:10px">' + ph + "</div>" : "") +
+      (phSrc.length ? "<h3 class=cap>phase sources</h3>" + kv(phSrc) : "") +
+      (r.chunks && r.chunks.length ? "<h3 class=cap>body arrival (CDP Network.dataReceived)</h3>" + kv([["chunks", r.chunks.length + ", " + fmt(r.chunks[0][0], 1) + " … " + fmt(r.chunks[r.chunks.length - 1][0], 1)],
+        ["embedded answers", ea ? (ea.t != null ? "complete at " + fmt(ea.t, 1) + ": the chunk whose cumulative bytes reach byte " + ea.need + " of " + ea.body + " (" + (ea.ids || []).join(", ") + ")" : ea.note) : "offsets not recorded"]]) : "") +
       "<h3 class=cap>server</h3>" + kv([["join", r.join + (r.byTrace ? " (trace id + cf-ray)" : r.join === "joined" ? " (cf-ray)" : "")], ["note", r.reason], ["cf-ray", r.ray, 1], ["cache", r.cache], ["browser cache", r.fromCache],
         ["worker cpu", f ? fmt(f.cpu) : null], ["worker wall", f ? fmt(f.wall) + " (incl. waitUntil)" : null], ["colo", f && f.colo], ["outcome", f && f.outcome], ["version", (f && f.version) || r.version, 1],
         ["loopbacks", r.internal && r.internal.length ? r.internal.map(v => v.ep + " " + v.path + " · cpu " + fmt(v.cpu) + " · wall " + fmt(v.wall)).join("; ") : null]]) +
@@ -653,9 +678,13 @@ function detailHtml(n) {
   const attrs = Object.keys(x.a).sort().map(key => [key, typeof x.a[key] === "object" ? JSON.stringify(x.a[key]) : String(x.a[key]), 1]);
   const v = x.root && x.ep !== "default" ? internalOf(x) : null;
   return head(esc(nm.t || (x.ep === "default" ? "front door span" : x.ep)) + (n.after ? " · waitUntil, after the response" : "") + (n.crit ? ' · <span style="color:var(--accent)">critical path</span>' : ""), nm.n.replace(/<\/?b>/g, "") + (x.cache ? " · " + esc(x.cache) : "")) +
-    "<h3 class=cap>timing (browser clock)</h3>" + kv([["start", fmt(x.s, 1)], ["end", fmt(x.e, 1)], ["duration", d < 0.5 ? "0 ms · " + ZERO : fmt(d, 1)],
-      ["headers", x.respEnd != null ? fmt(x.respEnd - x.s, 1) + " to first byte (runtime time_to_first_byte_ms)" : null],
-      ["body", x.bodyEnd != null ? "streams until " + fmt(x.bodyEnd, 1) + " (" + fmt(x.bodyEnd - x.s, 1) + " after the start); end from the " + x.bodyEndFrom + ": the model has no span for the last chunk" : null],
+    "<h3 class=cap>timing (browser clock)</h3>" + kv([["start", fmt(x.s, 1) + " (span startTime, shifted by θ)"], ["end", x.endFrom === "none" ? "end not recorded" : fmt(x.e, 1) + " (span " + x.endFrom + ", shifted by θ)" + (x.root && x.ep === "default" ? ": the invocation's end, not the response's" : "")],
+      ["duration", x.endFrom === "none" ? null : d < 0.5 ? "0 ms · " + ZERO : fmt(d, 1) + " (derived: end − start)"],
+      ["first byte", x.respEnd != null ? fmt(x.respEnd, 1) + ", " + fmt(x.respEnd - x.s, 1) + " after the start (derived: start + cloudflare.response.time_to_first_byte_ms)" : null],
+      ["body end", x.bodyEnd != null ? fmt(x.bodyEnd, 1) + ", " + fmt(x.bodyEnd - x.s, 1) + " after the start (" + x.bodyEndFrom + ")" : x.bodyNote],
+      ["kept alive by", x.alive ? (x.alive.by.join("; ") || "no waitUntil span") : null],
+      ["invocation end", x.alive ? (x.alive.last ? x.alive.last + " ended at " + fmt(x.alive.lastEnd, 1) + ": " + x.alive.note : x.alive.note) : null],
+      ["nested by", nestFrom.get(x.k)],
       ["frozen clock", !x.root && frozen(n) ? "this wall time is the frozen-clock artefact: " + (d < 0.5 ? "no I/O inside it" : "its wall is the I/O below it (longest subrequest " + fmt(ioBelow(n), 1) + ")") + "; its compute is in the invocation's CPU" : null],
       ["cpu", x.root && x.ep === "default" && r && r.front ? fmt(r.front.cpu) : v ? fmt(v.cpu) : null],
       ["clock", PM ? "server − client θ = " + fmt(off.thetaMs, 1) + " ± " + fmt(PM, 1) + " (" + off.agree + "/" + off.n + " bounds agree)" : null]]) +
@@ -807,11 +836,11 @@ document.title = "Trace " + page + " · " + dev;
 $("run").textContent = meta.run || (M.meta.traceId || "").slice(0, 16);
 const cov = M.coverage, allJoined = cov.joined === cov.total;
 const tiles = [
-  ["TTFB", fmt(k.ttfb), null, "document: navigation start → first byte"],
-  ["First paint", fmt(k.fcp), "#6fb38a", "first contentful paint" + (k.lcp != null ? "; LCP " + fmt(k.lcp) : "")],
-  ["Data drawn", fmt(k.data), "#6fd8f2", "first frame with an answer (ephem:data)"],
-  ["Requests joined", cov.joined + "/" + cov.total, allJoined ? "#7cc9a0" : "#e8a64a", "requests joined to a server invocation (" + cov.byTrace + " also by trace id)"],
-  ["Server CPU", fmt(k.serverCpu), null, (k.invocations || 0) + " invocations (front door + loopbacks)"],
+  ["TTFB", fmt(k.ttfb), null, "document first byte, ms since navigation start: " + (KS.ttfb || "")],
+  ["First paint", fmt(k.fcp), "#6fb38a", "first contentful paint: " + (KS.fcp || "") + (k.lcp != null ? "; LCP " + fmt(k.lcp) : "")],
+  [rumSrc ? "Data ready" : "Data drawn", fmt(k.data), "#6fd8f2", (KS.data || "")],
+  ["Requests joined", cov.joined + "/" + cov.total, allJoined ? "#7cc9a0" : "#e8a64a", "count: requests whose cf-ray matched a front-door invocation (" + cov.byTrace + " also by trace id)"],
+  ["Server CPU", fmt(k.serverCpu), null, (KS.serverCpu || "") + ", " + (k.invocations || 0) + " invocations (front door + loopbacks)"],
 ];
 $("kpis").innerHTML = tiles.map(t => '<div class="kpi" title="' + esc(t[3]) + '"><div class="cap">' + (t[2] ? '<i style="background:' + t[2] + '"></i>' : "") + esc(t[0]) + '</div><span class="v">' + unitHtml(t[1]) + "</span></div>").join("");
 
@@ -836,7 +865,7 @@ $("rdg").innerHTML =
     ["LCP", fmt(k.lcp)], ["INP", fmt(k.inp) + (rumSrc ? "" : " (headless: not comparable)")], ["CLS", k.cls != null ? String(k.cls) : null],
     ["long tasks", k.longTasks != null ? k.longTasks + " (longest " + fmt(k.longestTask, 1) + ")" : null], ["Api cache", hm(k.cache) || null], ["blocks / geoid", hm(k.blocks) || null]])) +
   sec("Coverage", kv([["joined", cov.joined + " of " + cov.total + " (" + cov.byTrace + " also by trace id)"], ["fetches", cov.fetchesSameTrace + " of " + cov.fetches + " carried the document's trace id"],
-    ["critical path", M.crit.req.length ? M.crit.req.map(i => (reqByI.get(i) || {}).path).join(" ← ") + " → data drawn" : "none found"]]) +
+    ["critical path", crit.none ? "none: " + crit.none : crit.links.map(l => l.what + (l.t != null ? " " + fmt(l.t, 1) : " (time not recorded)") + " [" + l.src + "]").join(" → ")]]) +
     (cov.unjoined.length || joinedNotes.length ? '<ul class="ls" style="margin-top:8px">' + cov.unjoined.map(u => '<li><a data-go="r' + u.i + '" style="color:var(--caution);cursor:pointer">#' + u.i + " " + esc(u.url) + "</a>: " + esc(u.join) + ", " + esc(u.reason) + "</li>").join("") +
       joinedNotes.map(r => '<li><a data-go="r' + r.i + '" style="color:var(--ink2);cursor:pointer">#' + r.i + " " + esc(r.url) + "</a>: " + esc(r.reason) + "</li>").join("") + "</ul>" : "")) +
   sec("Top client-side costs", '<ol class="ls">' + (M.costs || []).slice(0, 6).map(c => "<li><span class=tn>" + esc(fmt(c.ms)) + "</span> " + esc(c.what) + ' <span style="color:var(--faint)">' + esc(c.detail) + "</span></li>").join("") + "</ol>");
@@ -844,12 +873,12 @@ for (const a of $("rdg").querySelectorAll("[data-go]")) a.onclick = () => select
 
 $("legend").innerHTML = [
   '<span class="h">network</span>' + PH.map(p => "<span><i style=\"background:var(--" + p + ')"></i>' + PHN[p].replace(" (ttfb)", "") + "</span>").join(""),
-  '<span class="h">server</span><span><i style="background:var(--front)"></i>front door</span><span><i style="background:var(--eff)"></i>span</span><span><i style="background:var(--int)"></i>entrypoint</span><span><i style="background:var(--store)"></i>storage</span><span><i class="sub"></i>subrequest</span><span><i style="background:rgba(245,184,96,.45)"></i>streaming body</span><span><i class="after"></i>waitUntil</span><span><i style="height:2px;vertical-align:2px;background:rgba(245,184,96,.5)"></i>invocation alive</span><span>|—| ± clock</span>',
+  '<span class="h">server</span><span><i style="background:var(--front)"></i>front door</span><span><i style="background:var(--eff)"></i>span</span><span><i style="background:var(--int)"></i>entrypoint</span><span><i style="background:var(--store)"></i>storage</span><span><i class="sub"></i>subrequest</span><span><i style="background:rgba(245,184,96,.45)"></i>streaming body</span><span><i class="after"></i>waitUntil</span><span><i style="height:2px;vertical-align:2px;background:rgba(245,184,96,.5)"></i>invocation running (not response time)</span><span><i style="height:2px;width:14px;vertical-align:2px;background:repeating-linear-gradient(90deg,#c9d1de 0 3px,transparent 3px 6px)"></i>end not recorded</span><span><i style="width:1px;background:#f2f4f7"></i>body chunk</span><span><i style="width:2px;background:var(--accent)"></i>embed complete</span><span>|—| ± clock</span>',
   '<span class="h">main</span>' + CATS.map(c => '<span><i style="background:' + CATC[c] + '"></i>' + c + "</span>").join("") + '<span><i style="background:#ef6a5e"></i>long task</span>',
-  '<span><i class="cl" style="background:var(--accent)"></i>critical path to data drawn</span>',
+  '<span><i class="cl" style="background:var(--accent)"></i>critical path to data drawn (recorded links only' + (crit.none ? "; none in this run" : "") + ")</span>",
 ].map(x => "<span>" + x + "</span>").join("");
 if (!PHONE) $("lgd").open = true;   /* phones: the legend stays folded behind its toggle */
-$("foot").textContent = "Generated by scripts/obs/journey.ts (or trace-view.ts). Times are ms since navigation start on the browser's clock; server spans are shifted by the clock offset θ. Workers' clock only advances on I/O, so compute spans read 0 ms: read the invocation's CPU. Perfetto: open the matching .perfetto.json at ui.perfetto.dev.";
+$("foot").textContent = "Generated by scripts/obs/journey.ts (or trace-view.ts). Every bar's start and end is a recorded event (CDP, a server span's start/end, a RUM entry, a Workers invocation); the detail panel names each source and marks derived values. Where an end is not recorded the bar is open-ended. Times are ms since navigation start on the browser's clock; server spans are shifted by θ (± shown as a whisker). Workers' clock only advances on I/O, so compute spans read 0 ms: read the invocation's CPU. Perfetto: the matching .perfetto.json at ui.perfetto.dev." + (crit.none ? " Critical path: none (" + crit.none + ")." : "");
 
 render();
 /* narrow: the waterfall scrolls sideways; open it with data drawn in view */

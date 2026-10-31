@@ -30,9 +30,10 @@ const chunks = <T,>(xs: T[], n: number) => Array.from({ length: Math.ceil(xs.len
 
 const flat = (o: any, p = "", out: Record<string, any> = {}) => { for (const [k, v] of Object.entries(o ?? {})) { if (v && typeof v === "object" && !Array.isArray(v)) flat(v, p + k + ".", out); else out[p + k] = v } return out }
 // Only these attributes leave this module: never request headers, IPs, the raw query (url.full) or the Api cache key.
-const KEEP = /^(effect\.(span_id|parent_id|parent)|ephem\.|cache\.|blocks\.|geoid\.|metar\.|asset\.|home\.(source|tz)|client\.|rum\.|http\.route|http\.response\.status_code|http\.status_code|cpu_time_ms|wall_time_ms|cloudflare\.(outcome|colo|response\.time_to_first_byte_ms|entrypoint)|jsrpc\.(method|target_kind)|url\.path|mcp\.)/
-export interface SSpan { trace: string; id: string; parent?: string; name: string; ep: string; ray?: string; s: number; e: number; a: Record<string, any> }
-export interface Inv { ray: string; ray0: string; trace: string; ep: string; cpu: number; wall: number; outcome: string; status?: number; version: string; path: string; colo?: string | undefined; ts: number }
+const KEEP = /^(effect\.(span_id|parent_id|parent)|ephem\.|cache\.|blocks\.|geoid\.|metar\.|asset\.|home\.(source|tz)|client\.|rum\.|http\.route|http\.response\.status_code|http\.status_code|cpu_time_ms|wall_time_ms|cloudflare\.(outcome|colo|response\.time_to_first_byte_ms|entrypoint)|jsrpc\.(method|target_kind)|url\.path|mcp\.|html\.)/
+/** endFrom: "endTime" (recorded), "durationMS" (start + recorded duration) or "none" (no end in the event: e = s, drawn open-ended) */
+export interface SSpan { trace: string; id: string; parent?: string; name: string; ep: string; ray?: string; s: number; e: number; endFrom: "endTime" | "durationMS" | "none"; a: Record<string, any> }
+export interface Inv { ray: string; ray0: string; trace: string; ep: string; cpu: number; wall: number; outcome: string; status?: number; version: string; path: string; colo?: string | undefined; ts: number; from?: string }
 export interface Server { invs: Inv[]; spans: SSpan[]; ingestS: number }
 
 const toSpan = (x: Ev): SSpan => {
@@ -40,7 +41,7 @@ const toSpan = (x: Ev): SSpan => {
   for (const [k, v] of Object.entries(flat(src))) if (KEEP.test(k) && !k.endsWith("api_key") && !k.endsWith("api_server_timing")) a[k] = v
   if (a["url.path"] && String(a["url.path"]).startsWith("/block/")) a["url.path"] = "/block/…"
   return { trace: x.$metadata.traceId, id: x.$metadata.spanId ?? src.spanId, parent: x.$metadata.parentSpanId ?? src.parentSpanId, name: src.name, ep: src.cloudflare?.entrypoint ?? "default",
-    ray: src.cloudflare?.ray_id, s: src.startTime, e: src.endTime ?? src.startTime + (src.durationMS ?? 0), a }
+    ray: src.cloudflare?.ray_id, s: src.startTime, e: src.endTime ?? src.startTime + (src.durationMS ?? 0), endFrom: src.endTime != null ? "endTime" : src.durationMS != null ? "durationMS" : "none", a }
 }
 const toInv = (e: Ev): Inv => ({ ray: e.$metadata.rayId, ray0: ray0(e.$metadata.rayId), trace: e.$metadata.traceId, ep: e.$workers?.entrypoint ?? "default", cpu: e.$workers?.cpuTimeMs ?? 0,
   wall: e.$workers?.wallTimeMs ?? 0, outcome: e.$workers?.outcome, status: e.$workers?.event?.response?.status, version: e.$workers?.scriptVersion?.id ?? "",
@@ -90,6 +91,6 @@ export async function pullServer(o: PullOptions): Promise<Server> {
   // A request whose invocation event never arrived but whose root span did: an invocation-shaped record from the span.
   for (const sp of sspans.filter(s => s.ray && !s.parent && !invs.some(v => v.ray === s.ray)))
     invs.push({ ray: sp.ray!, ray0: ray0(sp.ray), trace: sp.trace, ep: sp.ep, cpu: sp.a.cpu_time_ms ?? 0, wall: sp.a.wall_time_ms ?? sp.e - sp.s, outcome: sp.a["cloudflare.outcome"] ?? "?",
-      status: sp.a["http.response.status_code"], version: "", path: sp.a["url.path"] ?? "", colo: sp.a["cloudflare.colo"], ts: sp.e })
+      status: sp.a["http.response.status_code"], version: "", path: sp.a["url.path"] ?? "", colo: sp.a["cloudflare.colo"], ts: sp.e, from: "root span attributes (the invocation event never arrived)" })
   return { invs, spans: sspans, ingestS: (Date.now() - t0) / 1000 }
 }

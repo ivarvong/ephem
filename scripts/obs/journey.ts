@@ -72,6 +72,8 @@ interface Mark { wall: number; name: string }
 const marks: Mark[] = []
 const b = await launch({ headless: !flag("headed") })
 let trace: P.TraceEvent[] = [], reqs: P.Req[] = [], pageState: any = {}
+const docEmbeds: Array<{ id: string; start: number; end: number }> = []
+let docBodyBytes: number | null = null
 const tNav = { wall: 0 }
 try {
   const s = await b.newPage()
@@ -98,6 +100,18 @@ try {
   tNav.wall = Date.now()
   await P.navigate(s, url.href, { until: "load", timeoutMs: 120_000 })
   await P.waitForFn(s, `performance.getEntriesByName("ephem:data").length`, 60_000)
+  // Where the embedded answers sit in the document's bytes (UTF-8 offsets; the body itself is not kept): with the document's
+  // Network.dataReceived chunks this gives when the embed's bytes arrived (model.ts critical path).
+  const docR = reqs.find(r => r.type === "Document" && r.url.startsWith(origin))
+  if (docR) try {
+    const body = await s.send("Network.getResponseBody", { requestId: docR.id }) as { body: string; base64Encoded: boolean }
+    const buf = body.base64Encoded ? Buffer.from(body.body, "base64") : Buffer.from(body.body, "utf8"), html = buf.toString("utf8")
+    for (const m of html.matchAll(/<script type="application\/json" id="(ephem-[a-z]+)">/g)) {
+      const close = html.indexOf("</script>", m.index); if (close < 0) continue
+      docEmbeds.push({ id: m[1]!, start: Buffer.byteLength(html.slice(0, m.index)), end: Buffer.byteLength(html.slice(0, close + 9)) })
+    }
+    docBodyBytes = buf.length
+  } catch (e) { log(`document body: ${String(e).slice(0, 120)}`) }
   const mark = (n: string) => marks.push({ wall: Date.now(), name: n })
   await new Promise(r => setTimeout(r, 1500))
   if (script === "home-drag") {
@@ -143,7 +157,11 @@ const creqs: CReq[] = pageReqs.map(r => {
   return { url: r.url, method: r.method, type: r.type ?? "", status: r.status ?? 0, protocol: r.protocol, fromCache: r.fromCache ?? null, failed: r.failed,
     start: rel(r.start * 1000), ph, end: r.end ? rel(r.end * 1000) : null, bytes: r.encoded ?? 0, ray: r.headers["cf-ray"], cache: r.headers["x-ephem-cache"],
     version: r.headers["x-ephem-version"]?.slice(0, 8), serverTiming: r.headers["server-timing"], traceId: tp?.slice(3, 35) ?? r.headers["x-ephem-trace"], spanId: tp?.slice(36, 52),
-    sendWall: t ? base + t.sendStart + WALL : undefined, headWall: t ? base + t.receiveHeadersEnd + WALL : undefined }
+    sendWall: t ? base + t.sendStart + WALL : undefined, headWall: t ? base + t.receiveHeadersEnd + WALL : undefined,
+    endFrom: r.failed ? "CDP Network.loadingFailed" : r.id.endsWith(":redirect") ? "CDP Network.requestWillBeSent of the redirect" : "CDP Network.loadingFinished",
+    phFrom: { queue: "requestWillBeSent → first of dnsStart / connectStart / sendStart (CDP)", dns: "ResourceTiming dnsStart → dnsEnd (CDP)", connect: "connectStart → sslStart or connectEnd (CDP)",
+      ssl: "sslStart → sslEnd (CDP)", send: "sendStart → sendEnd (CDP)", wait: "sendEnd → receiveHeadersEnd (CDP; includes the emulated latency when throttled)", download: "receiveHeadersEnd → loadingFinished (CDP)" },
+    ...(r.chunks ? { chunks: r.chunks.map(([ts, n]) => [rel(ts * 1000), n] as [number, number]), ...(r.type === "Document" ? { embeds: docEmbeds, bodyBytes: docBodyBytes } : {}) } : {}) }
 })
 
 // main thread: the renderer's CrRendererMain; self time per category (nested work counted once, innermost)
@@ -162,14 +180,15 @@ const catOf = (n: string) => n === "RunTask" ? "task" : CAT.find(([re]) => re.te
 const mainEv = trace.filter(e => e.pid === mainPid && e.tid === mainTid && e.ph === "X" && (e.dur ?? 0) > 0 && e.ts / 1000 >= T0 - 50).toSorted((a, z) => a.ts - z.ts || (z.dur! - a.dur!))
 const dataMark = trace.find(e => e.name === "ephem:data" && e.pid === mainPid)
 const tData = dataMark ? rel(dataMark.ts / 1000) : null
-const stack: number[] = [], main: MainEv[] = [], selfOf: Array<{ c: string; s: number; d: number; self: number }> = [], parentIdx: number[] = []
+const stack: number[] = [], main: MainEv[] = [], selfOf: Array<{ c: string; s: number; d: number; self: number; selfToData: number }> = [], parentIdx: number[] = []
+const toData = (sRel: number, d: number) => tData == null ? 0 : Math.max(0, Math.min(sRel + d, tData) - sRel)
 for (const e of mainEv) {
   const s = e.ts / 1000, d = e.dur! / 1000
   while (stack.length && stack[stack.length - 1]! <= s) stack.pop()
   const depth = stack.length; stack.push(s + d)
   const n = e.name === "ThreadControllerImpl::RunTask" ? "RunTask" : e.name, c = catOf(n)
-  selfOf.push({ c, s: rel(s), d, self: d }); if (parentIdx.length > depth) parentIdx.length = depth
-  if (depth > 0) { const par = selfOf[parentIdx[depth - 1]!]; if (par) par.self -= d }
+  selfOf.push({ c, s: rel(s), d, self: d, selfToData: toData(rel(s), d) }); if (parentIdx.length > depth) parentIdx.length = depth
+  if (depth > 0) { const par = selfOf[parentIdx[depth - 1]!]; if (par) { par.self -= d; par.selfToData -= toData(rel(s), d) } }
   parentIdx[depth] = selfOf.length - 1
   if (d >= 0.25 || (c === "task" && d >= 1) || (depth === 0 && d >= 0.1))
     main.push([rel(s), +d.toFixed(3), Math.min(depth, 5), n, e.args?.data?.url ? String(e.args.data.url).replace(origin, "") : e.args?.data?.type ?? e.args?.data?.functionName ?? ""])
@@ -178,27 +197,33 @@ const byCat: Record<string, number> = {}, byCatToData: Record<string, number> = 
 for (const x of selfOf) {
   const c = x.c === "task" ? "other" : x.c, self = Math.max(0, x.self)
   byCat[c] = (byCat[c] ?? 0) + self
-  if (tData != null && x.s < tData) byCatToData[c] = (byCatToData[c] ?? 0) + self * Math.min(1, (tData - x.s) / Math.max(x.d, 1e-6))
+  // exact, not pro-rated: the part of the event before data drawn minus the part of its children before it
+  if (tData != null && x.s < tData) byCatToData[c] = (byCatToData[c] ?? 0) + Math.max(0, x.selfToData)
 }
 const fcpEv = trace.find(e => e.name === "firstContentfulPaint" && e.pid === mainPid)
 const lcpEv = trace.toReversed().find(e => e.name === "largestContentfulPaint::Candidate" && e.pid === mainPid)
+// The boot's own record of where the first answers came from: ephem:embedded (all three read from the document's embed) or
+// ephem:fetched (at least one fetched). The critical path is derived from it (model.ts), never guessed.
+const srcEv = trace.find(e => (e.name === "ephem:embedded" || e.name === "ephem:fetched") && e.pid === mainPid)
 const cmarks: CMark[] = [
-  ...(fcpEv ? [{ t: rel(fcpEv.ts / 1000), name: "first contentful paint", kind: "paint" }] : []),
-  ...(lcpEv ? [{ t: rel(lcpEv.ts / 1000), name: "largest contentful paint", kind: "paint" }] : []),
-  ...(tData != null ? [{ t: tData, name: "data drawn (ephem:data)", kind: "data" }] : []),
-  ...trace.filter(e => (e.name === "MarkDOMContent" || e.name === "MarkLoad") && e.pid === mainPid && e.args?.data?.isOutermostMainFrame).map(e => ({ t: rel(e.ts / 1000), name: e.name === "MarkLoad" ? "load" : "DOMContentLoaded", kind: "nav" })),
-  ...marks.map(m => ({ t: rel(m.wall - WALL), name: m.name, kind: "input" })),
+  ...(fcpEv ? [{ t: rel(fcpEv.ts / 1000), name: "first contentful paint", kind: "paint", src: "CDP trace: firstContentfulPaint" }] : []),
+  ...(lcpEv ? [{ t: rel(lcpEv.ts / 1000), name: "largest contentful paint", kind: "paint", src: "CDP trace: last largestContentfulPaint::Candidate" }] : []),
+  ...(tData != null ? [{ t: tData, name: "data drawn (ephem:data)", kind: "data", src: "CDP trace: user timing mark ephem:data (the first sky frame with an answer)" }] : []),
+  ...(srcEv ? [{ t: rel(srcEv.ts / 1000), name: srcEv.name, kind: "app", src: "CDP trace: user timing mark " + srcEv.name + " (boot: where the first answers came from)" }] : []),
+  ...trace.filter(e => (e.name === "MarkDOMContent" || e.name === "MarkLoad") && e.pid === mainPid && e.args?.data?.isOutermostMainFrame).map(e => ({ t: rel(e.ts / 1000), name: e.name === "MarkLoad" ? "load" : "DOMContentLoaded", kind: "nav", src: "CDP trace: " + e.name })),
 ]
-// Input → next paint per scripted interaction: the EventDispatch it caused, then the end of the next Paint/Commit.
+// Scripted inputs: at the EventDispatch the input caused (a browser event), else at the harness's send time (its own clock,
+// mapped by the median wall − monotonic offset). No latency: "the next Paint after it" is not caused-by, and INP comes from
+// the page's own Event Timing (the RUM row) below.
 const inputs = trace.filter(e => e.name === "EventDispatch" && e.pid === mainPid && /^(pointerdown|touchstart|mousedown)$/.test(e.args?.data?.type))
-for (const m of cmarks.filter(m => m.kind === "input")) {
-  const ev = inputs.find(e => rel(e.ts / 1000) >= m.t - 5); if (!ev) continue
-  const t = rel(ev.ts / 1000), paint = main.find(x => x[0] > t && x[0] < t + 1000 && (x[3] === "Paint" || x[3] === "Commit"))   // none within 1 s: no frame, no latency
-  m.t = t; m.latency = paint ? +(paint[0] + paint[1] - t).toFixed(1) : null
+for (const m of marks) {
+  const t = rel(m.wall - WALL), ev = inputs.find(e => rel(e.ts / 1000) >= t - 5)
+  cmarks.push(ev ? { t: rel(ev.ts / 1000), name: m.name, kind: "input", src: "CDP trace: EventDispatch " + ev.args.data.type }
+    : { t, name: m.name, kind: "input", src: "harness clock (Date.now() before the drag; no EventDispatch found)" })
 }
-const lats = cmarks.map(m => m.latency).filter((x): x is number => x != null)
 const client: Client = { source: "cdp", origin, t0Wall: T0 + WALL, traceId: TRACE_ID, reqs: creqs, main, marks: cmarks,
-  fcp: fcpEv ? rel(fcpEv.ts / 1000) : null, lcp: lcpEv ? rel(lcpEv.ts / 1000) : null, data: tData, inp: lats.length ? Math.max(...lats) : null, cls: null, byCat, byCatToData, calib: probes }
+  fcp: fcpEv ? rel(fcpEv.ts / 1000) : null, lcp: lcpEv ? rel(lcpEv.ts / 1000) : null, data: tData, inp: null, cls: null, byCat, byCatToData, calib: probes,
+  dataSource: srcEv ? { t: rel(srcEv.ts / 1000), kind: srcEv.name === "ephem:embedded" ? "embedded" : "fetched" } : null }
 
 // Independent clock check: the laptop's offset to an NTP server (sntp prints "+0.125 +/- 0.024 <host>": server − local, s).
 const sntp = (() => { try { const m = /([+-][0-9.]+) \+\/- ([0-9.]+)/.exec(execFileSync("sntp", ["-t", "2", "time.apple.com"], { encoding: "utf8", timeout: 8000 })); return m ? { offsetMs: +(Number(m[1]) * 1000).toFixed(1), errMs: +(Number(m[2]) * 1000).toFixed(1), host: "time.apple.com" } : null } catch { return null } })()
@@ -271,7 +296,7 @@ writeFileSync(join(outDir, `${name}.perfetto.json`), JSON.stringify(perfetto(mod
 const f = (x: number | null | undefined) => x == null ? "–" : `${x.toFixed(0)} ms`
 const { kpi, offset, coverage } = model
 console.log(`\n${name}  run ${run}  ${url.pathname}  ${device.name} · ${net?.name ?? "no throttling"} · CPU ${cpu}× · ${mode}  ephem ${model.meta.versions.join(",")}  trace ${TRACE_ID}`)
-console.log(`TTFB ${f(kpi.ttfb)}  FCP ${f(kpi.fcp)}  LCP ${f(kpi.lcp)}  data drawn ${f(kpi.data)}  INP(scripted) ${f(kpi.inp)}  requests ${kpi.requests}  server CPU ${kpi.serverCpu} ms / ${kpi.invocations} invocations  cache ${JSON.stringify(kpi.cache)} blocks ${JSON.stringify(kpi.blocks)}`)
+console.log(`TTFB ${f(kpi.ttfb)}  FCP ${f(kpi.fcp)}  LCP ${f(kpi.lcp)}  data drawn ${f(kpi.data)}  INP(RUM) ${f(kpi.inp)}  requests ${kpi.requests}  server CPU ${kpi.serverCpu} ms / ${kpi.invocations} invocations  cache ${JSON.stringify(kpi.cache)} blocks ${JSON.stringify(kpi.blocks)}`)
 console.log(`clock offset θ (server − client) = ${offset.thetaMs} ± ${offset.plusMinusMs} ms from ${offset.n} requests${offset.consistent ? " (all agree)" : ` (${offset.agree}/${offset.n} agree; outliers ${JSON.stringify(offset.outliers)})`}; tightest ${offset.tightest?.path} ${offset.tightest?.widthMs} ms wide`)
 if (sntp) console.log(`independent check: sntp ${sntp.host} says server − laptop = ${sntp.offsetMs} ± ${sntp.errMs} ms (NTP is not the Workers clock; agreement within both errors is the check)`)
 console.log(`server root span inside its request's send → first byte (± uncertainty): ${model.inside.ok}/${model.inside.n}`)
