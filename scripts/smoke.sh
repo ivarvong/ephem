@@ -80,7 +80,7 @@ chk sightline 200 "/v1/sightline?lat=40.6935&lon=-74.0017&height=5&heightRef=msl
 chk track 200 "/v1/track?lat=40.7&lon=-74&start=2026-10-29T00:00:00Z&end=2026-10-30T00:00:00Z"
 chk weather 200 "/v1/weather?lat=40.7&lon=-74"
 chk unknown-param 400 "/v1/day?lat=40.7&lon=-74&date=2026-10-29&tz=America/New_York&bogus=1"
-chk not-found 404 "/position?lat=40.7&lon=-74" '"did you mean /v1/position?' # unprefixed: JSON 404 naming the endpoints (no alias)
+chk not-found 404 "/position?lat=40.7&lon=-74" 'did you mean /v1/position?' # unprefixed: JSON 404 naming the endpoints (no alias)
 chk window-internal 404 "/internal/alignment-search-window?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&region=r1.x&start=2026-10-17T00:00:00Z"
 # the customer's Nov 16 2026 pass over a bbox of Brooklyn Bridge Park (fans out to cached window GETs)
 chk search 200 "/v1/alignment/search" '"enter":{"time":"2026-11-17T03:4' \
