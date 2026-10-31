@@ -687,6 +687,12 @@ a client leaving early often still gets a 200 recorded).
 - `wrangler.config.ts` (used by cf) spells build options in camelCase (`keepNames: false`; esbuild's default `__name`
   wrapping once took 21 % of CPU). `wrangler deploy --dry-run` reads wrangler.jsonc instead: verify bundles with
   `cf deploy --dry-run`.
+- **A wedged Docker daemon hangs every build** (2026-10-31): wrangler 4.154's build runs `docker image ls --filter
+  reference=cloudflare-build/<hash>/*` through a synchronous `execFileSync` with no timeout, containers or not; with the
+  daemon stuck (a `docker builder prune -af` that never returned) the build sat at 0 % CPU and `cf deploy` failed silently
+  after 5-6 min, three ship attempts in a row. deploy.sh now sets `WRANGLER_DOCKER_BIN=scripts/docker-bounded.sh` (10 s,
+  `EPHEM_DOCKER_TIMEOUT_S`) and runs every cf step under `scripts/bounded.py` (`CF_API_S` 60 s, `CF_BUILD_S` 240 s): a hang
+  fails with `TIMEOUT <step>` and the hung processes listed. Check the daemon with `timeout 10 docker version`.
 - `cf` on a Request copy is dropped in Node: the front door passes `cf` in fetch's second argument.
 - A cache-enabled entrypoint's response without Cache-Control is cached heuristically (a router 404 was HIT for 3 min):
   the Api sets `no-store` on anything without one.

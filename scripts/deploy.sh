@@ -77,6 +77,11 @@ LL="$GITDIR/ephem-live.lock"   # held by the live watcher (below) from promotion
 LIVEDIR="$GITDIR/ephem-live"; mkdir -p "$LIVEDIR"
 LAST=$(git -C "$ROOT" tag --list 'deployed/*' --sort=-refname | head -1)
 O11Y_LIVE_S=${O11Y_LIVE_S:-90}
+# Every cf step is bounded (scripts/bounded.py): a hang fails in minutes with `TIMEOUT <step>` and the hung process listed,
+# not after 5-6 silent minutes. The builds' docker call is bounded too (scripts/docker-bounded.sh has why).
+export WRANGLER_DOCKER_BIN="$WT/scripts/docker-bounded.sh"
+CF_API_S=${CF_API_S:-60}; CF_BUILD_S=${CF_BUILD_S:-240}
+cfb() { local t=$1 l=$2; shift 2; python3 "$WT/scripts/bounded.py" "$t" "$l" cf "$@"; }
 
 # --- helpers -------------------------------------------------------------------------------------------------------------
 now() { python3 -c 'import time; print(f"{time.time():.1f}")'; }
@@ -86,12 +91,12 @@ iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 TIMINGS=""; T_INNER=$(now); T_STAGE=$T_INNER
 stage() { TIMINGS="$TIMINGS $1=$(since "$T_STAGE")"; T_STAGE=$(now); }
 # active <worker>: the version id serving 100%, or "" if the current deployment is split
-active() { cf workers deployments list --worker "$1" --per-page 1 | python3 -c 'import json,sys; v=json.load(sys.stdin)["deployments"][0]["versions"]; print(v[0]["version_id"] if len(v)==1 and v[0]["percentage"]==100 else "")'; }
+active() { cfb "$CF_API_S" "cf deployments list $1" workers deployments list --worker "$1" --per-page 1 | python3 -c 'import json,sys; v=json.load(sys.stdin)["deployments"][0]["versions"]; print(v[0]["version_id"] if len(v)==1 and v[0]["percentage"]==100 else "")'; }
 # route <worker> <message> <id>:<pct> [<id>:<pct>]: create a deployment with these versions
 route() {
   local w=$1 m=$2; shift 2
   local vs; vs=$(python3 -c 'import json,sys; print(json.dumps([{"version_id":a.split(":")[0],"percentage":int(a.split(":")[1])} for a in sys.argv[1:]]))' "$@")
-  cf workers deployments create --worker "$w" --body "$(python3 -c 'import json,sys; print(json.dumps({"strategy":"percentage","versions":json.loads(sys.argv[1]),"annotations":{"workers/message":sys.argv[2][:100]}}))' "$vs" "$m")" >/dev/null
+  cfb "$CF_API_S" "cf deployments create $w" workers deployments create --worker "$w" --body "$(python3 -c 'import json,sys; print(json.dumps({"strategy":"percentage","versions":json.loads(sys.argv[1]),"annotations":{"workers/message":sys.argv[2][:100]}}))' "$vs" "$m")" >/dev/null
 }
 # serving <id> <timeout-s> [pin]: wait until 5 consecutive /healthz answers come from <id> (pinned or not); prints seconds
 serving() {
@@ -247,7 +252,7 @@ stage setup
 # version override) until it is routed 0% below, which happens only after the gate passed.
 UP_PID=""
 if [ $DO_EPHEM = 1 ] && [ $MODE = gradual ] && [ "${DRY:-}" != 1 ]; then
-  ( rc=0; cd "$WT/packages/worker" && cf workers versions create --message "$(printf '%s' "$MSG [git $SHA]" | cut -c1-100)" > "$WT/.upload.out" 2>&1 || rc=$?
+  ( rc=0; cd "$WT/packages/worker" && cfb "$CF_BUILD_S" "cf versions create ephem (build + upload)" workers versions create --message "$(printf '%s' "$MSG [git $SHA]" | cut -c1-100)" > "$WT/.upload.out" 2>&1 || rc=$?
     echo $rc > "$WT/.upload.rc"; since "$T_STAGE" > "$WT/.upload.t" ) &
   UP_PID=$!
 fi
@@ -300,7 +305,7 @@ if [ $DO_LOAD = 1 ]; then
   LOAD_PREV=$(active ephem-load); [ -n "$LOAD_PREV" ] || { echo "ephem-load has a split deployment; resolve it first" >&2; exit 1; }
   echo "== deploy ephem-load @ $SHA (previous $LOAD_PREV)"
   cd "$WT/packages/load"
-  out=$(cf deploy --message "$MSG [git $SHA]" 2>&1) || { echo "$out" | tail -20 >&2; echo "ephem-load deploy failed" >&2; exit 1; }
+  out=$(cfb "$CF_BUILD_S" "cf deploy ephem-load (build + upload)" deploy --message "$MSG [git $SHA]" 2>&1) || { echo "$out" | tail -20 >&2; echo "ephem-load deploy failed" >&2; exit 1; }
   LOAD_NEW=$(echo "$out" | sed -n 's/.*Current Version ID: *\([0-9a-f-]*\).*/\1/p' | head -1)
   [ -n "$LOAD_NEW" ] || { echo "$out" | tail -20 >&2; echo "ephem-load deploy: no version id in the output" >&2; exit 1; }
   echo "ephem-load $LOAD_NEW"
@@ -343,7 +348,7 @@ if [ $DO_TAIL = 1 ]; then
   [ -n "$TAIL_PREV" ] || { wait_upload; echo "ephem-tail has a split deployment; resolve it first" >&2; exit 1; }
   echo "== deploy ephem-tail @ $SHA (previous $TAIL_PREV)"
   cd "$WT/packages/tail"
-  out=$(cf deploy --message "$(printf '%s' "$MSG [git $SHA]" | cut -c1-100)" 2>&1) || { wait_upload; echo "$out" | tail -20 >&2; echo "ephem-tail deploy failed" >&2; exit 1; }
+  out=$(cfb "$CF_BUILD_S" "cf deploy ephem-tail (build + upload)" deploy --message "$(printf '%s' "$MSG [git $SHA]" | cut -c1-100)" 2>&1) || { wait_upload; echo "$out" | tail -20 >&2; echo "ephem-tail deploy failed" >&2; exit 1; }
   TAIL_NEW=$(echo "$out" | sed -n 's/.*Current Version ID: *\([0-9a-f-]*\).*/\1/p' | head -1)
   [ -n "$TAIL_NEW" ] || { wait_upload; echo "$out" | tail -20 >&2; echo "ephem-tail deploy: no version id in the output" >&2; exit 1; }
   echo "ephem-tail $TAIL_NEW"
@@ -392,7 +397,7 @@ if [ $MODE = gradual ]; then
 else
   wait_upload
   T0ISO=$(iso_now); T0=$(now)
-  out=$(cf deploy --message "$(printf '%s' "$MSG [git $SHA]" | cut -c1-100)" 2>&1) || { echo "$out" | tail -20 >&2; echo "deploy failed" >&2; exit 1; }
+  out=$(cfb "$CF_BUILD_S" "cf deploy ephem (build + upload)" deploy --message "$(printf '%s' "$MSG [git $SHA]" | cut -c1-100)" 2>&1) || { echo "$out" | tail -20 >&2; echo "deploy failed" >&2; exit 1; }
   NEW=$(echo "$out" | sed -n 's/.*Current Version ID: *\([0-9a-f-]*\).*/\1/p' | head -1)
   [ -n "$NEW" ] || { echo "$out" | tail -20 >&2; echo "deploy: no version id in the output" >&2; exit 1; }
   echo "$out" | grep -E 'Startup Time' || true
