@@ -2,8 +2,8 @@
 // add per-point rates and heights, and state every convention used. Output = the @ephem/api response minus provenance.
 import type { BlockSource, BodyName } from "./ephemeris.ts"
 import { type AlignmentInput, alignment, ratesAt } from "./alignment.ts"
-import { type HeightRef, K_TERRESTRIAL, P_DEFAULT, R_MEAN_M, T_DEFAULT, observerHeights } from "./horizon.ts"
-import { GEOID, geoidUndulation } from "./geoid.ts"
+import { type HeightRef, K_TERRESTRIAL, P_DEFAULT, R_MEAN_M, T_DEFAULT } from "./horizon.ts"
+import { GEOID, geoidUndulation, observerHeights } from "./geoid.ts"
 import { RATE_METHOD } from "./position.ts"
 import { REFRACTION_MODEL } from "./sky.ts"
 import { CONTEXT_CONVENTIONS, type Include, contextAt } from "./context.ts"

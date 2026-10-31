@@ -59,6 +59,9 @@ fails loudly rather than returning a partial result).
 | `node --experimental-strip-types journey.ts <url> [--device iphone\|desktop] [--net fast3g\|4g\|none] [--cpu 4] [--cold\|--warm] [--script home-drag\|none] [--duration 70] [--out dir]` | Unified client+server trace of one page view through our CDP client (`cdp/`). See "Page views". `--rebuild <name>.raw.json` after a model/viewer change. |
 | `node --experimental-strip-types trace-view.ts <client trace id>\|--latest [--real] [--out dir]` | A real page view rebuilt from production RUM + request rows + o11y; same viewer. |
 | `[SIZES=390,375] node --experimental-strip-types home-states.ts <base> <outDir> [filter]` | Screenshots of `/` in every sky state (debug `?at=`), light and dark, with the chart's label layout from `window.__sky` (overlaps, dropped, crossed: must be empty). |
+| `node --experimental-strip-types scrub.ts <url> [--device iphone\|desktop] [--cpu 4] [--out dir]` | Time scrubbing measured: a ~60 Hz touch (or mouse) drag across the timeline under CPU throttling; the page's own per-frame work (`window.__compute.frames`: n, mean, max ms), rAF intervals during the drag (p50, p95, max, > 20 ms), a vertical swipe on the strip (must scroll, not scrub), screenshots mid-scrub, at the end and after LIVE. |
+| `node --experimental-strip-types sky-parity-chrome.ts [cases] [seed]` | The browser bundle (src/sky-core.generated.ts) in real headless Chrome vs the API's server path in Node, every position field; max \|Δ\| per field. The gate's test/sky-core.test.ts does the same (4 000 + 300 + 300 cases) in Node. |
+| `node --experimental-strip-types scripts/build-sky-core.ts [--check]` | Rebuilds src/sky-core.generated.ts (esbuild, from packages/core/src/browser.ts). Required in the same commit as any change to the core code position, track or day run: test/sky-core.test.ts fails on a stale bundle. |
 | `node --experimental-strip-types load-remote.ts …`, `python3 load-check.py load-runs/<run>.json` | Remote load and its server side. See "Load". |
 | `scripts/obs/load.sh [rounds] [base]` | Laptop load for `profile.sh` (fresh keys, so the Api misses): default alignment + day; `LOAD=track`, `LOAD=search`, `LOAD=weather`. |
 | `<venv>/bin/python -I scripts/check-magvar.py --nasr-zip <DD_Mon_YYYY_APT_CSV.zip> [--metar …] [--csv out]` | Our WMM2025 declination vs FAA NASR airport magnetic variation, pygeomag and IGRF-14. Re-run each 28-day NASR cycle. Venv: `numpy ppigrf pygeomag`. |
@@ -90,6 +93,7 @@ counts and the invocation's `cpuTimeMs`; for where the CPU goes, profile.
 | `mcp.<method>` | src/mcp.ts | see "MCP" |
 | `home.embed`, `home.og`, `html.stream` | src/home.ts, src/embed.ts | see "Homepage" |
 | `og.front`, `og.render` | src/og.ts | see "Link previews" |
+| `assets.sky_core`, `assets.block` | src/sky-assets.ts | the page's in-browser compute: `assets.bytes`, `assets.sha16`; `assets.block` (index), `ephem.blocks_cache` (as `blocks.load`). See "Homepage" |
 | `client.abort` | src/abort.ts | the client left while the front door wrote the body: `client.aborted=true`, `ephem.outcome=canceled`, `client.abort_phase=body`, `client.abort_bytes`, `http.route`. See "Client disconnects" |
 | `GET` (runtime) | workerd | `cpu_time_ms`, `wall_time_ms`, `cloudflare.ray_id`, `outcome`, geo |
 | `fetch` / `jsRpcCall` (runtime) | workerd | a loopback fetch; `jsRpcCall method=send` is the Basin pipeline send (~0.5–1 s, after the response) |
@@ -140,7 +144,7 @@ CPU is not readable inside a request; it is `cpuTimeMs` in o11y. `Timing-Allow-O
 
 **Production RUM** (src/rum.ts, inline on `/`, no deps): navigation and every resource (Resource Timing + `serverTiming`),
 FCP, LCP, CLS, INP, long animation frames, every fetch with its span ids, app spans `boot`, `data-ready`,
-`first-sky-draw`, interactions. Batches go to `POST /rum` (sendBeacon on pagehide / hidden, keepalive fetch every 15 s and
+`first-sky-draw`, `core-takeover` (detail: fields compared), interactions (`drag`, `scrub` with detail `frames N max M`). Batches go to `POST /rum` (sendBeacon on pagehide / hidden, keepalive fetch every 15 s and
 2 s after data-ready).
 
 | `/rum` rule | Value |
@@ -579,6 +583,24 @@ some spans).
   body's end: last chunk handed to the runtime). Marks `ephem:embedded` or `ephem:fetched`, then `ephem:data`.
 - **Debug states:** `/?lat=&lon=&tz=&place=&at=<ISO>[&pose=<az>,<alt>]` freezes the page clock and asks
   `/v1/position?time=` (the embed is ignored). `home-states.ts` shoots every state.
+- **Server first frame, then the browser (2026-10-31).** The first frame is the embedded answers. At boot the page loads
+  `/assets/<sha16>/ephem-sky.js` (@ephem/core position, track, day; 15.0 KB, 6.9 KB gzip; src/sky-core.generated.ts) and the
+  DE440 blocks for its UTC day −2…+3 from `/assets/de440/<de440 sha16>/<i>` (usually one; 8 144 B, through `Blocks` →
+  BlockStore; both immutable, so a returning browser fetches neither). It recomputes the embedded position (31 fields),
+  track (every sample) and day (every event) and takes over only if all agree (1e-9°, 1e-6 km, 1 ms); otherwise it stays on
+  the API (the 5 s `/v1/position` poll) and Under the hood says why. Then it computes every second (on the second of the
+  corrected clock; nothing while hidden) and on every scrub frame: no API calls after load but weather (60 s) and `/rum`.
+  Mark `ephem:core`; RUM `core-takeover`; `window.__compute` = { ready, parity, ms, frames, err, blocks }.
+- **Clock:** the head carries the server's `Date.now()` (`SKY.now`); offset = it − the midpoint of Navigation Timing's
+  requestStart…responseStart, ± half that window. The page shows corrected time; above 3 s (and above the ±) the header
+  says `CLOCK −N S`. Under the hood shows the offset and its ±.
+- **Scrubbing:** a horizontal drag (or tap, or ←/→, shift for an hour) on the timeline moves the sky through its window (now − 3 h … now + 21 h, from every local day it touches; sunrise, solar noon, sunset, moonrise and moonset nodes, those within 16 px merged into one; Sun labels above the line, Moon below);
+  `touch-action: pan-y` keeps vertical swipes scrolling. One rAF frame per move: position + chart + readouts. While
+  scrubbed the hero says `NOT LIVE · 18:20:00 · IN 3 H 20 MIN` (another day: `NOT LIVE · SUN 1 NOV 03:13:50 · IN 17 H 53
+  MIN`; past: `2 H AGO`), the status dot is amber, an amber cursor sits on the strip, and BACK TO NOW (the chart's corner;
+  an action, so no live-blue) or Escape returns; letting go within a minute of now returns to live. The NOW bar and the
+  cursor stay inside the gap between the line and the label rows (`mark`; the timeline sweep in test/home.test.ts checks
+  both every 5 px against every label over 1 200 windows). `scrub.ts` measures it.
 - **The chart draws only on change** (data, resize, theme, drag, pointing, fonts; a once-a-second check whether a live
   marker moved half a pixel). No rAF loop. `window.__sky.draws` counts frames.
 - **Chart model (CORE_JS, pure):** `skyModel` (`trackSpan`: one azimuth revolution cut at the seam; `altU`: linear above
@@ -632,6 +654,9 @@ The latest measurement of each, with its version. Older and superseded numbers: 
 | deploy, start → 100% / live verdict | 44 s / 108 s after promotion (no wait for a previous watcher) | 802adee1, ship cc53d9b |
 | canary telemetry gate (early pass) | 22–30 s | 802adee1, b4694777 |
 | homepage, iPhone Fast 3G 4× CPU, cold | TTFB 807, FCP 979, data drawn 1230 ms; 21/21 requests joined; θ 22.2 ± 12.7 ms | b4694777 / ac16823e (mid-deploy), J20261031T044455Z-1xi2 |
+| homepage in-browser compute (local dev, streaming + gzip), iPhone Fast 3G 4× cold, 5 interleaved pairs | data drawn median 890 → 887 ms, FCP 667 → 638, LCP 667 → 662; takeover (`ephem:core`) ~1.6 s cold, ~0.95 s warm; requests in the 60 s after load 18 → 3 (weather, 2 × /rum); `load` 952 → 1 565 ms (the async bundle) | uncommitted, 2026-10-31 |
+| scrubbing, iPhone CPU 4× (scrub.ts) | 89 frames, page work mean 9.5 / max 23.3 ms; rAF p95 16.7 ms, 1 of 215 intervals > 20 ms (33.3) | uncommitted, 2026-10-31 |
+| browser vs server parity | Node: 0 on 4 000 positions + 300 tracks + 300 days (4 902 events); Chrome 156: ≤ 2.3e-13°; Safari not run | sky-core 0c32f42f |
 | remote load, client p50 (enam + weur) | position 8 ms, warm HIT 11 ms, weather 15 ms, cold track 288 ms, cold scan 238 ms | d489af37, L20261031T045109Z-uqz8 |
 | front-door CPU p50 / p99 | `/v1/alignment` 2 / 35, `/v1/day` 2 / 22, `/v1/alignment/search` merge 29 / 39 ms | d489af37, same run |
 | search window Api CPU p50 / p90 / p99 | 52 / 100 / 133 ms (n 70) | d489af37 |

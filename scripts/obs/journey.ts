@@ -210,6 +210,7 @@ const cmarks: CMark[] = [
   ...(lcpEv ? [{ t: rel(lcpEv.ts / 1000), name: "largest contentful paint", kind: "paint", src: "CDP trace: last largestContentfulPaint::Candidate" }] : []),
   ...(tData != null ? [{ t: tData, name: "data drawn (ephem:data)", kind: "data", src: "CDP trace: user timing mark ephem:data (the first sky frame with an answer)" }] : []),
   ...(srcEv ? [{ t: rel(srcEv.ts / 1000), name: srcEv.name, kind: "app", src: "CDP trace: user timing mark " + srcEv.name + " (boot: where the first answers came from)" }] : []),
+  ...trace.filter(e => e.name === "ephem:core" && e.pid === mainPid).slice(0, 1).map(e => ({ t: rel(e.ts / 1000), name: "browser takes over (ephem:core)", kind: "app", src: "CDP trace: user timing mark ephem:core (the page's own compute agreed with the server's first frame and took over)" })),
   ...trace.filter(e => (e.name === "MarkDOMContent" || e.name === "MarkLoad") && e.pid === mainPid && e.args?.data?.isOutermostMainFrame).map(e => ({ t: rel(e.ts / 1000), name: e.name === "MarkLoad" ? "load" : "DOMContentLoaded", kind: "nav", src: "CDP trace: " + e.name })),
 ]
 // Scripted inputs: at the EventDispatch the input caused (a browser event), else at the harness's send time (its own clock,

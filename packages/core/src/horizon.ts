@@ -1,27 +1,14 @@
 // Observer heights (ellipsoid / MSL via EGM96), the sea-horizon dip, the refraction model down to the horizon, and the
 // rise/set threshold. Evidence for every constant: docs/DESIGN.md §7 (ray traces in reference/terrain_sunset).
 import { DEG } from "./linalg.ts"
-import { geoidUndulation } from "./geoid.ts"
 /** Terrestrial refraction coefficient (ray curvature / Earth curvature) and mean Earth radius, shared with /v1/alignment. */
 export const K_TERRESTRIAL = 0.13
 export const R_MEAN_M = 6_371_008.8
 
 // ─────────────── heights ───────────────
 export type HeightRef = "ellipsoid" | "msl"
-export interface ObserverHeights {
-  readonly heightEllipsoid: number   // m above WGS-84
-  readonly heightMsl: number         // m above the EGM96 geoid (≈ mean sea level)
-  readonly geoidUndulation: number   // N, m: heightEllipsoid = heightMsl + N
-  readonly heightRef: HeightRef | "default"   // what the caller gave; "default" = no height: the observer is on the geoid
-}
-/** No height → the observer stands on the geoid (sea level); otherwise the height is in `ref` (default: ellipsoid). */
-export const observerHeights = (lat: number, lon: number, height: number | undefined, ref: HeightRef | undefined): ObserverHeights => {
-  const N = geoidUndulation(lat, lon)
-  if (height === undefined) return { heightEllipsoid: N, heightMsl: 0, geoidUndulation: N, heightRef: "default" }
-  return (ref ?? "ellipsoid") === "msl"
-    ? { heightEllipsoid: height + N, heightMsl: height, geoidUndulation: N, heightRef: "msl" }
-    : { heightEllipsoid: height, heightMsl: height - N, geoidUndulation: N, heightRef: "ellipsoid" }
-}
+// observerHeights (ellipsoid / MSL through the EGM96 geoid) lives in geoid.ts: this file (refraction, dip) stays free of the
+// geoid, so the browser's bundle of position/track/day (src/sky-core.ts in the worker) carries no geoid code or manifest.
 
 // ─────────────── dip of the sea horizon ───────────────
 /** Apparent dip of the sea horizon (degrees, ≥ 0) for an eye `hMsl` metres above sea level, in the same terrestrial-refraction

@@ -7,6 +7,7 @@
 // is their manifest) and reach core through an injected band source. The Worker prefetches the ≤ 2 bands a lookup needs
 // (geoidBandsFor) before the pure computation runs; tests and the dev server inject the bundled grid (geoid-bundled.ts).
 import { EGM96_BANDS } from "./egm96-bands.ts"
+import type { HeightRef } from "./horizon.ts"
 
 export const GEOID = {
   model: "EGM96",
@@ -60,4 +61,20 @@ export const geoidUndulation = (lat: number, lon: number): number => {
   const fy = y - i, fx = x - Math.floor(x)
   const at = (r: number, c: number) => band(Math.floor(r / bandRows))[(r % bandRows) * cols + c]! / 100
   return at(i, j) * (1 - fy) * (1 - fx) + at(i, j1) * (1 - fy) * fx + at(i + 1, j) * fy * (1 - fx) + at(i + 1, j1) * fy * fx
+}
+
+// ─────────────── observer heights ───────────────
+export interface ObserverHeights {
+  readonly heightEllipsoid: number   // m above WGS-84
+  readonly heightMsl: number         // m above the EGM96 geoid (≈ mean sea level)
+  readonly geoidUndulation: number   // N, m: heightEllipsoid = heightMsl + N
+  readonly heightRef: HeightRef | "default"   // what the caller gave; "default" = no height: the observer is on the geoid
+}
+/** No height → the observer stands on the geoid (sea level); otherwise the height is in `ref` (default: ellipsoid). */
+export const observerHeights = (lat: number, lon: number, height: number | undefined, ref: HeightRef | undefined): ObserverHeights => {
+  const N = geoidUndulation(lat, lon)
+  if (height === undefined) return { heightEllipsoid: N, heightMsl: 0, geoidUndulation: N, heightRef: "default" }
+  return (ref ?? "ellipsoid") === "msl"
+    ? { heightEllipsoid: height + N, heightMsl: height, geoidUndulation: N, heightRef: "msl" }
+    : { heightEllipsoid: height, heightMsl: height - N, geoidUndulation: N, heightRef: "ellipsoid" }
 }

@@ -2,6 +2,7 @@
 // cross-check harness exercises the exact R2 byte-range path without Cloudflare.
 //   node --experimental-strip-types packages/worker/src/dev.ts [port]
 import { createServer } from "node:http"
+import { constants as zlib, createGzip } from "node:zlib"
 import { open } from "node:fs/promises"
 import { resolve } from "node:path"
 import { DE440, setGeoidSource } from "@ephem/core"
@@ -26,6 +27,14 @@ createServer(async (req, res) => {
   const chunks: Buffer[] = []; for await (const c of req) chunks.push(c as Buffer)   // POST bodies (/mcp, /v1/alignment/search)
   const method = req.method ?? "GET", body = method === "GET" || method === "HEAD" ? undefined : Buffer.concat(chunks)
   const r = await handler(new Request(`http://127.0.0.1:${port}${req.url ?? "/"}`, { method, headers: req.headers as Record<string, string>, ...(body ? { body } : {}) }))
-  res.writeHead(r.status, Object.fromEntries(r.headers))
-  res.end(Buffer.from(await r.arrayBuffer()))
+  // As Cloudflare does: the body streams chunk by chunk (the homepage flushes its head first), gzip-compressed for text when the
+  // browser accepts it, each chunk flushed at once (Z_SYNC_FLUSH), so local journeys see production's bytes and chunking.
+  const h = Object.fromEntries(r.headers), gz = /\bgzip\b/.test(String(req.headers["accept-encoding"] ?? "")) && /^(text\/|application\/(json|javascript))/.test(h["content-type"] ?? "")
+  if (gz) { h["content-encoding"] = "gzip"; delete h["content-length"] }
+  res.writeHead(r.status, h)
+  if (!r.body || method === "HEAD") { res.end(); return }
+  const out = gz ? createGzip({ flush: zlib.Z_SYNC_FLUSH }) : undefined
+  if (out) out.pipe(res)
+  for await (const c of r.body) (out ?? res).write(c)
+  ;(out ?? res).end()
 }).listen(port, "127.0.0.1", () => console.log(`ephem dev server on http://127.0.0.1:${port} (DE440 from ${FILE})`))

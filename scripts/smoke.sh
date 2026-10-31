@@ -61,7 +61,13 @@ chk_one() {
 # chk <chk_one args>: one check as a background job (its name joins ORDER, the print order). Check lines stay `chk …`.
 ORDER=()
 chk() { want "$1" || return 0; ORDER+=("$1"); chk_one "$@" & }
-chk home 200 "/"
+# The homepage's in-browser compute (src/sky-assets.ts): the page names this commit's bundle, which is served (immutable) with
+# __ephemCore in it, and a DE440 block (8 144 B, through Blocks → BlockStore); a block past the file is a 404.
+SKY16=$(sed -n 's/^export const SKY_CORE_SHA256 = "\([0-9a-f]\{16\}\).*/\1/p' "$(dirname "$0")/../packages/worker/src/sky-core.generated.ts")
+chk home 200 "/" "/assets/$SKY16/ephem-sky.js"
+chk sky-core 200 "/assets/$SKY16/ephem-sky.js" "__ephemCore"
+chk de440-block 200 "/assets/de440/29915576d0a65557/5442"
+chk de440-block-404 404 "/assets/de440/29915576d0a65557/12556" "no block"
 chk page-trace 200 "/?lat=40.7&lon=-74&tz=America/New_York" '<meta name="traceparent" content="00-'   # document trace context (src/clienttrace.ts)
 RT=$(openssl rand -hex 16); RS=$(openssl rand -hex 8)
 chk rum 204 "/rum" "" '{"tp":"00-'"$RT"'-'"$RS"'-01","page":"/","seq":0,"s":[{"k":"app","n":"smoke","sid":"'"$RS"'","t":0}]}'   # RUM ingest (src/rum.ts), stored synthetic

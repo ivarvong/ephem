@@ -39,8 +39,12 @@ describe("home: who is the sky for", () => {
   it("the client script parses (it lives in a template literal: a stray \\n or ${ breaks it silently)", () => {
     const html = page(V)
     const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]!)
-    expect(scripts.length).toBe(2)
+    expect(scripts.length).toBe(3)   // LOC/SKY, the head's page script, LATE_JS (the browser takeover and scrubbing)
     for (const js of scripts) expect(() => new Function(js)).not.toThrow()
+    // the two parts share the global scope: together they parse, and no top-level function is declared twice
+    expect(() => new Function(scripts[1]! + "\n" + scripts[2]!)).not.toThrow()
+    const fns = (js: string) => [...js.matchAll(/^function ([A-Za-z_$][\w$]*)/gm)].map(m => m[1]!)
+    const head = new Set(fns(scripts[1]!)); for (const f of fns(scripts[2]!)) expect(head.has(f), `${f} in both parts`).toBe(false)
     expect(html).toContain('id="wx"'); expect(html).toContain("/v1/weather"); expect(html).toContain("/v1/magnetic")
   })
   it("keeps precision behind one collapsed Under the hood section", () => {
@@ -369,7 +373,7 @@ describe("home: the chart in every sky state", () => {
     skyModel(st: object): { lines: Record<string, { xs: number[]; ys: number[]; split: number }>; items: object[]; hard: Rect[]; segs: number[][]; bounds: { x0: number; y0: number; x1: number; y1: number }; g: { W: number; top: number; ky: number } }
     layoutLabels(items: object[], hard: Rect[], segs: number[][], b: object, pad: number): Array<Rect & { dropped?: boolean; crossed?: boolean }>
     chartCenter(lat: number, azs: number[]): number; overlapArea(a: Rect, b: Rect): number; segHitsRect(s: number[], r: Rect): boolean; altOf(b: object): number; chartAlt(h: number): number
-    timelineLayout(evs: object[], sun: object[], s0: number, span: number, w: number, now: number, next: object | null, name: (e: { kind: string }) => string, time: (t: number) => string, meas: (t: string, k: string) => number): { mid: number; labels: Rect[]; leaders: number[][]; nodes: object[] }
+    timelineLayout(evs: object[], sun: object[], s0: number, span: number, w: number, now: number, next: object | null, name: (e: { kind: string }) => string, time: (t: number) => string, meas: (t: string, k: string) => number): { mid: number; labels: Rect[]; leaders: number[][]; nodes: Array<{ x: number }> }
   }
   const STATES: Array<[string, number, number, string]> = [
     ["nyc day, Moon up", 40.7128, -74.006, "2026-10-30T14:00:00Z"], ["nyc day, Moon down", 40.7128, -74.006, "2026-10-30T19:00:00Z"],
@@ -396,7 +400,7 @@ describe("home: the chart in every sky state", () => {
     // the timeline: labels in one row above and one below, never overlapping; no leader crosses any label
     const tz = name.startsWith("Tromsø") ? "Europe/Oslo" : name.startsWith("Sydney") ? "Australia/Sydney" : name.startsWith("Singapore") ? "Asia/Singapore" : "America/New_York"
     const date = new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(now)), day = await get(`/v1/day?lat=${lat}&lon=${lon}&date=${date}&tz=${encodeURIComponent(tz)}`)
-    const ds = Date.parse(day.start), dspan = Date.parse(day.end) - ds
+    const ds = now - 3 * 3600e3, dspan = 24 * 3600e3   // the page's window: now − 3 h … now + 21 h
     const sunS: Array<{ t: number; alt: number }> = []; for (let i = 0; i < tr.count; i++) { const t = s0 + i * tr.stepSeconds * 1000; if (t >= ds - 12e5 && t <= ds + dspan + 12e5) sunS.push({ t, alt: tr.sun.altitude[i] }) }
     const evs = day.events.map((e: { body: string; kind: string; time: string }) => ({ body: e.body, kind: e.kind, t: Date.parse(e.time) }))
     const nx = evs.filter((e: { t: number }) => e.t > now)[0] ?? null
@@ -450,4 +454,61 @@ describe("home: the chart in every sky state", () => {
       }
     }
   })
+})
+
+// The mission timeline over many places and dates, from core's own day events (the full local DE440 file when present):
+// at 390 and 375 px (and desktop), no two nodes closer than their size plus a gap, no two labels overlapping (8 px apart in
+// a row), every label inside the strip, Sun labels above the line and Moon labels below unless that row had no room.
+describe("home: the timeline never overlaps (bounding boxes, 400 windows, markers every 5 px)", async () => {
+  const { readFileSync: rf, existsSync } = await import("node:fs")
+  const { DE440, day, track } = await import("@ephem/core")
+  const { diskBlocks } = await import("../../core/test/helpers/blocks.ts")
+  const FILE = resolve(__dirname, "../../../data/jpl", DE440.file), whole = existsSync(FILE) ? rf(FILE) : undefined
+  const memo = new Map<number, ArrayBuffer>()   // one ArrayBuffer per block: core caches its coefficients per buffer
+  const src = (i: number) => { let b = memo.get(i); if (!b) { b = whole ? whole.buffer.slice(whole.byteOffset + (2 + i) * DE440.recBytes, whole.byteOffset + (3 + i) * DE440.recBytes) as ArrayBuffer : diskBlocks(i); memo.set(i, b) } return b }
+  const tl = new Function(CORE_JS + "; return { timelineLayout, overlapArea }")() as {
+    timelineLayout(...a: unknown[]): { mid: number; mark: number; labels: Array<Rect & { body: string }>; nodes: Array<{ x: number; bodies: string[] }> }; overlapArea(a: Rect, b: Rect): number }
+  const NAMES: Record<string, string> = { rise: "RISE", set: "SET", transit: "SOLAR NOON" }
+  let seed = 7; const r = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647 }
+  const zones = ["America/New_York", "Europe/Oslo", "Australia/Sydney", "Asia/Singapore", "Pacific/Auckland", "America/Anchorage", "UTC"]
+  it("390, 375 and 1100 px", () => {
+    let windows = 0, merged = 0, other = 0, markers = 0
+    for (let n = 0; n < 400; n++) {
+      const lat = -66 + 132 * r(), lon = -180 + 360 * r(), tz = zones[n % zones.length]!
+      const now = Date.parse("2026-01-01T00:00:00Z") + Math.floor(r() * 365 * 864e5), s0 = now - 3 * 3600e3, span = 24 * 3600e3
+      const geo = { lat, lon, height: 0 }, evs: Array<{ body: string; kind: string; t: number }> = []
+      for (let d = -1; d <= 1; d++) {
+        const date = new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(now + d * 864e5))
+        for (const e of day(src, { date, tz, geo, limb: "upper" }).events) if (!evs.some(x => x.kind === e.kind && x.body === e.body && x.t === Date.parse(e.time))) evs.push({ body: e.body, kind: e.kind, t: Date.parse(e.time) })
+      }
+      const tr = track(src, { startMs: Math.floor(s0 / 12e5) * 12e5, endMs: Math.ceil((s0 + span) / 12e5) * 12e5, stepMs: 12e5, geo, temperature: 10, pressure: 1010, horizon: 0 })
+      const sun = tr.sun.altitude.map((alt, i) => ({ t: Math.floor(s0 / 12e5) * 12e5 + i * 12e5, alt }))
+      const nx = evs.filter(e => e.t > now).toSorted((a, b) => a.t - b.t)[0] ?? null
+      for (const [w, k] of [[358, 1], [343, 1], [1100, 1.25]] as const) {
+        const L = tl.timelineLayout(evs, sun, s0, span, w, now, nx, (e: { body: string; kind: string }) => (e.body === "moon" ? "MOON" : "SUN") + (NAMES[e.kind] ?? e.kind.toUpperCase()),
+          (t: number) => new Date(t).toISOString().slice(11, 16), (t: string, kind: string) => Math.ceil(t.length * (kind === "name" ? 6.4 : 6.6) * k) + 4, k)
+        windows++
+        const where = `${lat.toFixed(2)},${lon.toFixed(2)} ${new Date(now).toISOString()} ${w}px`
+        const xs = L.nodes.map(nd => nd.x).toSorted((a, b) => a - b)
+        for (let i = 1; i < xs.length; i++) expect(xs[i]! - xs[i - 1]!, `${where}: nodes ${i - 1}, ${i}`).toBeGreaterThanOrEqual(16 * k - 0.01)
+        merged += L.nodes.filter(nd => nd.bodies.length > 1).length
+        for (let i = 0; i < L.labels.length; i++) {
+          const a = L.labels[i]!
+          expect(a.x, where).toBeGreaterThanOrEqual(0); expect(a.x + a.w, where).toBeLessThanOrEqual(w)
+          for (let j = i + 1; j < L.labels.length; j++) expect(tl.overlapArea({ ...a, x: a.x - 4, w: a.w + 8 }, L.labels[j]!), `${where}: labels ${i} x ${j}`).toBe(0)
+          if ((a.body === "moon") !== (a.y > L.mid)) other++
+        }
+        // the NOW bar and the scrub cursor (5 px wide with their page-coloured edge, mark px each side of the line) at every
+        // position along the strip: never on a label
+        for (let x = 0; x <= w; x += 5) {
+          const bar = { x: x - 2.5, y: L.mid - L.mark, w: 5, h: 2 * L.mark }
+          for (const a of L.labels) if (tl.overlapArea(bar, a) > 0) expect.fail(`${where}: a marker at x ${x} on label "${(a as { name?: string }).name}"`)
+        }
+        markers += 1
+      }
+    }
+    expect(windows).toBe(1200)
+    expect(markers).toBe(1200)
+    console.log(`timeline sweep: ${windows} windows, ${merged} merged nodes, ${other} labels in their other row; NOW bar and scrub cursor checked every 5 px in each`)
+  }, 120_000)
 })

@@ -5,9 +5,9 @@ import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { createHash } from "node:crypto"
 import { EGM96_BANDS } from "../src/egm96-bands.ts"
-import { GEOID, decodeGeoidBand, geoidBandsDecoded, geoidBandsFor, geoidUndulation, setGeoidSource } from "../src/geoid.ts"
+import { GEOID, decodeGeoidBand, geoidBandsDecoded, geoidBandsFor, geoidUndulation, observerHeights, setGeoidSource } from "../src/geoid.ts"
 import { bundledGeoidBand, bundledGeoidObject } from "../src/geoid-bundled.ts"
-import { observerHeights, seaDip } from "../src/horizon.ts"
+import { seaDip } from "../src/horizon.ts"
 
 const fx = JSON.parse(readFileSync(resolve(__dirname, "fixtures/geoid/egm96.json"), "utf8")) as { nodes30: number[][]; ngaTestPoints: number[][]; bilinear15: number[][] }
 

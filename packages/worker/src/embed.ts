@@ -39,12 +39,12 @@ export const jsonScript = (id: string, json: string): string =>
  *  parsed without waiting (the homepage sends its inline font after the answers that boot it). */
 export const FLUSH = "<!--flush-->"
 
-/** The inline <script> and <style> blocks of a head without comment lines and indentation (the homepage's 98 KB head → ~60).
- *  Only whole lines that start with // are dropped from scripts (no string in them spans lines), and block comments from
- *  styles; JSON scripts and markup are untouched. */
+/** The inline <script> and <style> blocks of a head without comments and indentation (the homepage's 98 KB head → ~60).
+ *  From scripts: whole lines that start with //, and a trailing "  // …" right after ; { } ) , or [ (no string in the page's
+ *  scripts spans lines or holds that pattern); from styles, block comments. JSON scripts and markup are untouched. */
 export const minifyInline = (h: string): string =>
   h.replace(/(<script>)([\s\S]*?)(<\/script>)|(<style>)([\s\S]*?)(<\/style>)/g, (_m, a, js, b, c, css, d) => js != null
-    ? a + js.split("\n").map((l: string) => l.trim()).filter((l: string) => l && !l.startsWith("//")).join("\n") + b
+    ? a + js.split("\n").map((l: string) => l.trim().replace(/([;{}),[])\s+\/\/ .*$/, "$1")).filter((l: string) => l && !l.startsWith("//")).join("\n") + b
     : c + css.replace(/\/\*[\s\S]*?\*\//g, "").split("\n").map((l: string) => l.trim()).filter(Boolean).join("\n") + d)
 
 /** A streamed HTML response: `head` (minified) is sent at once, `tail` when it has run (forked now, so it starts at once

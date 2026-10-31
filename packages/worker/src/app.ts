@@ -11,6 +11,7 @@ import { GeoidInstalled, type Geoid } from "./geoid.ts"
 import { TracerLive } from "./trace.ts"
 import { Gateway, type Role } from "./responses.ts"
 import { Home } from "./home.ts"
+import { SkyAssets } from "./sky-assets.ts"
 import { WeatherNone, type Weather } from "./weather.ts"
 import { Mcp } from "./mcp.ts"
 import { SCALAR_HTML, docsHtml, llmsTxt } from "./docs.ts"
@@ -34,6 +35,7 @@ export const makeApp = (blocks: Layer.Layer<Blocks>, edge: Role = { role: "local
   provideApp(Layer.mergeAll(
     HttpApiBuilder.layer(EphemApi, { openapiPath: "/openapi.json" }),
     Home,
+    SkyAssets,   // /assets/<sha16>/ephem-sky.js and /assets/de440/<sha16>/<i>: the page's in-browser compute (src/sky-assets.ts)
     Rum,   // POST /rum: browser RUM batches → Basin ephem_rum (src/rum.ts)
     Docs,
     RequestLogging,   // first global middleware = outermost: it sees every request, including those Gateway forwards

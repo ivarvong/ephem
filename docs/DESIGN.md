@@ -433,6 +433,21 @@ gap p50 117 → 99 ms, first-request CPU unchanged (lab notebook ephem-telemetry
 blocks range-read from a local copy of the DE440 file (`data/jpl/`) with the same `makeBlocks` and the same offsets
 as R2; this is what the cross-check harness targets.
 
+**The homepage computes in the browser after the server's first frame (2026-10-31; ivar: "Try it. But initial server render
+too right").** `/` still streams the API's own answers for the first frame (src/embed.ts). The page then loads
+`/assets/<sha16>/ephem-sky.js`, @ephem/core's `position`, `track` and `day` bundled by esbuild from
+`packages/core/src/browser.ts` (15.0 KB, 6.9 KB gzip; no geoid code or manifest, WMM, search or alignment: `observerHeights`
+moved from horizon.ts to geoid.ts for this), and the DE440 blocks it needs from `/assets/de440/<de440 sha16>/<i>` (the
+`Blocks` service: isolate LRU → BlockStore → Workers Caching → R2). Both are content-addressed and immutable and are not
+part of `/v1`: they are the page's implementation, not a question anyone asks. The observer comes from the embedded
+answer itself (lat, lon, ellipsoid height = the geoid N as a number, refraction temperature and pressure, horizon
+altitude), so the browser needs no geoid. Before it takes over, the page recomputes the server's position (31 fields),
+track (every sample) and day (every event) at the server's instant and inputs and requires agreement within 1e-9° /
+1e-6 km / 1 ms; otherwise it stays on the API. The gate runs the same bundle against the server path on 4 000 + 300 + 300
+random cases from 1900 to 2150 (test/sky-core.test.ts; Node: bit-identical) and requires the generated bundle to be fresh;
+headless Chrome 156 differs in the last bits only (≤ 2.3e-13°, scripts/obs/sky-parity-chrome.ts). JavaScriptCore (Safari)
+has not been run. The page's clock is the server's (offset from Navigation Timing, ± half the request window).
+
 ### 12.0 One Worker: front door and cache-enabled entrypoints (decided by A/B, 2026-10-30)
 
 ```
