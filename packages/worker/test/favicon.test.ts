@@ -7,7 +7,11 @@ const V = { lat: 1, lon: 2, place: "x", city: "x", tz: "UTC", colo: null, source
 
 describe("favicon: zero requests from our pages, a tiny immutable /favicon.ico for everyone else", () => {
   it("every HTML page inlines the icon as a data URI (so the browser never asks for /favicon.ico)", async () => {
-    for (const html of [await renderHomeStatic({ v: V, blocks: "/b/", now: 0 }), renderDocs(docsContent()), renderScalar()]) {
+    for (const html of [
+      await renderHomeStatic({ v: V, blocks: "/b/", now: 0 }),
+      renderDocs(docsContent()),
+      renderScalar(),
+    ]) {
       expect(html).toContain(`<link rel="icon" type="image/svg+xml" href="${ICON_HREF}"/>`)
       expect(html.match(/<link rel="icon"/g)).toHaveLength(1)
     }

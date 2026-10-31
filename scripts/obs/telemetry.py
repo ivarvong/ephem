@@ -1,5 +1,10 @@
 """Shared helper: run a Workers Observability query through the cf CLI and return the parsed JSON."""
-import json, os, subprocess, threading, time
+
+import json
+import os
+import subprocess
+import threading
+import time
 
 # The Worker queried (EPHEM_SERVICE overrides; every entrypoint of ephem is in it).
 SERVICE = os.environ.get("EPHEM_SERVICE", "ephem")
@@ -8,18 +13,42 @@ SERVICE = os.environ.get("EPHEM_SERVICE", "ephem")
 _SEM = threading.BoundedSemaphore(int(os.environ.get("EPHEM_O11Y_CONCURRENCY", "6")))
 
 
-def query(view: str, minutes: float, filters: list | None = None, limit: int = 1000, extra: dict | None = None, window: tuple[int, int] | None = None, service: str | None = None) -> dict:
+def query(
+    view: str,
+    minutes: float,
+    filters: list | None = None,
+    limit: int = 1000,
+    extra: dict | None = None,
+    window: tuple[int, int] | None = None,
+    service: str | None = None,
+) -> dict:
     """window: absolute (from_ms, to_ms); overrides minutes. service: overrides SERVICE for this call (thread-safe)."""
     now = int(time.time() * 1000)
-    params = {"filters": [{"key": "$metadata.service", "operation": "eq", "type": "string", "value": service or SERVICE}, *(filters or [])]}
+    params = {
+        "filters": [
+            {"key": "$metadata.service", "operation": "eq", "type": "string", "value": service or SERVICE},
+            *(filters or []),
+        ]
+    }
     params.update(extra or {})
-    body = {"queryId": "adhoc", "timeframe": {"from": window[0], "to": window[1]} if window else {"from": now - int(minutes * 60_000), "to": now}, "view": view, "limit": limit, "parameters": params}
+    body = {
+        "queryId": "adhoc",
+        "timeframe": {"from": window[0], "to": window[1]}
+        if window
+        else {"from": now - int(minutes * 60_000), "to": now},
+        "view": view,
+        "limit": limit,
+        "parameters": params,
+    }
     # 3 attempts: a transient API 500 ("[10500] Internal authentication error") failed a live gate and rolled back a good
     # version (53b208a8, 2026-10-31). Still fails closed after the last attempt.
     for attempt in range(3):
         with _SEM:
-            out = subprocess.run(["cf", "o11y", "telemetry", "query", "--body", json.dumps(body)], capture_output=True, text=True)
-        if out.returncode == 0: break
+            out = subprocess.run(
+                ["cf", "o11y", "telemetry", "query", "--body", json.dumps(body)], capture_output=True, text=True
+            )
+        if out.returncode == 0:
+            break
         time.sleep(1 + 2 * attempt)
     if out.returncode != 0:
         raise SystemExit(f"cf o11y telemetry query failed (3 attempts):\n{out.stderr or out.stdout}")
@@ -34,41 +63,64 @@ def starts(key: str, value: str) -> dict:
     return {"key": key, "operation": "starts_with", "type": "string", "value": value}
 
 
-def events(minutes: float, filters: list | None = None, limit: int = 1000, window: tuple[int, int] | None = None, service: str | None = None) -> list[dict]:
+def events(
+    minutes: float,
+    filters: list | None = None,
+    limit: int = 1000,
+    window: tuple[int, int] | None = None,
+    service: str | None = None,
+) -> list[dict]:
     return query("events", minutes, filters, limit, window=window, service=service).get("events", {}).get("events", [])
 
 
-def events_all(filters: list, window: tuple[int, int], step: int = 60_000, workers: int = 8, service: str | None = None) -> list[dict]:
+def events_all(
+    filters: list, window: tuple[int, int], step: int = 60_000, workers: int = 8, service: str | None = None
+) -> list[dict]:
     """Every event in an absolute window: slices of `step` ms queried in parallel, and any slice that hits the view's
     1000-row cap is halved and re-queried, so busy windows are never silently truncated. Deduplicated by the whole $metadata
     (slice edges can repeat an event). Never by $metadata.id: distinct events share ids (78 rows, 67 ids for 78 distinct
     rays, 2026-10-30), and deduplicating by it dropped 14-24% of events."""
+
     def pmap(ws: list) -> list:
-        res: list = [None] * len(ws); nxt = iter(range(len(ws))); lock = threading.Lock(); err: list = [None]
+        res: list = [None] * len(ws)
+        nxt = iter(range(len(ws)))
+        lock = threading.Lock()
+        err: list = [None]
+
         def run() -> None:
             while True:
                 with lock:
                     i = next(nxt, None)
                 if i is None:
                     return
-                for k in range(6):   # the o11y API rate-limits bursts (429 [971]): retry with backoff, then fail loudly
+                for k in range(6):  # the o11y API rate-limits bursts (429 [971]): retry with backoff, then fail loudly
                     try:
-                        res[i] = events(0, filters, window=ws[i], service=service); break
+                        res[i] = events(0, filters, window=ws[i], service=service)
+                        break
                     except SystemExit as e:
-                        err[0] = e; time.sleep(2 * 2 ** k)
+                        err[0] = e
+                        time.sleep(2 * 2**k)
+
         th = [threading.Thread(target=run) for _ in range(min(workers, len(ws)))]
-        [t.start() for t in th]; [t.join() for t in th]
-        if any(r is None for r in res):   # never a partial result (a failed slice used to vanish into a TypeError)
+        [t.start() for t in th]
+        [t.join() for t in th]
+        if any(r is None for r in res):  # never a partial result (a failed slice used to vanish into a TypeError)
             raise SystemExit(f"events_all: {sum(r is None for r in res)} slices failed after retries: {err[0]}")
         return res
+
     out, seen, todo = [], set(), [(t, min(window[1], t + step)) for t in range(window[0], window[1], step)]
     while todo:
         batch, todo = todo, []
         for (a, b), ev in zip(batch, pmap(batch)):
             if len(ev) >= 1000 and b - a > 50:
-                m = (a + b) // 2; todo += [(a, m), (m, b)]; continue
+                m = (a + b) // 2
+                todo += [(a, m), (m, b)]
+                continue
             for e in ev:
-                i = json.dumps(e.get("$metadata", {}), sort_keys=True)   # NOT $metadata.id: it is not unique (gotcha, 2026-10-30)
+                i = json.dumps(
+                    e.get("$metadata", {}), sort_keys=True
+                )  # NOT $metadata.id: it is not unique (gotcha, 2026-10-30)
                 if i not in seen:
-                    seen.add(i); out.append(e)
+                    seen.add(i)
+                    out.append(e)
     return out

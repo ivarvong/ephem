@@ -1,4 +1,4 @@
-# Prettier formats TS, TSX, JS, CSS, JSON, YAML and Markdown (npm run format; the gate runs npm run format:check).
+# Prettier formats TS, TSX, JS, CSS, JSON and YAML (npm run format; the gate runs npm run format:check).
 # Not formatted: generated, vendored, recorded or byte-compared files.
 node_modules/
 package-lock.json
@@ -11,9 +11,16 @@ profiles/
 load-runs/
 .claude/
 *.html
-# generated (scripts/obs/basin.py types, scripts/og, scripts/openapi.ts)
+# Markdown: prettier pads every table column to its widest cell (docs/API.md: 51 lines over 300 chars instead of 1,
+# rows up to 533); no option turns that off. Prose stays hand-wrapped at 120-130.
+*.md
+# generated: written by a script, so the script's output stays the committed bytes
 *.generated.ts
 reference/openapi.json
+packages/core/src/egm96-grid.ts
+packages/core/src/egm96-bands.ts
+packages/web/src/lib/din-metrics.ts
+packages/worker/src/din.ts
 # recorded data, fixtures and golden answers
 **/fixtures/
 packages/worker/test/golden/

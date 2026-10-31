@@ -12,25 +12,42 @@
 // (cpuTimeMs), joined by trace id / ray. Values are only span attributes we set (cache statuses, counts) and hex ids.
 import type * as Tracer from "effect/Tracer"
 
-const durMs = (sp: Tracer.Span) => sp.status._tag === "Ended" ? Number(sp.status.endTime - sp.status.startTime) / 1e6 : undefined
+const durMs = (sp: Tracer.Span) =>
+  sp.status._tag === "Ended" ? Number(sp.status.endTime - sp.status.startTime) / 1e6 : undefined
 const q = (s: string) => `"${s.replace(/[^A-Za-z0-9 :,=._/-]/g, "").slice(0, 64)}"`
 const entry = (name: string, desc: string | undefined, dur: number | undefined) =>
   name + (desc ? `;desc=${q(desc)}` : "") + (dur !== undefined && Number.isFinite(dur) ? `;dur=${dur.toFixed(1)}` : "")
 
 export const serverTimingEntries = (spans: ReadonlyArray<Tracer.Span>, trace?: string, apiFresh?: string): string[] => {
   const out: string[] = []
-  const first = (name: string) => spans.find(s => s.name === name)
-  const str = (s: Tracer.Span | undefined, k: string) => { const v = s?.attributes.get(k); return typeof v === "string" && v ? v : undefined }
+  const first = (name: string) => spans.find((s) => s.name === name)
+  const str = (s: Tracer.Span | undefined, k: string) => {
+    const v = s?.attributes.get(k)
+    return typeof v === "string" && v ? v : undefined
+  }
   const api = first("api.fetch")
   if (api) out.push(entry("api", str(api, "ephem.api_cache"), durMs(api)))
-  if (apiFresh && /^(api-(blocks|geoid)(;desc="[^"]*")?(;dur=[0-9.]+)?(, )?)+$/.test(apiFresh)) out.push(apiFresh)   // the Api's fresh run (responses.ts)
-  const blocks = spans.filter(s => s.name === "blocks.load")
+  if (apiFresh && /^(api-(blocks|geoid)(;desc="[^"]*")?(;dur=[0-9.]+)?(, )?)+$/.test(apiFresh)) out.push(apiFresh) // the Api's fresh run (responses.ts)
+  const blocks = spans.filter((s) => s.name === "blocks.load")
   if (blocks.length) {
     const n = blocks.reduce((a, s) => a + (Number(s.attributes.get("blocks.count")) || 0), 0)
-    out.push(entry("blocks", `${blocks.map(s => str(s, "ephem.blocks_cache") ?? "?").join(",")} n=${n}`, blocks.reduce((a, s) => a + (durMs(s) ?? 0), 0)))
+    out.push(
+      entry(
+        "blocks",
+        `${blocks.map((s) => str(s, "ephem.blocks_cache") ?? "?").join(",")} n=${n}`,
+        blocks.reduce((a, s) => a + (durMs(s) ?? 0), 0),
+      ),
+    )
   }
-  const geoid = spans.filter(s => s.name === "geoid.load")
-  if (geoid.length) out.push(entry("geoid", geoid.map(s => str(s, "ephem.geoid_cache") ?? "?").join(","), geoid.reduce((a, s) => a + (durMs(s) ?? 0), 0)))
+  const geoid = spans.filter((s) => s.name === "geoid.load")
+  if (geoid.length)
+    out.push(
+      entry(
+        "geoid",
+        geoid.map((s) => str(s, "ephem.geoid_cache") ?? "?").join(","),
+        geoid.reduce((a, s) => a + (durMs(s) ?? 0), 0),
+      ),
+    )
   const feed = first("metar.feed")
   if (feed) out.push(entry("feed", str(feed, "ephem.feed_cache") ?? str(feed, "metar.tier"), durMs(feed)))
   if (trace && /^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$/.test(trace)) out.push(`trace;desc="${trace}"`)

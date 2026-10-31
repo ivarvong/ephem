@@ -22,8 +22,20 @@ export interface Actions {
 }
 const noop = () => {}
 export const NO_ACTIONS: Actions = {
-  goLive: noop, recenter: noop, point: noop, locate: noop, share: noop, hoodToggle: noop, rawToggle: noop, mountSky: noop, mountStrip: noop,
-  stripDown: noop, stripMove: noop, stripEnd: noop, stripCancel: noop, stripKey: noop,
+  goLive: noop,
+  recenter: noop,
+  point: noop,
+  locate: noop,
+  share: noop,
+  hoodToggle: noop,
+  rawToggle: noop,
+  mountSky: noop,
+  mountStrip: noop,
+  stripDown: noop,
+  stripMove: noop,
+  stripEnd: noop,
+  stripCancel: noop,
+  stripKey: noop,
 }
 export const ActionsContext = createContext<Actions>(NO_ACTIONS)
 export const useActions = () => useContext(ActionsContext)

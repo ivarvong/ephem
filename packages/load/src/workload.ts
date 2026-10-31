@@ -70,29 +70,41 @@ export interface RunSpec {
 }
 
 export const measureFrom = (spec: Pick<RunSpec, "startAt" | "warmupS">): number => spec.startAt + spec.warmupS * 1000
-export const endOf = (spec: Pick<RunSpec, "startAt" | "warmupS" | "durationS">): number => measureFrom(spec) + spec.durationS * 1000
+export const endOf = (spec: Pick<RunSpec, "startAt" | "warmupS" | "durationS">): number =>
+  measureFrom(spec) + spec.durationS * 1000
 
 export const RUN_ID = /^[0-9A-Za-z_-]{1,48}$/
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 export const makeRunId = (now: number, rand: () => number): string =>
-  `L${new Date(now).toISOString().replace(/[-:]/g, "").slice(0, 15)}Z-${Math.floor(rand() * 36 ** 4).toString(36).padStart(4, "0")}`
+  `L${new Date(now).toISOString().replace(/[-:]/g, "").slice(0, 15)}Z-${Math.floor(rand() * 36 ** 4)
+    .toString(36)
+    .padStart(4, "0")}`
 
 /** Σ weights, and the scan share of the rate. */
 const total = (mix: Mix): number => KINDS.reduce((s, k) => s + (mix[k] ?? 0), 0)
-export const searchRate = (spec: Pick<RunSpec, "mix" | "rate">): number => (spec.rate * (spec.mix.search ?? 0)) / total(spec.mix)
+export const searchRate = (spec: Pick<RunSpec, "mix" | "rate">): number =>
+  (spec.rate * (spec.mix.search ?? 0)) / total(spec.mix)
 
 const fail = (reason: string) => ({ ok: false as const, reason })
 
 /** Validates an untrusted POST /run body. Every limit above is checked here; the Worker refuses anything else. */
-export const validate = (body: unknown, now: number, rand: () => number): { ok: true; spec: RunSpec } | { ok: false; reason: string } => {
+export const validate = (
+  body: unknown,
+  now: number,
+  rand: () => number,
+): { ok: true; spec: RunSpec } | { ok: false; reason: string } => {
   if (body === null || typeof body !== "object" || Array.isArray(body)) return fail("body must be a JSON object")
   const b = body as Record<string, unknown>
   const known = new Set(["runId", "mode", "mix", "rate", "duration", "warmup", "regions", "seed", "pin", "shards"])
-  const extra = Object.keys(b).filter(k => !known.has(k))
-  if (extra.length) return fail(`unknown field(s) ${extra.join(", ")} (there is no target, host, path or header field: the target is fixed)`)
+  const extra = Object.keys(b).filter((k) => !known.has(k))
+  if (extra.length)
+    return fail(
+      `unknown field(s) ${extra.join(", ")} (there is no target, host, path or header field: the target is fixed)`,
+    )
   const mode = b.mode
-  if (typeof mode !== "string" || !(MODES as readonly string[]).includes(mode)) return fail(`mode must be one of ${MODES.join(", ")}`)
+  if (typeof mode !== "string" || !(MODES as readonly string[]).includes(mode))
+    return fail(`mode must be one of ${MODES.join(", ")}`)
   let mix = mixOf(mode as Mode)
   if (b.mix !== undefined) {
     if (mode !== "mixed") return fail("mix is only for mode mixed")
@@ -100,36 +112,74 @@ export const validate = (body: unknown, now: number, rand: () => number): { ok: 
     const m: Partial<Record<Kind, number>> = {}
     for (const [k, w] of Object.entries(b.mix as Record<string, unknown>)) {
       if (!(KINDS as readonly string[]).includes(k)) return fail(`mix kind ${k} is not one of ${KINDS.join(", ")}`)
-      if (typeof w !== "number" || !Number.isFinite(w) || w < 0 || w > 1000) return fail(`mix weight for ${k} must be 0..1000`)
+      if (typeof w !== "number" || !Number.isFinite(w) || w < 0 || w > 1000)
+        return fail(`mix weight for ${k} must be 0..1000`)
       m[k as Kind] = w
     }
     if (total(m) <= 0) return fail("mix weights sum to 0")
     mix = m
   }
-  const rate = b.rate, duration = b.duration
-  if (typeof rate !== "number" || !Number.isFinite(rate) || rate <= 0) return fail("rate must be a positive number (req/s)")
+  const rate = b.rate,
+    duration = b.duration
+  if (typeof rate !== "number" || !Number.isFinite(rate) || rate <= 0)
+    return fail("rate must be a positive number (req/s)")
   if (rate > LIMITS.maxRate) return fail(`rate ${rate} req/s is over the cap of ${LIMITS.maxRate} req/s`)
-  if (typeof duration !== "number" || !Number.isInteger(duration) || duration < 1) return fail("duration must be a positive integer (s)")
+  if (typeof duration !== "number" || !Number.isInteger(duration) || duration < 1)
+    return fail("duration must be a positive integer (s)")
   if (duration > LIMITS.maxDurationS) return fail(`duration ${duration} s is over the cap of ${LIMITS.maxDurationS} s`)
   const warmup = b.warmup ?? LIMITS.defaultWarmupS
-  if (typeof warmup !== "number" || !Number.isInteger(warmup) || warmup < 0 || warmup > LIMITS.maxWarmupS) return fail(`warmup must be an integer 0..${LIMITS.maxWarmupS} (s)`)
-  if (rate * (duration + warmup) > LIMITS.maxRequestsPerRun) return fail(`rate x (warmup + duration) = ${Math.round(rate * (duration + warmup))} requests is over the per-run cap of ${LIMITS.maxRequestsPerRun}`)
+  if (typeof warmup !== "number" || !Number.isInteger(warmup) || warmup < 0 || warmup > LIMITS.maxWarmupS)
+    return fail(`warmup must be an integer 0..${LIMITS.maxWarmupS} (s)`)
+  if (rate * (duration + warmup) > LIMITS.maxRequestsPerRun)
+    return fail(
+      `rate x (warmup + duration) = ${Math.round(rate * (duration + warmup))} requests is over the per-run cap of ${LIMITS.maxRequestsPerRun}`,
+    )
   const sr = searchRate({ mix, rate })
-  if (sr > LIMITS.maxSearchRate + 1e-9) return fail(`scan rate ${sr.toFixed(2)}/s is over the cap of ${LIMITS.maxSearchRate}/s (${LIMITS.maxSearchRate * 60}/min); a scan is ~1 s of CPU`)
-  if (!Array.isArray(b.regions) || b.regions.length === 0) return fail(`regions must be a non-empty list of ${REGIONS.join(", ")}`)
+  if (sr > LIMITS.maxSearchRate + 1e-9)
+    return fail(
+      `scan rate ${sr.toFixed(2)}/s is over the cap of ${LIMITS.maxSearchRate}/s (${LIMITS.maxSearchRate * 60}/min); a scan is ~1 s of CPU`,
+    )
+  if (!Array.isArray(b.regions) || b.regions.length === 0)
+    return fail(`regions must be a non-empty list of ${REGIONS.join(", ")}`)
   if (b.regions.length > LIMITS.maxRegions) return fail(`at most ${LIMITS.maxRegions} regions`)
-  for (const r of b.regions) if (typeof r !== "string" || !(REGIONS as readonly string[]).includes(r)) return fail(`region ${String(r)} is not one of ${REGIONS.join(", ")}`)
+  for (const r of b.regions)
+    if (typeof r !== "string" || !(REGIONS as readonly string[]).includes(r))
+      return fail(`region ${String(r)} is not one of ${REGIONS.join(", ")}`)
   if (new Set(b.regions).size !== b.regions.length) return fail("regions repeat")
-  if (rate / b.regions.length > LIMITS.maxRatePerRegion) return fail(`${(rate / b.regions.length).toFixed(1)} req/s per region is over the cap of ${LIMITS.maxRatePerRegion} (${LIMITS.maxShardsPerRegion} shards x ${LIMITS.shardRate}/s): add regions`)
+  if (rate / b.regions.length > LIMITS.maxRatePerRegion)
+    return fail(
+      `${(rate / b.regions.length).toFixed(1)} req/s per region is over the cap of ${LIMITS.maxRatePerRegion} (${LIMITS.maxShardsPerRegion} shards x ${LIMITS.shardRate}/s): add regions`,
+    )
   const shards = b.shards ?? null
-  if (shards !== null && (typeof shards !== "number" || !Number.isInteger(shards) || shards < 1 || shards > LIMITS.maxShardsPerRegion)) return fail(`shards must be an integer 1..${LIMITS.maxShardsPerRegion}`)
+  if (
+    shards !== null &&
+    (typeof shards !== "number" || !Number.isInteger(shards) || shards < 1 || shards > LIMITS.maxShardsPerRegion)
+  )
+    return fail(`shards must be an integer 1..${LIMITS.maxShardsPerRegion}`)
   const seed = b.seed ?? 1
-  if (typeof seed !== "number" || !Number.isInteger(seed) || seed < 0 || seed > 2 ** 31) return fail("seed must be an integer 0..2^31")
+  if (typeof seed !== "number" || !Number.isInteger(seed) || seed < 0 || seed > 2 ** 31)
+    return fail("seed must be an integer 0..2^31")
   const pin = b.pin ?? null
-  if (pin !== null && (typeof pin !== "string" || !UUID.test(pin))) return fail("pin must be a full ephem version id (uuid)")
+  if (pin !== null && (typeof pin !== "string" || !UUID.test(pin)))
+    return fail("pin must be a full ephem version id (uuid)")
   const runId = b.runId ?? makeRunId(now, rand)
   if (typeof runId !== "string" || !RUN_ID.test(runId)) return fail(`runId must match ${RUN_ID}`)
-  return { ok: true, spec: { runId, mode: mode as Mode, mix, rate, durationS: duration, regions: b.regions as Region[], seed, pin, warmupS: warmup, startAt: now + LIMITS.startLeadMs, shards } }
+  return {
+    ok: true,
+    spec: {
+      runId,
+      mode: mode as Mode,
+      mix,
+      rate,
+      durationS: duration,
+      regions: b.regions as Region[],
+      seed,
+      pin,
+      warmupS: warmup,
+      startAt: now + LIMITS.startLeadMs,
+      shards,
+    },
+  }
 }
 
 export interface ShardPlan {
@@ -145,10 +195,21 @@ export interface ShardPlan {
 export const plan = (spec: RunSpec): ShardPlan[] => {
   const perRegion = spec.rate / spec.regions.length
   const scanPerRegion = searchRate(spec) / spec.regions.length
-  const need = Math.max(1, Math.ceil(perRegion / LIMITS.shardRate - 1e-9), Math.ceil(scanPerRegion / LIMITS.shardSearchRate - 1e-9))
+  const need = Math.max(
+    1,
+    Math.ceil(perRegion / LIMITS.shardRate - 1e-9),
+    Math.ceil(scanPerRegion / LIMITS.shardSearchRate - 1e-9),
+  )
   const shards = Math.min(LIMITS.maxShardsPerRegion, Math.max(need, spec.shards ?? 0))
   return spec.regions.flatMap((region, ri) =>
-    Array.from({ length: shards }, (_, shard) => ({ region, shard, shards, rate: perRegion / shards, seed: ((spec.seed * 31 + ri) * 1009 + shard) >>> 0 })))
+    Array.from({ length: shards }, (_, shard) => ({
+      region,
+      shard,
+      shards,
+      rate: perRegion / shards,
+      seed: ((spec.seed * 31 + ri) * 1009 + shard) >>> 0,
+    })),
+  )
 }
 
 /** Seeded PRNG (mulberry32): a run is reproducible from its seed. */
@@ -172,14 +233,19 @@ export const fnv1a = (x: string): number => {
 /** The PRNG for request keys (lat/lon, days, target heights): seeded by the run id too, so the cold workloads' keys are new in
  * every run. With the seed alone, a rerun with the same seed and plan re-sent the last run's keys and they were HITs (validation
  * run L20261030T224511Z-iqf9: track 71% HIT, scans p50 70 ms vs 318 ms the run before). The schedule and kind picks stay on the seed. */
-export const keyRand = (runId: string, shardSeed: number): (() => number) => mulberry32((fnv1a(runId) ^ Math.imul(shardSeed, 0x9e3779b1)) >>> 0)
+export const keyRand = (runId: string, shardSeed: number): (() => number) =>
+  mulberry32((fnv1a(runId) ^ Math.imul(shardSeed, 0x9e3779b1)) >>> 0)
 
 /** Weighted pick of the next request's kind. */
 export const picker = (mix: Mix): ((u: number) => Kind) => {
-  const ks = KINDS.filter(k => (mix[k] ?? 0) > 0), t = total(mix)
-  return u => {
+  const ks = KINDS.filter((k) => (mix[k] ?? 0) > 0),
+    t = total(mix)
+  return (u) => {
     let acc = 0
-    for (const k of ks) { acc += (mix[k] ?? 0) / t; if (u < acc) return k }
+    for (const k of ks) {
+      acc += (mix[k] ?? 0) / t
+      if (u < acc) return k
+    }
     return ks[ks.length - 1]!
   }
 }
@@ -198,7 +264,8 @@ const fx = (x: number, d: number) => x.toFixed(d)
 
 /** 24 deterministic keys (the 2026-10-30 compute-split A/B's warm set): every shard GETs each once before the start, then cycles them (HITs). */
 export const WARM_KEYS: readonly string[] = Array.from({ length: 8 }, (_, i) => {
-  const d = String(i + 1).padStart(2, "0"), e = String(i + 2).padStart(2, "0")
+  const d = String(i + 1).padStart(2, "0"),
+    e = String(i + 2).padStart(2, "0")
   return [
     `/v1/day?lat=40.7&lon=-74&date=2026-11-${d}&tz=America/New_York`,
     `/v1/track?lat=40.7&lon=-74&start=2026-11-${d}T00:00:00Z&end=2026-11-${e}T00:00:00Z`,
@@ -208,7 +275,13 @@ export const WARM_KEYS: readonly string[] = Array.from({ length: 8 }, (_, i) => 
 
 /** load.sh LOAD=weather's land-weighted boxes: [lat0, lat1, lon0, lon1]. */
 const BOXES: ReadonlyArray<readonly [number, number, number, number]> = [
-  [25, 49, -124, -67], [36, 60, -10, 30], [-38, -12, 114, 153], [20, 45, 100, 145], [-35, 5, -75, -35], [40, 70, -170, -60], [-60, 80, -180, 180],
+  [25, 49, -124, -67],
+  [36, 60, -10, 30],
+  [-38, -12, 114, 153],
+  [20, 45, 100, 145],
+  [-35, 5, -75, -35],
+  [40, 70, -170, -60],
+  [-60, 80, -180, 180],
 ]
 
 /**
@@ -221,19 +294,41 @@ const BOXES: ReadonlyArray<readonly [number, number, number, number]> = [
  */
 export const build = (kind: Kind, rand: () => number, i: number, now: number): Built => {
   switch (kind) {
-    case "position": return { kind, method: "GET", path: "/v1/position?lat=40.7&lon=-74" }
-    case "warm": return { kind, method: "GET", path: WARM_KEYS[i % WARM_KEYS.length]! }
+    case "position":
+      return { kind, method: "GET", path: "/v1/position?lat=40.7&lon=-74" }
+    case "warm":
+      return { kind, method: "GET", path: WARM_KEYS[i % WARM_KEYS.length]! }
     case "track": {
-      const lat = -60 + 120 * rand(), lon = -180 + 360 * rand()
+      const lat = -60 + 120 * rand(),
+        lon = -180 + 360 * rand()
       const d = (Math.floor(now / DAY) - 1 + Math.floor(rand() * 3)) * DAY
-      return { kind, method: "GET", path: `/v1/track?lat=${fx(lat, 4)}&lon=${fx(lon, 4)}&start=${iso(d)}&end=${iso(d + 3 * DAY)}` }
+      return {
+        kind,
+        method: "GET",
+        path: `/v1/track?lat=${fx(lat, 4)}&lon=${fx(lon, 4)}&start=${iso(d)}&end=${iso(d + 3 * DAY)}`,
+      }
     }
     case "weather": {
       const [la0, la1, lo0, lo1] = BOXES[Math.floor(rand() * BOXES.length)]!
-      return { kind, method: "GET", path: `/v1/weather?lat=${fx(la0 + (la1 - la0) * rand(), 3)}&lon=${fx(lo0 + (lo1 - lo0) * rand(), 3)}&count=${1 + Math.floor(rand() * 3)}` }
+      return {
+        kind,
+        method: "GET",
+        path: `/v1/weather?lat=${fx(la0 + (la1 - la0) * rand(), 3)}&lon=${fx(lo0 + (lo1 - lo0) * rand(), 3)}&count=${1 + Math.floor(rand() * 3)}`,
+      }
     }
     case "search": {
-      const body = { body: "moon", targetLat: 40.68925, targetLon: -74.0445, targetHeight: 71 + rand(), targetHeightRef: "msl", region: park, height: 5, heightRef: "msl", start: "2026-10-30T00:00:00Z", end: "2027-10-30T00:00:00Z" }
+      const body = {
+        body: "moon",
+        targetLat: 40.68925,
+        targetLon: -74.0445,
+        targetHeight: 71 + rand(),
+        targetHeightRef: "msl",
+        region: park,
+        height: 5,
+        heightRef: "msl",
+        start: "2026-10-30T00:00:00Z",
+        end: "2027-10-30T00:00:00Z",
+      }
       return { kind, method: "POST", path: "/v1/alignment/search", body: JSON.stringify(body) }
     }
   }

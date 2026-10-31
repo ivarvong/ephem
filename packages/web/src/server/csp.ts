@@ -11,27 +11,38 @@ export const SCALAR = {
   integrity: "sha384-VXnKAz61Xwc3tbw1P+KKrUP7YbcsSl1Ik4is5UnogJyw9XEYZ5Ay/T1i0zPYtSZH",
 } as const
 
-const join = (d: Record<string, ReadonlyArray<string>>) => Object.entries(d).map(([k, v]) => [k, ...v].join(" ")).join("; ")
-const BASE = { "default-src": ["'none'"], "base-uri": ["'none'"], "form-action": ["'self'"], "object-src": ["'none'"], "img-src": ["'self'", "data:"] }
+const join = (d: Record<string, ReadonlyArray<string>>) =>
+  Object.entries(d)
+    .map(([k, v]) => [k, ...v].join(" "))
+    .join("; ")
+const BASE = {
+  "default-src": ["'none'"],
+  "base-uri": ["'none'"],
+  "form-action": ["'self'"],
+  "object-src": ["'none'"],
+  "img-src": ["'self'", "data:"],
+}
 
 const dev = () => !!assets().dev
 /** /: our modules, our fonts, our API; the inlined stylesheet by hash (dev: Vite injects styles and talks HMR over a socket). */
-export const homeCsp = (): string => join({
-  ...BASE,
-  "script-src": ["'self'"],
-  "style-src": dev() ? ["'self'", "'unsafe-inline'"] : ["'self'", `'sha256-${assets().css.sha256}'`],
-  "font-src": ["'self'"],
-  "connect-src": dev() ? ["'self'", "ws:"] : ["'self'"],
-})
+export const homeCsp = (): string =>
+  join({
+    ...BASE,
+    "script-src": ["'self'"],
+    "style-src": dev() ? ["'self'", "'unsafe-inline'"] : ["'self'", `'sha256-${assets().css.sha256}'`],
+    "font-src": ["'self'"],
+    "connect-src": dev() ? ["'self'", "ws:"] : ["'self'"],
+  })
 /** /docs: plain HTML and our stylesheet; nothing runs. */
 export const docsCsp = (): string => join({ ...BASE, "style-src": ["'self'"] })
 /** /docs/interactive: Scalar from jsDelivr (it injects its own styles and fetches /openapi.json), our boot module. */
-export const scalarCsp = (): string => join({
-  ...BASE,
-  "script-src": ["'self'", "https://cdn.jsdelivr.net"],
-  "style-src": ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],
-  "font-src": ["'self'", "data:", "https://cdn.jsdelivr.net", "https://fonts.scalar.com"],
-  "connect-src": ["'self'"],
-  "img-src": ["'self'", "data:", "https:"],
-  "worker-src": ["blob:"],
-})
+export const scalarCsp = (): string =>
+  join({
+    ...BASE,
+    "script-src": ["'self'", "https://cdn.jsdelivr.net"],
+    "style-src": ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],
+    "font-src": ["'self'", "data:", "https://cdn.jsdelivr.net", "https://fonts.scalar.com"],
+    "connect-src": ["'self'"],
+    "img-src": ["'self'", "data:", "https:"],
+    "worker-src": ["blob:"],
+  })

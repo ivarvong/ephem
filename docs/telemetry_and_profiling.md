@@ -231,8 +231,8 @@ takes the lock, refuses to go backwards (`ALLOW_OLDER=1`), adds a worktree of `<
 deploy.sh, so deploy logic, smoke and gate always come from the commit (an uncommitted deploy.sh once ran another agent's
 deploy). Replace the shared copy only by an atomic `mv`. Then, from the commit:
 
-1. Link node_modules (workspace packages point at the worktree's own `packages/`); gate (typecheck, lint, tests in
-   parallel; skipped when the same tree + node_modules already passed: `.git/ephem-gate-pass/`, `NO_GATE_CACHE=1`) while
+1. Link node_modules (workspace packages point at the worktree's own `packages/`); gate (typecheck, lint, format check,
+   tests in parallel; skipped when the same tree + node_modules already passed: `.git/ephem-gate-pass/`, `NO_GATE_CACHE=1`) while
    `cf workers versions create` uploads the version (an uploaded version is in no deployment, so nothing reaches it).
 2. **ephem-tail** first when targeted (`auto`: packages/tail, packages/worker/src/routes.ts or the invocations schema
    changed since the last `deployed-tail/` tag, or `tailConsumers` changed): `cf deploy`; after ephem's smoke,

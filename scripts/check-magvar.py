@@ -18,13 +18,43 @@ the convention that best reproduces NASR's 2025 rows: round-to-nearest of WMM202
   (b) older epochs: ours at the cycle date - NASR (secular drift), and IGRF-14 at the NASR epoch - NASR (like for like).
   (c) model cross-checks at the cycle date: ours - pygeomag WMM2025 (same model, independent code), ours - IGRF-14.
 """
-import argparse, csv, datetime as dt, gzip, io, json, math, os, subprocess, sys, urllib.request, zipfile
+
+import argparse
+import csv
+import datetime as dt
+import gzip
+import io
+import json
+import math
+import os
+import subprocess
+import sys
+import urllib.request
+import zipfile
+
 import numpy as np
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 WMM_TS = os.path.join(ROOT, "packages/core/src/wmm.ts")
 FT_KM = 0.0003048
-SPOT = ["KISP", "KJRB", "KNYC", "KLGA", "KJFK", "KEWR", "PABR", "PAFA", "PANC", "PADK", "PHNL", "PHTO", "PHOG", "TJSJ", "TJBQ", "TISX"]
+SPOT = [
+    "KISP",
+    "KJRB",
+    "KNYC",
+    "KLGA",
+    "KJFK",
+    "KEWR",
+    "PABR",
+    "PAFA",
+    "PANC",
+    "PADK",
+    "PHNL",
+    "PHTO",
+    "PHOG",
+    "TJSJ",
+    "TJBQ",
+    "TISX",
+]
 
 
 def decimal_year(d):
@@ -38,13 +68,21 @@ def read_nasr(zip_path):
     out, eff = [], {r["EFF_DATE"] for r in rows}
     for r in rows:
         v, hem, yr = r["MAG_VARN"].strip(), r["MAG_HEMIS"].strip(), r["MAG_VARN_YEAR"].strip()
-        out.append({
-            "id": r["ARPT_ID"].strip(), "icao": r["ICAO_ID"].strip(), "type": r["SITE_TYPE_CODE"].strip(), "state": r["STATE_CODE"].strip(),
-            "name": r["ARPT_NAME"].strip(), "lat": float(r["LAT_DECIMAL"]), "lon": float(r["LONG_DECIMAL"]),
-            "elev_ft": float(r["ELEV"] or 0), "status": r["ARPT_STATUS"].strip(),
-            "nasr": (float(v) * (-1 if hem == "W" else 1)) if v and hem in ("E", "W") else None,
-            "year": int(yr) if yr else None,
-        })
+        out.append(
+            {
+                "id": r["ARPT_ID"].strip(),
+                "icao": r["ICAO_ID"].strip(),
+                "type": r["SITE_TYPE_CODE"].strip(),
+                "state": r["STATE_CODE"].strip(),
+                "name": r["ARPT_NAME"].strip(),
+                "lat": float(r["LAT_DECIMAL"]),
+                "lon": float(r["LONG_DECIMAL"]),
+                "elev_ft": float(r["ELEV"] or 0),
+                "status": r["ARPT_STATUS"].strip(),
+                "nasr": (float(v) * (-1 if hem == "W" else 1)) if v and hem in ("E", "W") else None,
+                "year": int(yr) if yr else None,
+            }
+        )
     return out, sorted(eff)
 
 
@@ -59,20 +97,29 @@ def metar_ids(path):
 
 def ours(points):
     """points: [[lat, lon, h_km, year], ...] -> declinations from packages/core/src/wmm.ts."""
-    js = ("import { wmm } from %s; let s = ''; process.stdin.on('data', c => s += c).on('end', () => {"
-          " const p = JSON.parse(s); process.stdout.write(JSON.stringify(p.map(([a, b, h, y]) => wmm(a, b, h, y).declination))) })") % json.dumps("file://" + WMM_TS)
-    r = subprocess.run(["node", "--experimental-strip-types", "--no-warnings", "--input-type=module", "-e", js],
-                       input=json.dumps(points), capture_output=True, text=True, check=True)
+    js = (
+        "import { wmm } from %s; let s = ''; process.stdin.on('data', c => s += c).on('end', () => {"
+        " const p = JSON.parse(s); process.stdout.write(JSON.stringify(p.map(([a, b, h, y]) => wmm(a, b, h, y).declination))) })"
+    ) % json.dumps("file://" + WMM_TS)
+    r = subprocess.run(
+        ["node", "--experimental-strip-types", "--no-warnings", "--input-type=module", "-e", js],
+        input=json.dumps(points),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
     return np.array(json.loads(r.stdout))
 
 
 def igrf_decl(lat, lon, h_km, years):
     """IGRF-14 declination per point, each at its own decimal year (grouped by year for ppigrf)."""
     import ppigrf
+
     out = np.full(len(lat), np.nan)
     for y in np.unique(years):
         k = np.where(years == y)[0]
-        yi = int(math.floor(y)); frac = y - yi
+        yi = int(math.floor(y))
+        frac = y - yi
         d = dt.datetime(yi, 1, 1) + (dt.datetime(yi + 1, 1, 1) - dt.datetime(yi, 1, 1)) * frac
         be, bn, _ = ppigrf.igrf(lon[k], lat[k], h_km[k], d)
         out[k] = np.degrees(np.arctan2(be[0], bn[0]))
@@ -82,6 +129,7 @@ def igrf_decl(lat, lon, h_km, years):
 def pygeomag_decl(lat, lon, h_km, year):
     from pygeomag import GeoMag
     from pygeomag.wmm.wmm_2025 import WMM_2025
+
     g = GeoMag(coefficients_data=WMM_2025)
     return np.array([g.calculate(glat=a, glon=b, alt=h, time=year).d for a, b, h in zip(lat, lon, h_km)])
 
@@ -90,8 +138,10 @@ def stats(d):
     a = np.abs(d)
     if not len(a):
         return "n=0"
-    return (f"n={len(a):6d}  mean={np.mean(d):+.3f}  median|d|={np.median(a):.3f}  p95|d|={np.percentile(a, 95):.3f}  "
-            f"max|d|={a.max():.3f}  |d|<=0.5: {100 * np.mean(a <= 0.5):5.1f}%  |d|<=1.0: {100 * np.mean(a <= 1.0):5.1f}%")
+    return (
+        f"n={len(a):6d}  mean={np.mean(d):+.3f}  median|d|={np.median(a):.3f}  p95|d|={np.percentile(a, 95):.3f}  "
+        f"max|d|={a.max():.3f}  |d|<=0.5: {100 * np.mean(a <= 0.5):5.1f}%  |d|<=1.0: {100 * np.mean(a <= 1.0):5.1f}%"
+    )
 
 
 def main():
@@ -112,10 +162,16 @@ def main():
     print(f"rows with MAG_VARN+MAG_HEMIS+MAG_VARN_YEAR: {len(rows)}")
     wx = metar_ids(a.metar) if a.metar else set()
     if a.metar:
-        print(f"METAR stations in {os.path.basename(a.metar)}: {len(wx)}; NASR airports joined on ICAO_ID: {sum(r['icao'] in wx for r in rows)}")
+        print(
+            f"METAR stations in {os.path.basename(a.metar)}: {len(wx)}; NASR airports joined on ICAO_ID: {sum(r['icao'] in wx for r in rows)}"
+        )
 
-    lat = np.array([r["lat"] for r in rows]); lon = np.array([r["lon"] for r in rows]); h = np.array([r["elev_ft"] * FT_KM for r in rows])
-    yr = np.array([r["year"] for r in rows]); ep = yr + a.epoch_offset; nasr = np.array([r["nasr"] for r in rows])
+    lat = np.array([r["lat"] for r in rows])
+    lon = np.array([r["lon"] for r in rows])
+    h = np.array([r["elev_ft"] * FT_KM for r in rows])
+    yr = np.array([r["year"] for r in rows])
+    ep = yr + a.epoch_offset
+    nasr = np.array([r["nasr"] for r in rows])
     met = np.array([r["icao"] in wx for r in rows])
     now = ours([[x, y, z, t_now] for x, y, z in zip(lat, lon, h)])
     recent = ep >= 2025.0
@@ -131,7 +187,9 @@ def main():
 
     print("\n(a) MAG_VARN_YEAR >= 2025: ours at NASR epoch - NASR")
     for lab, m in (("all NASR", recent), ("METAR-joined", recent & met)):
-        print(f"  {lab:14s} {stats((at_ep - nasr)[m])}  round(ours)==NASR: {100 * np.mean(np.round(at_ep[m]) == nasr[m]):.1f}%")
+        print(
+            f"  {lab:14s} {stats((at_ep - nasr)[m])}  round(ours)==NASR: {100 * np.mean(np.round(at_ep[m]) == nasr[m]):.1f}%"
+        )
         print(f"  {'  IGRF-14':14s} {stats((ig_ep - nasr)[m])}")
 
     print("\n(b) by NASR epoch decade: ours@cycle - NASR (drift)  |  IGRF-14@epoch - NASR (like for like)")
@@ -144,36 +202,52 @@ def main():
             print(f"    {'':5s}  IGRF@epoch: {stats((ig_ep - nasr)[m])}")
 
     print("\n(a) rows where round(ours at epoch) != NASR, worst first")
-    for i in sorted(np.where(recent & (np.round(np.nan_to_num(at_ep)) != nasr))[0], key=lambda j: -abs(at_ep[j] - nasr[j])):
+    for i in sorted(
+        np.where(recent & (np.round(np.nan_to_num(at_ep)) != nasr))[0], key=lambda j: -abs(at_ep[j] - nasr[j])
+    ):
         r = rows[i]
-        print(f"  {r['id']:5s} {r['icao']:5s} {r['state']:2s} {r['type']:1s} {r['lat']:9.4f} {r['lon']:10.4f} nasr {r['nasr']:+3.0f} {r['year']} ours {at_ep[i]:+7.2f} d {at_ep[i] - nasr[i]:+6.2f}  {r['name']}")
+        print(
+            f"  {r['id']:5s} {r['icao']:5s} {r['state']:2s} {r['type']:1s} {r['lat']:9.4f} {r['lon']:10.4f} nasr {r['nasr']:+3.0f} {r['year']} ours {at_ep[i]:+7.2f} d {at_ep[i] - nasr[i]:+6.2f}  {r['name']}"
+        )
 
     # outliers: like-for-like residual (ours at epoch for >= 2025, IGRF at epoch otherwise)
     lfl = np.where(recent, at_ep, ig_ep) - nasr
     print("\n10 worst like-for-like outliers (model at NASR epoch - NASR; model = ours if epoch >= 2025 else IGRF-14)")
-    print(f"  {'id':5s} {'icao':5s} {'st':2s} {'t':1s} {'lat':>9s} {'lon':>10s} {'nasr':>5s} {'year':>4s} {'model@ep':>8s} {'d':>6s} {'ours@cyc':>8s}  name")
+    print(
+        f"  {'id':5s} {'icao':5s} {'st':2s} {'t':1s} {'lat':>9s} {'lon':>10s} {'nasr':>5s} {'year':>4s} {'model@ep':>8s} {'d':>6s} {'ours@cyc':>8s}  name"
+    )
     for i in np.argsort(-np.abs(lfl))[:10]:
         r = rows[i]
-        print(f"  {r['id']:5s} {r['icao']:5s} {r['state']:2s} {r['type']:1s} {r['lat']:9.4f} {r['lon']:10.4f} {r['nasr']:+5.0f} {r['year']:4d} "
-              f"{lfl[i] + nasr[i]:+8.2f} {lfl[i]:+6.2f} {now[i]:+8.2f}  {r['name']}")
+        print(
+            f"  {r['id']:5s} {r['icao']:5s} {r['state']:2s} {r['type']:1s} {r['lat']:9.4f} {r['lon']:10.4f} {r['nasr']:+5.0f} {r['year']:4d} "
+            f"{lfl[i] + nasr[i]:+8.2f} {lfl[i]:+6.2f} {now[i]:+8.2f}  {r['name']}"
+        )
     print("\n10 worst outliers among METAR-joined airports")
     for i in [j for j in np.argsort(-np.abs(lfl)) if met[j]][:10]:
         r = rows[i]
-        print(f"  {r['id']:5s} {r['icao']:5s} {r['state']:2s} {r['type']:1s} {r['lat']:9.4f} {r['lon']:10.4f} {r['nasr']:+5.0f} {r['year']:4d} "
-              f"{lfl[i] + nasr[i]:+8.2f} {lfl[i]:+6.2f} {now[i]:+8.2f}  {r['name']}")
+        print(
+            f"  {r['id']:5s} {r['icao']:5s} {r['state']:2s} {r['type']:1s} {r['lat']:9.4f} {r['lon']:10.4f} {r['nasr']:+5.0f} {r['year']:4d} "
+            f"{lfl[i] + nasr[i]:+8.2f} {lfl[i]:+6.2f} {now[i]:+8.2f}  {r['name']}"
+        )
 
     print(f"\nspot checks (ours and pygeomag at cycle {t_now:.3f}; ours@ep only when epoch >= 2025)")
     by = {}
     for i, r in enumerate(rows):
-        by.setdefault(r["icao"], i); by.setdefault("K" + r["id"], i)
-    print(f"  {'icao':5s} {'id':4s} {'nasr':>5s} {'year':>4s} {'ours@ep':>7s} {'IGRF@ep':>7s} {'ours@cyc':>8s} {'pygeomag':>8s} {'cyc-nasr':>8s}  name")
+        by.setdefault(r["icao"], i)
+        by.setdefault("K" + r["id"], i)
+    print(
+        f"  {'icao':5s} {'id':4s} {'nasr':>5s} {'year':>4s} {'ours@ep':>7s} {'IGRF@ep':>7s} {'ours@cyc':>8s} {'pygeomag':>8s} {'cyc-nasr':>8s}  name"
+    )
     for s in SPOT:
         i = by.get(s)
         if i is None:
-            print(f"  {s:5s} not in NASR APT_BASE (with mag var)"); continue
+            print(f"  {s:5s} not in NASR APT_BASE (with mag var)")
+            continue
         r = rows[i]
         e = f"{at_ep[i]:+7.2f}" if recent[i] else "    n/a"
-        print(f"  {s:5s} {r['id']:4s} {r['nasr']:+5.0f} {r['year']:4d} {e} {ig_ep[i]:+7.2f} {now[i]:+8.2f} {pg_now[i]:+8.2f} {now[i] - nasr[i]:+8.2f}  {r['name']}")
+        print(
+            f"  {s:5s} {r['id']:4s} {r['nasr']:+5.0f} {r['year']:4d} {e} {ig_ep[i]:+7.2f} {now[i]:+8.2f} {pg_now[i]:+8.2f} {now[i] - nasr[i]:+8.2f}  {r['name']}"
+        )
 
     if a.api:
         idx = np.linspace(0, len(rows) - 1, a.api_sample).astype(int)
@@ -181,7 +255,11 @@ def main():
         for i in idx:
             r = rows[i]
             u = f"{a.api}/v1/magnetic?lat={r['lat']}&lon={r['lon']}&height={r['elev_ft'] * 0.3048:.1f}"
-            b = json.load(urllib.request.urlopen(urllib.request.Request(u, headers={"user-agent": "ephem-check-magvar"}), timeout=20))
+            b = json.load(
+                urllib.request.urlopen(
+                    urllib.request.Request(u, headers={"user-agent": "ephem-check-magvar"}), timeout=20
+                )
+            )
             t = b.get("magnetic", {}).get("decimalYear") or b.get("decimalYear") or decimal_year(today)
             core = ours([[r["lat"], r["lon"], r["elev_ft"] * FT_KM, t]])[0]
             worst = max(worst, abs(b["magnetic"]["declination"] - core))
@@ -190,11 +268,47 @@ def main():
     if a.csv:
         with open(a.csv, "w", newline="") as f:
             w = csv.writer(f)
-            w.writerow(["arpt_id", "icao", "state", "site_type", "lat", "lon", "elev_ft", "nasr_decl", "nasr_year", "metar",
-                        "ours_at_epoch", "igrf_at_epoch", "ours_at_cycle", "pygeomag_at_cycle", "igrf_at_cycle", "name"])
+            w.writerow(
+                [
+                    "arpt_id",
+                    "icao",
+                    "state",
+                    "site_type",
+                    "lat",
+                    "lon",
+                    "elev_ft",
+                    "nasr_decl",
+                    "nasr_year",
+                    "metar",
+                    "ours_at_epoch",
+                    "igrf_at_epoch",
+                    "ours_at_cycle",
+                    "pygeomag_at_cycle",
+                    "igrf_at_cycle",
+                    "name",
+                ]
+            )
             for i, r in enumerate(rows):
-                w.writerow([r["id"], r["icao"], r["state"], r["type"], r["lat"], r["lon"], r["elev_ft"], r["nasr"], r["year"], int(met[i]),
-                            "" if not recent[i] else f"{at_ep[i]:.4f}", f"{ig_ep[i]:.4f}", f"{now[i]:.4f}", f"{pg_now[i]:.4f}", f"{ig_now[i]:.4f}", r["name"]])
+                w.writerow(
+                    [
+                        r["id"],
+                        r["icao"],
+                        r["state"],
+                        r["type"],
+                        r["lat"],
+                        r["lon"],
+                        r["elev_ft"],
+                        r["nasr"],
+                        r["year"],
+                        int(met[i]),
+                        "" if not recent[i] else f"{at_ep[i]:.4f}",
+                        f"{ig_ep[i]:.4f}",
+                        f"{now[i]:.4f}",
+                        f"{pg_now[i]:.4f}",
+                        f"{ig_now[i]:.4f}",
+                        r["name"],
+                    ]
+                )
         print(f"wrote {a.csv}")
 
 

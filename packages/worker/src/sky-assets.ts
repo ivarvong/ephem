@@ -15,18 +15,30 @@ export const DE440_SHA16 = DE440.sha256.slice(0, 16)
 /** Block i is at DE440_ASSET_BASE + i. */
 export const DE440_ASSET_BASE = `/assets/de440/${DE440_SHA16}/`
 
-const notFound = (msg: string) => HttpServerResponse.text(msg, { status: 404, headers: { "cache-control": "no-store" } })
+const notFound = (msg: string) =>
+  HttpServerResponse.text(msg, { status: 404, headers: { "cache-control": "no-store" } })
 
-export const SkyAssets = HttpRouter.use(router => Effect.gen(function* () {
-  const blocks = yield* Blocks   // the front door's (src/app.ts provideApp), captured when the routes are built
-  yield* router.add("GET", "/assets/de440/:sha/:i", Effect.gen(function* () {
-    const p = yield* HttpRouter.params
-    const i = /^\d{1,5}$/.test(p.i ?? "") ? Number(p.i) : NaN
-    if (p.sha !== DE440_SHA16) return notFound(`no DE440 file ${p.sha ?? ""}: this server has ${DE440_SHA16} (${DE440.file})`)
-    if (!Number.isInteger(i) || i < 0 || i >= DE440.nBlocks) return notFound(`no block ${p.i ?? ""}: DE440 blocks are 0..${DE440.nBlocks - 1}`)
-    yield* Effect.annotateCurrentSpan({ "assets.block": i })
-    const loaded = yield* blocks.load([i]).pipe(Effect.orDie)
-    yield* Effect.annotateCurrentSpan({ "ephem.blocks_cache": blocksCache(loaded.stats) })
-    return HttpServerResponse.uint8Array(new Uint8Array(loaded.src(i)), { contentType: "application/octet-stream", headers: { "cache-control": IMMUTABLE } })
-  }).pipe(Effect.withSpan("assets.block")))
-}))
+export const SkyAssets = HttpRouter.use((router) =>
+  Effect.gen(function* () {
+    const blocks = yield* Blocks // the front door's (src/app.ts provideApp), captured when the routes are built
+    yield* router.add(
+      "GET",
+      "/assets/de440/:sha/:i",
+      Effect.gen(function* () {
+        const p = yield* HttpRouter.params
+        const i = /^\d{1,5}$/.test(p.i ?? "") ? Number(p.i) : NaN
+        if (p.sha !== DE440_SHA16)
+          return notFound(`no DE440 file ${p.sha ?? ""}: this server has ${DE440_SHA16} (${DE440.file})`)
+        if (!Number.isInteger(i) || i < 0 || i >= DE440.nBlocks)
+          return notFound(`no block ${p.i ?? ""}: DE440 blocks are 0..${DE440.nBlocks - 1}`)
+        yield* Effect.annotateCurrentSpan({ "assets.block": i })
+        const loaded = yield* blocks.load([i]).pipe(Effect.orDie)
+        yield* Effect.annotateCurrentSpan({ "ephem.blocks_cache": blocksCache(loaded.stats) })
+        return HttpServerResponse.uint8Array(new Uint8Array(loaded.src(i)), {
+          contentType: "application/octet-stream",
+          headers: { "cache-control": IMMUTABLE },
+        })
+      }).pipe(Effect.withSpan("assets.block")),
+    )
+  }),
+)

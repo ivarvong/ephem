@@ -37,27 +37,41 @@ const isGzip = (b: Uint8Array) => b[0] === 0x1f && b[1] === 0x8b
 
 /** One upstream GET per call. Logs {"evt":"metar.upstream"} with status, bytes, ms and whether it was conditional. */
 export const serveFeed = async (req: Request, deps: UpstreamDeps): Promise<Response> => {
-  const now = deps.now ?? Date.now, log = deps.log ?? (l => console.log(JSON.stringify(l)))
-  const fail = (status: number, msg: string) => new Response(msg, { status, headers: { "cache-control": "no-store", "content-type": "text/plain" } })
+  const now = deps.now ?? Date.now,
+    log = deps.log ?? ((l) => console.log(JSON.stringify(l)))
+  const fail = (status: number, msg: string) =>
+    new Response(msg, { status, headers: { "cache-control": "no-store", "content-type": "text/plain" } })
   if (req.method !== "GET" && req.method !== "HEAD") return fail(405, "GET only")
   if (new URL(req.url).pathname !== FEED_PATH) return fail(404, "not found")
   const headers: Record<string, string> = { "user-agent": USER_AGENT }
-  const inm = req.headers.get("if-none-match"), ims = req.headers.get("if-modified-since")
+  const inm = req.headers.get("if-none-match"),
+    ims = req.headers.get("if-modified-since")
   if (inm) headers["if-none-match"] = inm
   if (ims) headers["if-modified-since"] = ims
-  const t0 = now(), conditional = Boolean(inm || ims)
+  const t0 = now(),
+    conditional = Boolean(inm || ims)
   let r: Response
-  try { r = await deps.fetch(FEED_URL, { headers, cache: "no-store" }) } catch (e) {
+  try {
+    r = await deps.fetch(FEED_URL, { headers, cache: "no-store" })
+  } catch (e) {
     log({ evt: "metar.upstream", status: 0, bytes: 0, ms: now() - t0, conditional, error: String(e) })
     return fail(502, `upstream: ${String(e)}`)
   }
   const out = (status: number, body: ArrayBuffer | null) => {
     const h: Record<string, string> = { "cache-control": FEED_CACHE_CONTROL, "x-fetched-at": String(now()) }
-    const etag = r.headers.get("etag"), lm = r.headers.get("last-modified")
+    const etag = r.headers.get("etag"),
+      lm = r.headers.get("last-modified")
     if (etag) h.etag = etag
     if (lm) h["last-modified"] = lm
     if (body) h["content-type"] = "application/gzip"
-    log({ evt: "metar.upstream", status, bytes: body?.byteLength ?? 0, ms: now() - t0, conditional, version: etag ?? lm })
+    log({
+      evt: "metar.upstream",
+      status,
+      bytes: body?.byteLength ?? 0,
+      ms: now() - t0,
+      conditional,
+      version: etag ?? lm,
+    })
     return new Response(body, { status, headers: h })
   }
   if (r.status === 304) return out(304, null)
@@ -78,8 +92,19 @@ export const serveFeed = async (req: Request, deps: UpstreamDeps): Promise<Respo
 
 /** Workers Caching's cf-cache-status of the loopback, lower-cased; `none` without a cache (tests, dev server);
  *  `stale-on-error` when the loopback failed and the isolate's own last table answered. */
-export type Tier = "hit" | "miss" | "expired" | "stale" | "updating" | "revalidated" | "bypass" | "dynamic" | "none" | "stale-on-error"
-const TIERS = new Set<string>(["hit", "miss", "expired", "stale", "updating", "revalidated", "bypass", "dynamic", "none"])
+export type Tier =
+  "hit" | "miss" | "expired" | "stale" | "updating" | "revalidated" | "bypass" | "dynamic" | "none" | "stale-on-error"
+const TIERS = new Set<string>([
+  "hit",
+  "miss",
+  "expired",
+  "stale",
+  "updating",
+  "revalidated",
+  "bypass",
+  "dynamic",
+  "none",
+])
 
 export interface Snapshot {
   readonly table: Table
@@ -94,8 +119,8 @@ export interface FeedResult {
   readonly snap: Snapshot
   readonly tier: Tier
   readonly dataAgeMs: number
-  readonly bytes: number      // gz bytes this request read from the loopback (0 when the version was already parsed)
-  readonly parsed: boolean    // this request paid for a parse
+  readonly bytes: number // gz bytes this request read from the loopback (0 when the version was already parsed)
+  readonly parsed: boolean // this request paid for a parse
   readonly error: string | null
 }
 export interface FeedDeps {
@@ -106,29 +131,45 @@ export interface FeedDeps {
   readonly minStations?: number
 }
 
-export class FeedUnavailable extends Error { readonly _tag = "FeedUnavailable" }
+export class FeedUnavailable extends Error {
+  readonly _tag = "FeedUnavailable"
+}
 
 const versionOf = (etag: string | null, lm: string | null, gzLen: number) => etag ?? lm ?? `len:${gzLen}`
 
 /** gzip bytes (a .gz file, not Content-Encoding) → text. */
 export const gunzip = async (gz: ArrayBuffer): Promise<string> => {
   const b = new Uint8Array(gz)
-  if (!isGzip(b)) throw new FeedUnavailable(`feed is not gzip (first bytes ${b[0]?.toString(16)} ${b[1]?.toString(16)})`)
+  if (!isGzip(b))
+    throw new FeedUnavailable(`feed is not gzip (first bytes ${b[0]?.toString(16)} ${b[1]?.toString(16)})`)
   return new Response(new Blob([b]).stream().pipeThrough(new DecompressionStream("gzip"))).text()
 }
 
 export const makeFeed = (deps: FeedDeps) => {
   const now = deps.now ?? Date.now
   let l1: Snapshot | undefined
-  let parsing: { version: string; p: Promise<Snapshot> } | undefined   // a version is parsed once even under concurrency
+  let parsing: { version: string; p: Promise<Snapshot> } | undefined // a version is parsed once even under concurrency
 
-  const build = async (gz: ArrayBuffer, etag: string | null, lastModified: string | null, fetchedAt: number): Promise<Snapshot> => {
+  const build = async (
+    gz: ArrayBuffer,
+    etag: string | null,
+    lastModified: string | null,
+    fetchedAt: number,
+  ): Promise<Snapshot> => {
     const table = parseMetars(await gunzip(gz))
-    if (table.count < (deps.minStations ?? 1000)) throw new FeedUnavailable(`feed parsed to only ${table.count} stations`)
+    if (table.count < (deps.minStations ?? 1000))
+      throw new FeedUnavailable(`feed parsed to only ${table.count} stations`)
     return { table, etag, lastModified, fetchedAt, version: versionOf(etag, lastModified, gz.byteLength) }
   }
-  const result = (snap: Snapshot, tier: Tier, extra: Partial<FeedResult> = {}): FeedResult =>
-    ({ snap, tier, dataAgeMs: Math.max(0, now() - snap.fetchedAt), bytes: 0, parsed: false, error: null, ...extra })
+  const result = (snap: Snapshot, tier: Tier, extra: Partial<FeedResult> = {}): FeedResult => ({
+    snap,
+    tier,
+    dataAgeMs: Math.max(0, now() - snap.fetchedAt),
+    bytes: 0,
+    parsed: false,
+    error: null,
+    ...extra,
+  })
   const onError = (e: unknown): FeedResult => {
     if (l1) return result(l1, "stale-on-error", { error: String(e) })
     throw e instanceof FeedUnavailable ? e : new FeedUnavailable(String(e))
@@ -136,11 +177,19 @@ export const makeFeed = (deps: FeedDeps) => {
 
   const get = async (traceparent?: string): Promise<FeedResult> => {
     let r: Response
-    try { r = await deps.fetch(new Request(`https://feed.internal${FEED_PATH}`), traceparent) } catch (e) { return onError(e) }
+    try {
+      r = await deps.fetch(new Request(`https://feed.internal${FEED_PATH}`), traceparent)
+    } catch (e) {
+      return onError(e)
+    }
     const s = (r.headers.get("cf-cache-status") ?? "none").toLowerCase()
     const tier = (TIERS.has(s) ? s : "none") as Tier
-    if (r.status !== 200) { await r.body?.cancel(); return onError(new FeedUnavailable(`feed ${r.status}${tier === "none" ? "" : ` (${tier})`}`)) }
-    const etag = r.headers.get("etag"), lm = r.headers.get("last-modified")
+    if (r.status !== 200) {
+      await r.body?.cancel()
+      return onError(new FeedUnavailable(`feed ${r.status}${tier === "none" ? "" : ` (${tier})`}`))
+    }
+    const etag = r.headers.get("etag"),
+      lm = r.headers.get("last-modified")
     const fetchedAt = Number(r.headers.get("x-fetched-at")) || now()
     const version = etag ?? lm
     // Same version as L1 (or an older copy from a tier that has not caught up): no parse, no body read.
@@ -150,14 +199,21 @@ export const makeFeed = (deps: FeedDeps) => {
       return result(l1, tier)
     }
     try {
-      const gz = await r.arrayBuffer(), v = versionOf(etag, lm, gz.byteLength)
+      const gz = await r.arrayBuffer(),
+        v = versionOf(etag, lm, gz.byteLength)
       if (l1 && v === l1.version) return result(l1, tier, { bytes: gz.byteLength })
       const mine = parsing?.version !== v
       if (mine) parsing = { version: v, p: build(gz, etag, lm, fetchedAt) }
       const p = parsing!.p
-      try { l1 = await p } finally { if (parsing?.p === p) parsing = undefined }
+      try {
+        l1 = await p
+      } finally {
+        if (parsing?.p === p) parsing = undefined
+      }
       return result(l1, tier, { bytes: gz.byteLength, parsed: mine })
-    } catch (e) { return onError(e) }
+    } catch (e) {
+      return onError(e)
+    }
   }
   return { get, peek: () => l1 }
 }

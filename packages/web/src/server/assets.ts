@@ -3,7 +3,11 @@
 // In dev (packages/worker/src/dev.ts with EPHEM_VITE=1) the pages point at Vite's dev server instead (setDevAssets).
 import built from "../../dist/assets.json" with { type: "json" }
 
-export interface Font { readonly href: string; readonly sha256: string; readonly bytes: number }
+export interface Font {
+  readonly href: string
+  readonly sha256: string
+  readonly bytes: number
+}
 export interface Assets {
   readonly home: { readonly js: string; readonly preload: ReadonlyArray<string> }
   readonly core: { readonly js: string; readonly preload: ReadonlyArray<string> }
@@ -18,8 +22,14 @@ let current: Assets = built
 export const assets = (): Assets => current
 /** The pages load Vite's dev modules (HMR) instead of the build. */
 export const setDevAssets = (origin = "") => {
-  current = { ...built, home: { js: origin + "/src/client/home.tsx", preload: [] }, core: { js: origin + "/src/client/core.ts", preload: [] }, scalar: { js: origin + "/src/client/scalar.ts" },
-    css: { ...built.css, text: "" }, dev: { scripts: [origin + "/@vite/client"] } }
+  current = {
+    ...built,
+    home: { js: origin + "/src/client/home.tsx", preload: [] },
+    core: { js: origin + "/src/client/core.ts", preload: [] },
+    scalar: { js: origin + "/src/client/scalar.ts" },
+    css: { ...built.css, text: "" },
+    dev: { scripts: [origin + "/@vite/client"] },
+  }
 }
 /** The core module's short id: the content hash in its file name (shown in the page's diagnostics). */
 export const coreId = (a: Assets = current): string => /-([A-Za-z0-9_-]{8,})\.js$/.exec(a.core.js)?.[1] ?? "dev"

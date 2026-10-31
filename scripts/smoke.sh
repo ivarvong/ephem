@@ -20,160 +20,254 @@
 # (grep exits at the match, curl gets EPIPE, exit 23; found 2026-10-30, docs/telemetry_and_profiling.md "Gotchas").
 # Exit 0 if all checks passed. Runs from the commit being deployed (deploy.sh calls the worktree's copy).
 {
-set -uo pipefail
-B=${1:?usage: smoke.sh <base> [--pin id] [--expect id] [--only a,b] [--failed-to file]}; B=${B%/}; shift
-PIN=""; EXPECT=""; CEXPECT=""; ONLY=""; FAILED_TO=""; RUN=""; MANIFEST=""
-while [ $# -gt 0 ]; do case "$1" in
-  --pin) PIN=$2; EXPECT=$2; shift 2 ;; --expect) EXPECT=$2; shift 2 ;; --only) ONLY=",$2,"; shift 2 ;; --failed-to) FAILED_TO=$2; shift 2 ;;
-  --run) RUN=$2; shift 2 ;; --manifest) MANIFEST=$2; shift 2 ;; --expect-compute) CEXPECT=$2; shift 2 ;;
-  *) echo "smoke.sh: unknown arg $1" >&2; exit 2 ;; esac; done
-D=$(mktemp -d "${TMPDIR:-/tmp}/ephem-smoke-XXXX"); trap 'rm -rf "$D"' EXIT
-OVR=$( { [ -n "$PIN" ] && printf 'ephem="%s"' "$PIN"; } || true)
-H=(); [ -n "$OVR" ] && H=(-H "cloudflare-workers-version-overrides: $OVR")
-[ -n "$RUN" ] && H+=(-H "x-ephem-smoke: $RUN")
-T=$(date -u +%Y-%m-%dT%H:%M:%SZ); FAILED=(); N=0
-[[ "$ONLY" == *",compute-hit,"* ]] && ONLY="$ONLY,compute,"   # compute-hit needs compute's fresh key first
-want() { [ -z "$ONLY" ] || [[ "$ONLY" == *",$1,"* ]]; }
-# chk_one <name> <want-status> <path> [grep-pattern] [POST-json] [want x-ephem-cache] [want x-ephem-compute-version]
-# Checks run concurrently (each one a background job with its own files; a `{ …; …; } &` group keeps the order where one check depends
-# on another: compute → compute-hit). Results are printed in the order the checks are written. ~8 s sequential → ~2 s.
-chk_one() {
-  local name=$1 ws=$2 p=$3 pat=${4:-} data=${5:-} wc=${6:-} wcv=${7:-} c v x cv er why=""
-  want "$name" || return 0
-  local b="$D/$name.b" h="$D/$name.h"
-  if [ -n "$data" ]; then c=$(curl -s -o "$b" -D "$h" -w '%{http_code}' --max-time 30 ${H[@]+"${H[@]}"} -X POST -H 'content-type: application/json' -d "$data" "$B$p")
-  else c=$(curl -s -o "$b" -D "$h" -w '%{http_code}' --max-time 30 ${H[@]+"${H[@]}"} "$B$p"); fi
-  touch "$h" "$b"
-  v=$(tr -d '\r' < "$h" | awk -F': ' 'tolower($1)=="x-ephem-version"{print $2}' | tail -1)
-  [ "$c" = "$ws" ] || why="status $c, want $ws"
-  [ -z "$why" ] && [ -n "$pat" ] && ! grep -q -- "$pat" "$b" && why="body lacks $pat"
-  [ -z "$why" ] && [ -n "$EXPECT" ] && [ "$v" != "$EXPECT" ] && why="answered by version ${v:-none}, want ${EXPECT:0:8}"
-  x=$(tr -d '\r' < "$h" | awk -F': ' 'tolower($1)=="x-ephem-cache"{print $2}' | tail -1)
-  cv=$(tr -d '\r' < "$h" | awk -F': ' 'tolower($1)=="x-ephem-compute-version"{print $2}' | tail -1)
-  er=$(tr -d '\r' < "$h" | awk -F': ' 'tolower($1)=="x-ephem-errors"{print $2}' | tail -1)
-  [ -z "$why" ] && [ -n "$PIN" ] && [ -n "$RUN" ] && [ "${er:-0}" != 0 ] && why="isolate logged ${er} errors (x-ephem-errors)"
-  [ -n "$MANIFEST" ] && echo "$(tr -d '\r' < "$h" | awk -F': ' 'tolower($1)=="cf-ray"{print $2}' | tail -1 | grep . || echo -) $c $([ -n "$data" ] && echo POST || echo GET) ${p%%\?*} $name" >> "$MANIFEST"
-  [ -z "$why" ] && [ -n "$wc" ] && [ "$x" != "$wc" ] && why="x-ephem-cache ${x:-none}, want $wc"
-  [ -z "$why" ] && [ -n "$wcv" ] && [ "$wcv" = any ] && [ -z "$cv" ] && why="no x-ephem-compute-version (not computed by the Api)"
-  [ -z "$why" ] && [ -n "$wcv" ] && [ "$wcv" != any ] && [ "$cv" != "$wcv" ] && why="computed by Api version ${cv:-none}, want ${wcv:0:8}"
-  if [ -z "$why" ]; then echo "ok   $name $c ${v:0:8}${x:+ $x}${cv:+ compute ${cv:0:8}} $p" > "$D/$name.res"; else echo "FAIL $name: $why ($(tr -d '\r' < "$h" | awk -F': ' 'tolower($1)=="cf-ray"{print $2}')) $p" > "$D/$name.res"; fi
-}
-# chk <chk_one args>: one check as a background job (its name joins ORDER, the print order). Check lines stay `chk …`.
-ORDER=()
-chk() { want "$1" || return 0; ORDER+=("$1"); chk_one "$@" & }
-# The page UI (@ephem/web): the homepage names this commit's build (its manifest, packages/web/dist/assets.json: deploy.sh
-# builds it before the gate), carries a strict CSP (script-src 'self', no inline script) and no inline executable script;
-# every asset it names is a Workers Static Asset, immutable for a year, with its type (`asset`: the bytes must be the build's,
-# by sha256). The DE440 blocks the browser computes from (src/sky-assets.ts): 8 144 B, through Blocks → BlockStore.
-MAN="$(dirname "$0")/../packages/web/dist/assets.json"
-[ -f "$MAN" ] || { echo "smoke.sh: no web build ($MAN): run npm run build" >&2; exit 2; }
-WEB=$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m["home"]["js"], m["core"]["js"], m["css"]["href"], m["fonts"]["regular"]["href"], m["fonts"]["bold"]["href"], m["scalar"]["js"])' "$MAN")
-read -r HOME_JS CORE_JS CSS_HREF FONT_R FONT_B SCALAR_JS <<< "$WEB"
-chk home 200 "/" "<script type=\"module\" src=\"$HOME_JS\">"
-# asset_one <name> <path> <content-type prefix>: a static asset as the build wrote it (sha256 of the bytes = the local file's)
-asset_one() {
-  local name=$1 p=$2 want=$3 b="$D/$1.b" h="$D/$1.h" c why=""
-  c=$(curl -s -o "$b" -D "$h" -w '%{http_code}' --max-time 30 ${H[@]+"${H[@]}"} "$B$p"); touch "$h" "$b"
-  hd() { tr -d '\r' < "$h" | awk -F': ' -v k="$1" 'tolower($1)==k{print $2}' | tail -1; }
-  [ "$c" = 200 ] || why="status $c"
-  [ -z "$why" ] && [[ "$(hd content-type)" != *"$want"* ]] && why="content-type $(hd content-type), want $want"
-  [ -z "$why" ] && { [[ "$(hd cache-control)" != *"max-age=31536000"* ]] || [[ "$(hd cache-control)" != *immutable* ]]; } && why="cache-control $(hd cache-control)"
-  [ -z "$why" ] && [ "$(shasum -a 256 < "$b" | cut -c1-64)" != "$(shasum -a 256 < "$(dirname "$0")/../packages/web/dist/client$p" | cut -c1-64)" ] && why="bytes differ from this commit's build"
-  [ -n "$MANIFEST" ] && echo "- $c GET $p $name" >> "$MANIFEST.assets"   # static assets never reach the Worker: no invocation to gate
-  if [ -z "$why" ]; then echo "ok   $name $c $(wc -c < "$b" | tr -d ' ') B $p" > "$D/$name.res"; else echo "FAIL $name: $why $p" > "$D/$name.res"; fi
-}
-asset() { want "$1" || return 0; ORDER+=("$1"); asset_one "$@" & }
-asset asset-home "$HOME_JS" "javascript"
-asset asset-core "$CORE_JS" "javascript"
-asset asset-css "$CSS_HREF" "text/css"
-asset asset-font "$FONT_R" "font/woff2"
-asset asset-font-bold "$FONT_B" "font/woff2"
-asset asset-scalar "$SCALAR_JS" "javascript"
-# csp: every page's CSP header and no inline executable script / event handler in its body (the rules of @ephem/web)
-csp_one() {
-  local name=$1 p=$2 b="$D/$1.b" h="$D/$1.h" c why="" csp v
-  c=$(curl -s -o "$b" -D "$h" -w '%{http_code}' --max-time 30 ${H[@]+"${H[@]}"} "$B$p"); touch "$h" "$b"
-  csp=$(tr -d '\r' < "$h" | awk -F': ' 'tolower($1)=="content-security-policy"{print $2}' | tail -1)
-  v=$(tr -d '\r' < "$h" | awk -F': ' 'tolower($1)=="x-ephem-version"{print $2}' | tail -1)
-  [ "$c" = 200 ] || why="status $c"
-  [ -z "$why" ] && [[ "$csp" != *"default-src 'none'"* ]] && why="CSP without default-src 'none': ${csp:-none}"
-  [ -z "$why" ] && [[ "$csp" == *"unsafe-eval"* || "$(echo "$csp" | sed -n "s/.*script-src \([^;]*\).*/\1/p")" == *"unsafe-inline"* ]] && why="CSP allows inline/eval script: $csp"
-  [ -z "$why" ] && python3 -c 'import re,sys; h=open(sys.argv[1],encoding="utf-8").read(); bad=[a for a,b in re.findall(r"<script\b([^>]*)>([\s\S]*?)</script>",h) if "application/json" not in a and b.strip()]+re.findall(r"<[a-z][^>]*\son[a-z]+\s*=",h,re.I); sys.exit(1 if bad else 0)' "$b" || { [ -z "$why" ] && why="inline executable script or event handler in the page"; }
-  [ -z "$why" ] && [ -n "$EXPECT" ] && [ "$v" != "$EXPECT" ] && why="answered by version ${v:-none}, want ${EXPECT:0:8}"
-  [ -n "$MANIFEST" ] && echo "$(tr -d '\r' < "$h" | awk -F': ' 'tolower($1)=="cf-ray"{print $2}' | tail -1 | grep . || echo -) $c GET ${p%%\?*} $name" >> "$MANIFEST"
-  if [ -z "$why" ]; then echo "ok   $name $c ${v:0:8} $p" > "$D/$name.res"; else echo "FAIL $name: $why $p" > "$D/$name.res"; fi
-}
-csp() { want "$1" || return 0; ORDER+=("$1"); csp_one "$@" & }
-csp csp-home "/?lat=40.7&lon=-74&tz=America/New_York"
-csp csp-docs "/docs"
-csp csp-docs-interactive "/docs/interactive"
-chk de440-block 200 "/assets/de440/29915576d0a65557/5442"
-chk de440-block-404 404 "/assets/de440/29915576d0a65557/12556" "no block"
-chk page-trace 200 "/?lat=40.7&lon=-74&tz=America/New_York" '<meta name="traceparent" content="00-'   # document trace context (src/clienttrace.ts)
-RT=$(openssl rand -hex 16); RS=$(openssl rand -hex 8)
-chk rum 204 "/rum" "" '{"tp":"00-'"$RT"'-'"$RS"'-01","page":"/","seq":0,"s":[{"k":"app","n":"smoke","sid":"'"$RS"'","t":0}]}'   # RUM ingest (src/rum.ts), stored synthetic
-chk docs 200 "/docs" 'href="/openapi.json"'                       # useful without JS: links the spec
-chk docs-interactive 200 "/docs/interactive"
-chk llms 200 "/llms.txt" "$B/mcp"                                 # names the MCP endpoint
-chk openapi 200 "/openapi.json"
-chk healthz 200 "/healthz"
-chk position-now 200 "/v1/position?lat=40.7&lon=-74"
-chk position-time 200 "/v1/position?lat=40.7&lon=-74&time=$T"
-chk day 200 "/v1/day?lat=40.7&lon=-74&date=2026-10-29&tz=America/New_York"
-chk magnetic 200 "/v1/magnetic?lat=40.7&lon=-74"
-chk crossing 200 "/v1/crossing?lat=40.7&lon=-74&body=sun&altitude=-0.8333&direction=set&date=2026-10-29&tz=America/New_York"
-chk alignment 200 "/v1/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&start=2026-10-29T02:00:00Z&end=2026-10-29T03:00:00Z"
-chk sightline 200 "/v1/sightline?lat=40.6935&lon=-74.0017&height=5&heightRef=msl&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&samples=11"
-chk track 200 "/v1/track?lat=40.7&lon=-74&start=2026-10-29T00:00:00Z&end=2026-10-30T00:00:00Z"
-chk weather 200 "/v1/weather?lat=40.7&lon=-74"
-chk unknown-param 400 "/v1/day?lat=40.7&lon=-74&date=2026-10-29&tz=America/New_York&bogus=1"
-chk not-found 404 "/position?lat=40.7&lon=-74" 'did you mean /v1/position?' # unprefixed: JSON 404 naming the endpoints (no alias)
-chk window-internal 404 "/internal/alignment-search-window?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&region=r1.x&start=2026-10-17T00:00:00Z"
-# the Liberty reference Nov 16 2026 pass over a bbox of Brooklyn Bridge Park (fans out to cached window GETs)
-chk search 200 "/v1/alignment/search" '"enter":{"time":"2026-11-17T03:4' \
-  '{"body":"moon","targetLat":40.68925,"targetLon":-74.0445,"targetHeight":70,"targetHeightRef":"msl","region":[-73.9995,40.7,-73.993,40.706],"height":5,"heightRef":"msl","start":"2026-11-16T00:00:00Z","end":"2026-11-18T00:00:00Z"}'
-# A deterministic key nobody has asked for (random lat at 1e-7°): MISS computed by the Api, then HIT from its cache.
-U="/v1/position?lat=40.$(printf '%07d' $((RANDOM * 32768 + RANDOM)))&lon=-74&time=$T"
-want compute && ORDER+=(compute); want compute-hit && ORDER+=(compute-hit)
-{ chk_one compute 200 "$U" '"provenance"' "" MISS "${CEXPECT:-any}"; chk_one compute-hit 200 "$U" '"provenance"' "" HIT any; } &   # in order
-chk blocks-miss 200 "/v1/position?lat=40.7&lon=-74&time=$(python3 -c 'import random,datetime as d; print((d.datetime(1972,1,2)+d.timedelta(seconds=random.randrange(5_617_000_000))).strftime("%Y-%m-%dT%H:%M:%SZ"))')" '"provenance"' "" MISS "${CEXPECT:-any}"
-# Link preview (src/og-render.ts): the font glyph fetches, the touch icon, and a live card: a place name never asked for (a fresh
-# Og MISS: data from the Api, a real glyph render) must come back as a glyph PNG (x-ephem-og: glyph, not the fallback card),
-# image/png, 2400×1260, 20-300 KB; then the same URL again is a Workers Cache HIT.
-chk touch-icon 200 "/apple-touch-icon.png" "PNG"
-og_one() {   # og_one <name> <path> <want x-ephem-og-cache or "">
-  local name=$1 p=$2 wc=$3 b="$D/$1.b" h="$D/$1.h" c t why=""
-  c=$(curl -s -o "$b" -D "$h" -w '%{http_code} %{time_total}' --max-time 30 ${H[@]+"${H[@]}"} "$B$p"); t=${c#* }; c=${c%% *}; touch "$h" "$b"
-  hd() { tr -d '\r' < "$h" | awk -F': ' -v k="$1" 'tolower($1)==k{print $2}' | tail -1; }
-  local v sz og ca ct er wh; v=$(hd x-ephem-version); og=$(hd x-ephem-og); ca=$(hd x-ephem-og-cache); ct=$(hd content-type); er=$(hd x-ephem-errors); sz=$(wc -c < "$b" | tr -d ' ')
-  wh=$(python3 -c 'import sys,struct; d=open(sys.argv[1],"rb").read(24); print("%dx%d" % struct.unpack(">II", d[16:24]) if d[:8]==b"\x89PNG\r\n\x1a\n" else "not-png")' "$b")
-  [ "$c" = 200 ] || why="status $c"
-  [ -z "$why" ] && [ "$ct" != image/png ] && why="content-type $ct"
-  [ -z "$why" ] && [ "$og" != glyph ] && why="x-ephem-og ${og:-none} (the fallback card, not a render)"
-  [ -z "$why" ] && [ "$wh" != 2400x1260 ] && why="image $wh, want 2400x1260"
-  [ -z "$why" ] && { [ "$sz" -lt 20000 ] || [ "$sz" -gt 300000 ]; } && why="size $sz B, want 20-300 KB"
-  [ -z "$why" ] && [ -n "$EXPECT" ] && [ "$v" != "$EXPECT" ] && why="answered by version ${v:-none}, want ${EXPECT:0:8}"
-  [ -z "$why" ] && [ -n "$PIN" ] && [ -n "$RUN" ] && [ "${er:-0}" != 0 ] && why="isolate logged ${er} errors (x-ephem-errors)"
-  [ -z "$why" ] && [ -n "$wc" ] && [ "$ca" != "$wc" ] && why="x-ephem-og-cache ${ca:-none}, want $wc"
-  [ -n "$MANIFEST" ] && echo "$(hd cf-ray | grep . || echo -) $c GET ${p%%\?*} $name" >> "$MANIFEST"
-  if [ -z "$why" ]; then echo "ok   $name $c ${v:0:8} $og ${ca:-} ${sz} B ${t}s $p" > "$D/$name.res"; else echo "FAIL $name: $why ($(hd cf-ray)) $p" > "$D/$name.res"; fi
-}
-OGP="/og.png?lat=40.71&lon=-74.01&tz=America%2FNew_York&place=SMOKE+$(openssl rand -hex 3 | tr a-f A-F)&t=$(( $(date +%s) / 600 ))"
-[[ "$ONLY" == *",og-hit,"* ]] && ONLY="$ONLY,og,"   # og-hit needs og's render first
-want og && ORDER+=(og); want og-hit && ORDER+=(og-hit)
-{ want og && og_one og "$OGP" ""; want og-hit && og_one og-hit "$OGP" HIT; } &   # in order: render, then the cached copy
-if want mcp; then
-  ORDER+=(mcp)
-  { if EPHEM_VERSION=$PIN EPHEM_SMOKE_RUN=$RUN EPHEM_SMOKE_MANIFEST=$MANIFEST node --experimental-strip-types "$(dirname "$0")/obs/mcp-probe.ts" "$B" > "$D/mcp" 2>&1; then echo "ok   mcp $(tail -1 "$D/mcp")" > "$D/mcp.res"
-    else { grep -E 'FAIL' "$D/mcp" | head -5; echo "FAIL mcp: $(tail -1 "$D/mcp")"; } > "$D/mcp.res"; fi; } &
-fi
-wait
-for n in ${ORDER[@]+"${ORDER[@]}"}; do
-  N=$((N + 1))
-  if [ -s "$D/$n.res" ]; then cat "$D/$n.res"; else echo "FAIL $n: no result (check crashed)"; FAILED+=("$n"); continue; fi
-  tail -1 "$D/$n.res" | grep -q '^ok ' || FAILED+=("$n")
-done
-[ -n "$FAILED_TO" ] && { : > "$FAILED_TO"; for f in ${FAILED[@]+"${FAILED[@]}"}; do echo "$f" >> "$FAILED_TO"; done; }
-if [ ${#FAILED[@]} -eq 0 ]; then echo "SMOKE ok $N/$N${PIN:+ (pinned ${PIN:0:8})}${EXPECT:+ (all from ${EXPECT:0:8})}${CEXPECT:+ (compute ${CEXPECT:0:8})}"; exit 0; fi
-echo "SMOKE FAILED ${#FAILED[@]}/$N: ${FAILED[*]}"; exit 1
+  set -uo pipefail
+  B=${1:?usage: smoke.sh <base> [--pin id] [--expect id] [--only a,b] [--failed-to file]}
+  B=${B%/}
+  shift
+  PIN=""
+  EXPECT=""
+  CEXPECT=""
+  ONLY=""
+  FAILED_TO=""
+  RUN=""
+  MANIFEST=""
+  while [ $# -gt 0 ]; do case "$1" in
+    --pin)
+      PIN=$2
+      EXPECT=$2
+      shift 2
+      ;;
+    --expect)
+      EXPECT=$2
+      shift 2
+      ;;
+    --only)
+      ONLY=",$2,"
+      shift 2
+      ;;
+    --failed-to)
+      FAILED_TO=$2
+      shift 2
+      ;;
+    --run)
+      RUN=$2
+      shift 2
+      ;;
+    --manifest)
+      MANIFEST=$2
+      shift 2
+      ;;
+    --expect-compute)
+      CEXPECT=$2
+      shift 2
+      ;;
+    *)
+      echo "smoke.sh: unknown arg $1" >&2
+      exit 2
+      ;;
+  esac done
+  D=$(mktemp -d "${TMPDIR:-/tmp}/ephem-smoke-XXXX")
+  trap 'rm -rf "$D"' EXIT
+  OVR=$({ [ -n "$PIN" ] && printf 'ephem="%s"' "$PIN"; } || true)
+  H=()
+  [ -n "$OVR" ] && H=(-H "cloudflare-workers-version-overrides: $OVR")
+  [ -n "$RUN" ] && H+=(-H "x-ephem-smoke: $RUN")
+  T=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  FAILED=()
+  N=0
+  [[ "$ONLY" == *",compute-hit,"* ]] && ONLY="$ONLY,compute," # compute-hit needs compute's fresh key first
+  want() { [ -z "$ONLY" ] || [[ "$ONLY" == *",$1,"* ]]; }
+  # chk_one <name> <want-status> <path> [grep-pattern] [POST-json] [want x-ephem-cache] [want x-ephem-compute-version]
+  # Checks run concurrently (each one a background job with its own files; a `{ …; …; } &` group keeps the order where one check depends
+  # on another: compute → compute-hit). Results are printed in the order the checks are written. ~8 s sequential → ~2 s.
+  chk_one() {
+    local name=$1 ws=$2 p=$3 pat=${4:-} data=${5:-} wc=${6:-} wcv=${7:-} c v x cv er why=""
+    want "$name" || return 0
+    local b="$D/$name.b" h="$D/$name.h"
+    if [ -n "$data" ]; then
+      c=$(curl -s -o "$b" -D "$h" -w '%{http_code}' --max-time 30 ${H[@]+"${H[@]}"} -X POST -H 'content-type: application/json' -d "$data" "$B$p")
+    else c=$(curl -s -o "$b" -D "$h" -w '%{http_code}' --max-time 30 ${H[@]+"${H[@]}"} "$B$p"); fi
+    touch "$h" "$b"
+    v=$(tr -d '\r' <"$h" | awk -F': ' 'tolower($1)=="x-ephem-version"{print $2}' | tail -1)
+    [ "$c" = "$ws" ] || why="status $c, want $ws"
+    [ -z "$why" ] && [ -n "$pat" ] && ! grep -q -- "$pat" "$b" && why="body lacks $pat"
+    [ -z "$why" ] && [ -n "$EXPECT" ] && [ "$v" != "$EXPECT" ] && why="answered by version ${v:-none}, want ${EXPECT:0:8}"
+    x=$(tr -d '\r' <"$h" | awk -F': ' 'tolower($1)=="x-ephem-cache"{print $2}' | tail -1)
+    cv=$(tr -d '\r' <"$h" | awk -F': ' 'tolower($1)=="x-ephem-compute-version"{print $2}' | tail -1)
+    er=$(tr -d '\r' <"$h" | awk -F': ' 'tolower($1)=="x-ephem-errors"{print $2}' | tail -1)
+    [ -z "$why" ] && [ -n "$PIN" ] && [ -n "$RUN" ] && [ "${er:-0}" != 0 ] && why="isolate logged ${er} errors (x-ephem-errors)"
+    [ -n "$MANIFEST" ] && echo "$(tr -d '\r' <"$h" | awk -F': ' 'tolower($1)=="cf-ray"{print $2}' | tail -1 | grep . || echo -) $c $([ -n "$data" ] && echo POST || echo GET) ${p%%\?*} $name" >>"$MANIFEST"
+    [ -z "$why" ] && [ -n "$wc" ] && [ "$x" != "$wc" ] && why="x-ephem-cache ${x:-none}, want $wc"
+    [ -z "$why" ] && [ -n "$wcv" ] && [ "$wcv" = any ] && [ -z "$cv" ] && why="no x-ephem-compute-version (not computed by the Api)"
+    [ -z "$why" ] && [ -n "$wcv" ] && [ "$wcv" != any ] && [ "$cv" != "$wcv" ] && why="computed by Api version ${cv:-none}, want ${wcv:0:8}"
+    if [ -z "$why" ]; then echo "ok   $name $c ${v:0:8}${x:+ $x}${cv:+ compute ${cv:0:8}} $p" >"$D/$name.res"; else echo "FAIL $name: $why ($(tr -d '\r' <"$h" | awk -F': ' 'tolower($1)=="cf-ray"{print $2}')) $p" >"$D/$name.res"; fi
+  }
+  # chk <chk_one args>: one check as a background job (its name joins ORDER, the print order). Check lines stay `chk …`.
+  ORDER=()
+  chk() {
+    want "$1" || return 0
+    ORDER+=("$1")
+    chk_one "$@" &
+  }
+  # The page UI (@ephem/web): the homepage names this commit's build (its manifest, packages/web/dist/assets.json: deploy.sh
+  # builds it before the gate), carries a strict CSP (script-src 'self', no inline script) and no inline executable script;
+  # every asset it names is a Workers Static Asset, immutable for a year, with its type (`asset`: the bytes must be the build's,
+  # by sha256). The DE440 blocks the browser computes from (src/sky-assets.ts): 8 144 B, through Blocks → BlockStore.
+  MAN="$(dirname "$0")/../packages/web/dist/assets.json"
+  [ -f "$MAN" ] || {
+    echo "smoke.sh: no web build ($MAN): run npm run build" >&2
+    exit 2
+  }
+  WEB=$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m["home"]["js"], m["core"]["js"], m["css"]["href"], m["fonts"]["regular"]["href"], m["fonts"]["bold"]["href"], m["scalar"]["js"])' "$MAN")
+  read -r HOME_JS CORE_JS CSS_HREF FONT_R FONT_B SCALAR_JS <<<"$WEB"
+  chk home 200 "/" "<script type=\"module\" src=\"$HOME_JS\">"
+  # asset_one <name> <path> <content-type prefix>: a static asset as the build wrote it (sha256 of the bytes = the local file's)
+  asset_one() {
+    local name=$1 p=$2 want=$3 b="$D/$1.b" h="$D/$1.h" c why=""
+    c=$(curl -s -o "$b" -D "$h" -w '%{http_code}' --max-time 30 ${H[@]+"${H[@]}"} "$B$p")
+    touch "$h" "$b"
+    hd() { tr -d '\r' <"$h" | awk -F': ' -v k="$1" 'tolower($1)==k{print $2}' | tail -1; }
+    [ "$c" = 200 ] || why="status $c"
+    [ -z "$why" ] && [[ "$(hd content-type)" != *"$want"* ]] && why="content-type $(hd content-type), want $want"
+    [ -z "$why" ] && { [[ "$(hd cache-control)" != *"max-age=31536000"* ]] || [[ "$(hd cache-control)" != *immutable* ]]; } && why="cache-control $(hd cache-control)"
+    [ -z "$why" ] && [ "$(shasum -a 256 <"$b" | cut -c1-64)" != "$(shasum -a 256 <"$(dirname "$0")/../packages/web/dist/client$p" | cut -c1-64)" ] && why="bytes differ from this commit's build"
+    [ -n "$MANIFEST" ] && echo "- $c GET $p $name" >>"$MANIFEST.assets" # static assets never reach the Worker: no invocation to gate
+    if [ -z "$why" ]; then echo "ok   $name $c $(wc -c <"$b" | tr -d ' ') B $p" >"$D/$name.res"; else echo "FAIL $name: $why $p" >"$D/$name.res"; fi
+  }
+  asset() {
+    want "$1" || return 0
+    ORDER+=("$1")
+    asset_one "$@" &
+  }
+  asset asset-home "$HOME_JS" "javascript"
+  asset asset-core "$CORE_JS" "javascript"
+  asset asset-css "$CSS_HREF" "text/css"
+  asset asset-font "$FONT_R" "font/woff2"
+  asset asset-font-bold "$FONT_B" "font/woff2"
+  asset asset-scalar "$SCALAR_JS" "javascript"
+  # csp: every page's CSP header and no inline executable script / event handler in its body (the rules of @ephem/web)
+  csp_one() {
+    local name=$1 p=$2 b="$D/$1.b" h="$D/$1.h" c why="" csp v
+    c=$(curl -s -o "$b" -D "$h" -w '%{http_code}' --max-time 30 ${H[@]+"${H[@]}"} "$B$p")
+    touch "$h" "$b"
+    csp=$(tr -d '\r' <"$h" | awk -F': ' 'tolower($1)=="content-security-policy"{print $2}' | tail -1)
+    v=$(tr -d '\r' <"$h" | awk -F': ' 'tolower($1)=="x-ephem-version"{print $2}' | tail -1)
+    [ "$c" = 200 ] || why="status $c"
+    [ -z "$why" ] && [[ "$csp" != *"default-src 'none'"* ]] && why="CSP without default-src 'none': ${csp:-none}"
+    [ -z "$why" ] && [[ "$csp" == *"unsafe-eval"* || "$(echo "$csp" | sed -n "s/.*script-src \([^;]*\).*/\1/p")" == *"unsafe-inline"* ]] && why="CSP allows inline/eval script: $csp"
+    [ -z "$why" ] && python3 -c 'import re,sys; h=open(sys.argv[1],encoding="utf-8").read(); bad=[a for a,b in re.findall(r"<script\b([^>]*)>([\s\S]*?)</script>",h) if "application/json" not in a and b.strip()]+re.findall(r"<[a-z][^>]*\son[a-z]+\s*=",h,re.I); sys.exit(1 if bad else 0)' "$b" || { [ -z "$why" ] && why="inline executable script or event handler in the page"; }
+    [ -z "$why" ] && [ -n "$EXPECT" ] && [ "$v" != "$EXPECT" ] && why="answered by version ${v:-none}, want ${EXPECT:0:8}"
+    [ -n "$MANIFEST" ] && echo "$(tr -d '\r' <"$h" | awk -F': ' 'tolower($1)=="cf-ray"{print $2}' | tail -1 | grep . || echo -) $c GET ${p%%\?*} $name" >>"$MANIFEST"
+    if [ -z "$why" ]; then echo "ok   $name $c ${v:0:8} $p" >"$D/$name.res"; else echo "FAIL $name: $why $p" >"$D/$name.res"; fi
+  }
+  csp() {
+    want "$1" || return 0
+    ORDER+=("$1")
+    csp_one "$@" &
+  }
+  csp csp-home "/?lat=40.7&lon=-74&tz=America/New_York"
+  csp csp-docs "/docs"
+  csp csp-docs-interactive "/docs/interactive"
+  chk de440-block 200 "/assets/de440/29915576d0a65557/5442"
+  chk de440-block-404 404 "/assets/de440/29915576d0a65557/12556" "no block"
+  chk page-trace 200 "/?lat=40.7&lon=-74&tz=America/New_York" '<meta name="traceparent" content="00-' # document trace context (src/clienttrace.ts)
+  RT=$(openssl rand -hex 16)
+  RS=$(openssl rand -hex 8)
+  chk rum 204 "/rum" "" '{"tp":"00-'"$RT"'-'"$RS"'-01","page":"/","seq":0,"s":[{"k":"app","n":"smoke","sid":"'"$RS"'","t":0}]}' # RUM ingest (src/rum.ts), stored synthetic
+  chk docs 200 "/docs" 'href="/openapi.json"'                                                                                   # useful without JS: links the spec
+  chk docs-interactive 200 "/docs/interactive"
+  chk llms 200 "/llms.txt" "$B/mcp" # names the MCP endpoint
+  chk openapi 200 "/openapi.json"
+  chk healthz 200 "/healthz"
+  chk position-now 200 "/v1/position?lat=40.7&lon=-74"
+  chk position-time 200 "/v1/position?lat=40.7&lon=-74&time=$T"
+  chk day 200 "/v1/day?lat=40.7&lon=-74&date=2026-10-29&tz=America/New_York"
+  chk magnetic 200 "/v1/magnetic?lat=40.7&lon=-74"
+  chk crossing 200 "/v1/crossing?lat=40.7&lon=-74&body=sun&altitude=-0.8333&direction=set&date=2026-10-29&tz=America/New_York"
+  chk alignment 200 "/v1/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&start=2026-10-29T02:00:00Z&end=2026-10-29T03:00:00Z"
+  chk sightline 200 "/v1/sightline?lat=40.6935&lon=-74.0017&height=5&heightRef=msl&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&samples=11"
+  chk track 200 "/v1/track?lat=40.7&lon=-74&start=2026-10-29T00:00:00Z&end=2026-10-30T00:00:00Z"
+  chk weather 200 "/v1/weather?lat=40.7&lon=-74"
+  chk unknown-param 400 "/v1/day?lat=40.7&lon=-74&date=2026-10-29&tz=America/New_York&bogus=1"
+  chk not-found 404 "/position?lat=40.7&lon=-74" 'did you mean /v1/position?' # unprefixed: JSON 404 naming the endpoints (no alias)
+  chk window-internal 404 "/internal/alignment-search-window?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&region=r1.x&start=2026-10-17T00:00:00Z"
+  # the Liberty reference Nov 16 2026 pass over a bbox of Brooklyn Bridge Park (fans out to cached window GETs)
+  chk search 200 "/v1/alignment/search" '"enter":{"time":"2026-11-17T03:4' \
+    '{"body":"moon","targetLat":40.68925,"targetLon":-74.0445,"targetHeight":70,"targetHeightRef":"msl","region":[-73.9995,40.7,-73.993,40.706],"height":5,"heightRef":"msl","start":"2026-11-16T00:00:00Z","end":"2026-11-18T00:00:00Z"}'
+  # A deterministic key nobody has asked for (random lat at 1e-7°): MISS computed by the Api, then HIT from its cache.
+  U="/v1/position?lat=40.$(printf '%07d' $((RANDOM * 32768 + RANDOM)))&lon=-74&time=$T"
+  want compute && ORDER+=(compute)
+  want compute-hit && ORDER+=(compute-hit)
+  {
+    chk_one compute 200 "$U" '"provenance"' "" MISS "${CEXPECT:-any}"
+    chk_one compute-hit 200 "$U" '"provenance"' "" HIT any
+  } & # in order
+  chk blocks-miss 200 "/v1/position?lat=40.7&lon=-74&time=$(python3 -c 'import random,datetime as d; print((d.datetime(1972,1,2)+d.timedelta(seconds=random.randrange(5_617_000_000))).strftime("%Y-%m-%dT%H:%M:%SZ"))')" '"provenance"' "" MISS "${CEXPECT:-any}"
+  # Link preview (src/og-render.ts): the font glyph fetches, the touch icon, and a live card: a place name never asked for (a fresh
+  # Og MISS: data from the Api, a real glyph render) must come back as a glyph PNG (x-ephem-og: glyph, not the fallback card),
+  # image/png, 2400×1260, 20-300 KB; then the same URL again is a Workers Cache HIT.
+  chk touch-icon 200 "/apple-touch-icon.png" "PNG"
+  og_one() { # og_one <name> <path> <want x-ephem-og-cache or "">
+    local name=$1 p=$2 wc=$3 b="$D/$1.b" h="$D/$1.h" c t why=""
+    c=$(curl -s -o "$b" -D "$h" -w '%{http_code} %{time_total}' --max-time 30 ${H[@]+"${H[@]}"} "$B$p")
+    t=${c#* }
+    c=${c%% *}
+    touch "$h" "$b"
+    hd() { tr -d '\r' <"$h" | awk -F': ' -v k="$1" 'tolower($1)==k{print $2}' | tail -1; }
+    local v sz og ca ct er wh
+    v=$(hd x-ephem-version)
+    og=$(hd x-ephem-og)
+    ca=$(hd x-ephem-og-cache)
+    ct=$(hd content-type)
+    er=$(hd x-ephem-errors)
+    sz=$(wc -c <"$b" | tr -d ' ')
+    wh=$(python3 -c 'import sys,struct; d=open(sys.argv[1],"rb").read(24); print("%dx%d" % struct.unpack(">II", d[16:24]) if d[:8]==b"\x89PNG\r\n\x1a\n" else "not-png")' "$b")
+    [ "$c" = 200 ] || why="status $c"
+    [ -z "$why" ] && [ "$ct" != image/png ] && why="content-type $ct"
+    [ -z "$why" ] && [ "$og" != glyph ] && why="x-ephem-og ${og:-none} (the fallback card, not a render)"
+    [ -z "$why" ] && [ "$wh" != 2400x1260 ] && why="image $wh, want 2400x1260"
+    [ -z "$why" ] && { [ "$sz" -lt 20000 ] || [ "$sz" -gt 300000 ]; } && why="size $sz B, want 20-300 KB"
+    [ -z "$why" ] && [ -n "$EXPECT" ] && [ "$v" != "$EXPECT" ] && why="answered by version ${v:-none}, want ${EXPECT:0:8}"
+    [ -z "$why" ] && [ -n "$PIN" ] && [ -n "$RUN" ] && [ "${er:-0}" != 0 ] && why="isolate logged ${er} errors (x-ephem-errors)"
+    [ -z "$why" ] && [ -n "$wc" ] && [ "$ca" != "$wc" ] && why="x-ephem-og-cache ${ca:-none}, want $wc"
+    [ -n "$MANIFEST" ] && echo "$(hd cf-ray | grep . || echo -) $c GET ${p%%\?*} $name" >>"$MANIFEST"
+    if [ -z "$why" ]; then echo "ok   $name $c ${v:0:8} $og ${ca:-} ${sz} B ${t}s $p" >"$D/$name.res"; else echo "FAIL $name: $why ($(hd cf-ray)) $p" >"$D/$name.res"; fi
+  }
+  OGP="/og.png?lat=40.71&lon=-74.01&tz=America%2FNew_York&place=SMOKE+$(openssl rand -hex 3 | tr a-f A-F)&t=$(($(date +%s) / 600))"
+  [[ "$ONLY" == *",og-hit,"* ]] && ONLY="$ONLY,og," # og-hit needs og's render first
+  want og && ORDER+=(og)
+  want og-hit && ORDER+=(og-hit)
+  {
+    want og && og_one og "$OGP" ""
+    want og-hit && og_one og-hit "$OGP" HIT
+  } & # in order: render, then the cached copy
+  if want mcp; then
+    ORDER+=(mcp)
+    { if EPHEM_VERSION=$PIN EPHEM_SMOKE_RUN=$RUN EPHEM_SMOKE_MANIFEST=$MANIFEST node --experimental-strip-types "$(dirname "$0")/obs/mcp-probe.ts" "$B" >"$D/mcp" 2>&1; then
+      echo "ok   mcp $(tail -1 "$D/mcp")" >"$D/mcp.res"
+    else {
+      grep -E 'FAIL' "$D/mcp" | head -5
+      echo "FAIL mcp: $(tail -1 "$D/mcp")"
+    } >"$D/mcp.res"; fi; } &
+  fi
+  wait
+  for n in ${ORDER[@]+"${ORDER[@]}"}; do
+    N=$((N + 1))
+    if [ -s "$D/$n.res" ]; then cat "$D/$n.res"; else
+      echo "FAIL $n: no result (check crashed)"
+      FAILED+=("$n")
+      continue
+    fi
+    tail -1 "$D/$n.res" | grep -q '^ok ' || FAILED+=("$n")
+  done
+  [ -n "$FAILED_TO" ] && {
+    : >"$FAILED_TO"
+    for f in ${FAILED[@]+"${FAILED[@]}"}; do echo "$f" >>"$FAILED_TO"; done
+  }
+  if [ ${#FAILED[@]} -eq 0 ]; then
+    echo "SMOKE ok $N/$N${PIN:+ (pinned ${PIN:0:8})}${EXPECT:+ (all from ${EXPECT:0:8})}${CEXPECT:+ (compute ${CEXPECT:0:8})}"
+    exit 0
+  fi
+  echo "SMOKE FAILED ${#FAILED[@]}/$N: ${FAILED[*]}"
+  exit 1
 }

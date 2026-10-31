@@ -15,19 +15,27 @@ export type HeightRef = "ellipsoid" | "msl"
  *  model as /v1/alignment (ray curvature k/R, k = 0.13): dip = √(1 − k) · acos(R / (R + h)), R = 6 371 008.8 m.
  *  ≈ 1.797′·√h for small h. 0 at or below sea level. */
 export const seaDip = (hMsl: number): number =>
-  hMsl <= 0 ? 0 : Math.sqrt(1 - K_TERRESTRIAL) * Math.acos(R_MEAN_M / (R_MEAN_M + hMsl)) / DEG
+  hMsl <= 0 ? 0 : (Math.sqrt(1 - K_TERRESTRIAL) * Math.acos(R_MEAN_M / (R_MEAN_M + hMsl))) / DEG
 
 export type HorizonSpec = "sea" | "geometric" | number
-export interface Horizon { readonly kind: "sea" | "geometric" | "custom"; readonly altitude: number; readonly dip: number | null }
+export interface Horizon {
+  readonly kind: "sea" | "geometric" | "custom"
+  readonly altitude: number
+  readonly dip: number | null
+}
 export const horizonOf = (spec: HorizonSpec | undefined, hMsl: number): Horizon => {
   const s = spec ?? "sea"
-  if (s === "sea") { const d = seaDip(hMsl); return { kind: "sea", altitude: -d, dip: d } }
+  if (s === "sea") {
+    const d = seaDip(hMsl)
+    return { kind: "sea", altitude: -d, dip: d }
+  }
   if (s === "geometric") return { kind: "geometric", altitude: 0, dip: null }
   return { kind: "custom", altitude: s, dip: null }
 }
 
 // ─────────────── refraction ───────────────
-export const T_DEFAULT = 10, P_DEFAULT = 1010
+export const T_DEFAULT = 10,
+  P_DEFAULT = 1010
 /** Bennett's formula has its maximum at a* = √7.31 − 4.4 (−1.6963°) and decreases below it, which is unphysical: the model's floor. */
 export const REFRACTION_FLOOR = Math.sqrt(7.31) - 4.4
 export const REFRACTION_CEIL = 89.9

@@ -7,13 +7,17 @@ import { WorkerEntrypoint } from "cloudflare:workers"
 import { ingest, status, type IngestResult } from "./ingest.ts"
 import type { R2BucketLike } from "./blocks.ts"
 
-export interface AdminEnv { readonly EPH: R2BucketLike }
+export interface AdminEnv {
+  readonly EPH: R2BucketLike
+}
 
 export class Admin extends WorkerEntrypoint<AdminEnv> {
   async ingest(opts: { force?: boolean } = {}): Promise<IngestResult> {
-    return ingest({ bucket: this.env.EPH, fetch: url => fetch(url), fixedLength: fixedLengthStream }, opts)
+    return ingest({ bucket: this.env.EPH, fetch: (url) => fetch(url), fixedLength: fixedLengthStream }, opts)
   }
-  async status() { return status(this.env.EPH) }
+  async status() {
+    return status(this.env.EPH)
+  }
 }
 
 /** Workers' FixedLengthStream: lets R2 accept a streamed body of known size without buffering it. */

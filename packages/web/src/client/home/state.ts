@@ -23,13 +23,35 @@ export interface Boot {
   readonly frame: { readonly W: number; readonly H: number; readonly strip: number; readonly mobile: boolean }
 }
 export interface Loc {
-  readonly lat: number; readonly lon: number; readonly place: string; readonly city: string; readonly tz: string
-  readonly source: Visitor["source"] | "device"; readonly acc: number | null
+  readonly lat: number
+  readonly lon: number
+  readonly place: string
+  readonly city: string
+  readonly tz: string
+  readonly source: Visitor["source"] | "device"
+  readonly acc: number | null
 }
-export interface TrackRow { readonly t: number; readonly sun: Sample; readonly moon: Sample }
-export interface Sample { readonly azimuth: number; readonly altitude: number; readonly apparentAltitude: number | null }
-export interface Last { readonly url: string; readonly ms: number | null; readonly prov: Provenance | undefined }
-export interface Parity { readonly at: string; pos?: PosDiff; track?: TrackDiff; day?: DayDiff }
+export interface TrackRow {
+  readonly t: number
+  readonly sun: Sample
+  readonly moon: Sample
+}
+export interface Sample {
+  readonly azimuth: number
+  readonly altitude: number
+  readonly apparentAltitude: number | null
+}
+export interface Last {
+  readonly url: string
+  readonly ms: number | null
+  readonly prov: Provenance | undefined
+}
+export interface Parity {
+  readonly at: string
+  pos?: PosDiff
+  track?: TrackDiff
+  day?: DayDiff
+}
 
 // ---- set once at boot ----
 export const env = {
@@ -65,10 +87,16 @@ export const tickRev = signal(0)
 export const apiErr = signal<string | null>(null)
 /** bumped when the diagnostics should be redrawn (at most once a second, never during a drag) */
 export const diagRev = signal(0)
-export const compute = signal<{ readonly ready: boolean; readonly started: boolean; readonly err: string | null }>({ ready: false, started: false, err: null })
+export const compute = signal<{ readonly ready: boolean; readonly started: boolean; readonly err: string | null }>({
+  ready: false,
+  started: false,
+  err: null,
+})
 /** the point button's state: hidden (no compass), off, on */
 export const pointing = signal<"hidden" | "off" | "on">("hidden")
-export const guideText = signal<{ readonly text: string; readonly label: string | null; readonly sim: boolean } | null>(null)
+export const guideText = signal<{ readonly text: string; readonly label: string | null; readonly sim: boolean } | null>(
+  null,
+)
 export const recenterShown = signal(false)
 export const rawOpen = signal(false)
 export const locNote = signal("")
@@ -78,13 +106,25 @@ export const scrubbable = signal(false)
 /** the chart's frame centre (azimuth, deg); null until the first answer */
 export const center = signal<number | null>(null)
 /** the chart's size in CSS px and the safe-area insets (the server's guess for the first frame, then measured) */
-export const skySize = signal<{ readonly W: number; readonly H: number; readonly insetL: number; readonly insetR: number }>({ W: 0, H: 0, insetL: 0, insetR: 0 })
+export const skySize = signal<{
+  readonly W: number
+  readonly H: number
+  readonly insetL: number
+  readonly insetR: number
+}>({ W: 0, H: 0, insetL: 0, insetR: 0 })
 /** the chart's corner buttons as a hard rect in the label layout (null: none shows) */
 export const ctlRect = signal<Rect | null>(null)
 /** bumped to redraw the chart (fonts, a new frame) */
 export const chartRev = signal(0)
 /** the timeline as drawn (null: nothing yet; src/client/home/strip.ts) */
-export interface Strip { readonly L: TlLayout; readonly w: number; readonly anchor: number; readonly s0: number; readonly span: number; readonly k: number }
+export interface Strip {
+  readonly L: TlLayout
+  readonly w: number
+  readonly anchor: number
+  readonly s0: number
+  readonly span: number
+  readonly k: number
+}
 export const strip = signal<Strip | null>(null)
 /** the NOW marker's x (null: off the window) and the scrub cursor's (null: live) */
 export const nowX = signal<number | null>(null)
@@ -117,7 +157,18 @@ export const K = {
   frames: null as { readonly n: number; readonly mean: number; readonly max: number } | null,
 }
 /** the drag on the timeline in progress (src/client/home/strip.ts) */
-export const SC = { cur: null as null | { id: number; x: number; y: number; on: boolean; t0: number; n: number; sum: number; max: number } }
+export const SC = {
+  cur: null as null | {
+    id: number
+    x: number
+    y: number
+    on: boolean
+    t0: number
+    n: number
+    sum: number
+    max: number
+  },
+}
 
 export const realNow = (): number => Date.now() + env.clk.off
 export const baseNow = (): number => (env.at == null ? realNow() : env.at)
@@ -128,13 +179,47 @@ export const tNow = (): number => baseNow() + (scrub.peek() ?? 0)
 export const resetState = () => {
   batch(() => {
     loc.value = { lat: 0, lon: 0, place: "", city: "", tz: "UTC", source: "default", acc: null }
-    pos.value = null; day.value = null; tomorrow.value = null; track.value = []; decl.value = null; wx.value = null; wxErr.value = null
-    scrub.value = null; pose.value = null; now.value = 0; baseTime.value = 0; tickRev.value = 0; apiErr.value = null; diagRev.value = 0
-    compute.value = { ready: false, started: false, err: null }; pointing.value = "hidden"; guideText.value = null; recenterShown.value = false
-    rawOpen.value = false; locNote.value = ""; curl.value = { city: "", text: "" }; scrubbable.value = false; center.value = null
-    skySize.value = { W: 0, H: 0, insetL: 0, insetR: 0 }; ctlRect.value = null; chartRev.value = 0; strip.value = null; nowX.value = null; scrubX.value = null
+    pos.value = null
+    day.value = null
+    tomorrow.value = null
+    track.value = []
+    decl.value = null
+    wx.value = null
+    wxErr.value = null
+    scrub.value = null
+    pose.value = null
+    now.value = 0
+    baseTime.value = 0
+    tickRev.value = 0
+    apiErr.value = null
+    diagRev.value = 0
+    compute.value = { ready: false, started: false, err: null }
+    pointing.value = "hidden"
+    guideText.value = null
+    recenterShown.value = false
+    rawOpen.value = false
+    locNote.value = ""
+    curl.value = { city: "", text: "" }
+    scrubbable.value = false
+    center.value = null
+    skySize.value = { W: 0, H: 0, insetL: 0, insetR: 0 }
+    ctlRect.value = null
+    chartRev.value = 0
+    strip.value = null
+    nowX.value = null
+    scrubX.value = null
   })
-  Object.assign(S, { posAt: 0, posErr: null, last: null, dayApi: null, trackApi: null, trackDay: null, tomorrowFor: null, wxAt: 0, userPanned: false })
+  Object.assign(S, {
+    posAt: 0,
+    posErr: null,
+    last: null,
+    dayApi: null,
+    trackApi: null,
+    trackDay: null,
+    tomorrowFor: null,
+    wxAt: 0,
+    userPanned: false,
+  })
   DAYS.clear()
   Object.assign(env, { boot: null, clk: { off: 0, pm: 0, nt: false }, at: null, atIso: null })
 }

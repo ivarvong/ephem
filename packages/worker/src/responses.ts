@@ -22,7 +22,14 @@ export const isApi = (url: URL) => API_PATHS.has(url.pathname)
  *  (a hint only: no alias, no redirect). */
 export const notFound = (url: URL) => {
   const hint = API_PATHS.has(`/v1${url.pathname}`) ? ` (did you mean /v1${url.pathname}?)` : ""
-  return HttpServerResponse.jsonUnsafe({ _tag: "NotFound", message: `no endpoint ${url.pathname}${hint}; the API endpoints are ${[...API_PATHS].join(", ")} (docs: /docs, spec: /openapi.json)`, endpoints: [...API_PATHS] }, { status: 404, headers: { "cache-control": "no-store" } })
+  return HttpServerResponse.jsonUnsafe(
+    {
+      _tag: "NotFound",
+      message: `no endpoint ${url.pathname}${hint}; the API endpoints are ${[...API_PATHS].join(", ")} (docs: /docs, spec: /openapi.json)`,
+      endpoints: [...API_PATHS],
+    },
+    { status: 404, headers: { "cache-control": "no-store" } },
+  )
 }
 
 export const IMMUTABLE = "public, max-age=31536000, immutable"
@@ -32,12 +39,22 @@ const NO_STORE = "no-store"
 export type Role =
   | { readonly role: "local" }
   | { readonly role: "api" }
-  | { readonly role: "front"; readonly api: (pathAndQuery: string, init: { method: string; headers: Record<string, string> }) => Promise<Response> }   // loopback.ts api
+  | {
+      readonly role: "front"
+      readonly api: (
+        pathAndQuery: string,
+        init: { method: string; headers: Record<string, string> },
+      ) => Promise<Response>
+    } // loopback.ts api
 export class Edge extends Context.Service<Edge, Role>()("@ephem/worker/Edge") {}
 
 /** A pure function of the query (and CACHE_VERSION, which is in the Api's cache key), so a year is safe. */
 export const deterministic = (url: URL): boolean =>
-  url.pathname === "/v1/day" || url.pathname === "/v1/alignment" || url.pathname === "/v1/track" || url.pathname === "/v1/sightline" || url.pathname === SEARCH_WINDOW_PATH ||
+  url.pathname === "/v1/day" ||
+  url.pathname === "/v1/alignment" ||
+  url.pathname === "/v1/track" ||
+  url.pathname === "/v1/sightline" ||
+  url.pathname === SEARCH_WINDOW_PATH ||
   (url.pathname === "/v1/crossing" && (url.searchParams.has("start") || url.searchParams.has("date"))) ||
   ((url.pathname === "/v1/position" || url.pathname === "/v1/magnetic") && url.searchParams.has("time"))
 
@@ -56,14 +73,20 @@ export const internalCacheControl = (status: number, url: URL): string | undefin
 
 /** What browsers and other downstream caches see from the (uncached) front door. */
 export const outwardCacheControl = (status: number, url: URL): string | undefined => {
-  if (url.pathname === "/") return "private, no-store"   // the sky at request.cf's location: never shared
-  if (url.pathname === "/docs" || url.pathname === "/docs/interactive" || url.pathname === "/llms.txt" || url.pathname === "/openapi.json") return "public, max-age=300"
+  if (url.pathname === "/") return "private, no-store" // the sky at request.cf's location: never shared
+  if (
+    url.pathname === "/docs" ||
+    url.pathname === "/docs/interactive" ||
+    url.pathname === "/llms.txt" ||
+    url.pathname === "/openapi.json"
+  )
+    return "public, max-age=300"
   if (!isApi(url)) return undefined
   if (status !== 200) return NO_STORE
   if (deterministic(url)) return IMMUTABLE
   if (url.pathname === "/v1/weather") return "private, max-age=30"
-  if (url.pathname === "/v1/magnetic") return "public, max-age=3600"   // ~0.1°/year
-  return NO_STORE   // position now, health
+  if (url.pathname === "/v1/magnetic") return "public, max-age=3600" // ~0.1°/year
+  return NO_STORE // position now, health
 }
 
 /** Forwarded to the Api: path plus the query with parameters sorted, so ?a&b and ?b&a share one cache entry. */
@@ -75,16 +98,21 @@ export const canonical = (url: URL): string => {
  *  and no sequential hits on c72a360c, so these run in the front door. Weather too: its keys (lat/lon) almost never repeat
  *  (487 Api runs for 489 requests, b49a8a02) and the forward paid the tier-colo round trip (api.fetch p50 18–63 ms by Api
  *  colo); in the front door it is the MetarFeed loopback (cached, cross-version) plus a nearest-station lookup. */
-export const live = (url: URL) => url.pathname === "/v1/weather" ||
+export const live = (url: URL) =>
+  url.pathname === "/v1/weather" ||
   ((url.pathname === "/v1/position" || url.pathname === "/v1/magnetic") && !url.searchParams.has("time"))
-export const forwards = (method: string, url: URL) => (method === "GET" || method === "HEAD") && isApi(url) && !live(url)
+export const forwards = (method: string, url: URL) =>
+  (method === "GET" || method === "HEAD") && isApi(url) && !live(url)
 
 /** Request headers the front door sends with every forward to the Api. x-ephem-ray joins the Api invocation's log row to
  *  this one; a valid client traceparent (src/clienttrace.ts) is passed on so the Api's root span carries client.trace_id. Cloudflare-Workers-Version-Overrides is passed through (harmless: ctx.exports already runs the caller's
  *  version). Neither is in the cache key (the key is entrypoint + path + query + cf.cacheKey). */
 export const VERSION_OVERRIDES = "cloudflare-workers-version-overrides"
 export const forwardHeaders = (h: Readonly<Record<string, string | undefined>>): Record<string, string> => {
-  const out: Record<string, string> = {}, ray = h["cf-ray"], pin = h[VERSION_OVERRIDES], tp = h["traceparent"]
+  const out: Record<string, string> = {},
+    ray = h["cf-ray"],
+    pin = h[VERSION_OVERRIDES],
+    tp = h["traceparent"]
   if (ray) out["x-ephem-ray"] = ray
   if (tp && parseTraceparent(tp)) out["traceparent"] = tp
   if (pin) out[VERSION_OVERRIDES] = pin
@@ -94,46 +122,78 @@ export const forwardHeaders = (h: Readonly<Record<string, string | undefined>>):
 const withCacheControl = (res: HttpServerResponse.HttpServerResponse, cc: string | undefined) =>
   cc ? HttpServerResponse.setHeader(res, "cache-control", cc) : res
 
-export const Gateway = HttpRouter.middleware(Effect.gen(function* () {
-  const edge = yield* Edge
-  return http => Effect.gen(function* () {
-    const req = yield* HttpServerRequest.HttpServerRequest
-    const url = new URL(req.originalUrl, "http://localhost")
-    if (edge.role === "front" && forwards(req.method, url)) {
-      const headers = forwardHeaders(req.headers), key = canonical(url)
-      const forwarded = yield* Effect.tryPromise(() => edge.api(key, { method: req.method, headers })).pipe(
-        Effect.tap(r => Effect.annotateCurrentSpan({ "ephem.api_cache": r.headers.get("cf-cache-status") ?? "NONE", "http.status_code": r.status })),
-        Effect.withSpan("api.fetch", { attributes: { "ephem.api_key": key } }),
-        Effect.option)
-      if (forwarded._tag === "Some") {
-        const r = forwarded.value, status = r.headers.get("cf-cache-status") ?? "NONE"
-        yield* Effect.annotateCurrentSpan({ "ephem.api_cache": status })
-        const h = new Headers(r.headers); h.delete("cf-cache-status"); h.set("x-ephem-cache", status)
-        // The Api's own Server-Timing is stored with a cached answer: true only for a fresh run (MISS); a HIT would replay
-        // another request's numbers. A fresh run's blocks/geoid entries go on as api-<name> (src/servertiming.ts), the rest is dropped.
-        const apiSt = h.get("server-timing"); h.delete("server-timing")
-        const fresh = apiSt && status === "MISS" ? apiSt.split(/,\s*/).filter(e => /^(blocks|geoid)\b/.test(e)).map(e => "api-" + e).join(", ") : ""
-        if (fresh) yield* Effect.annotateCurrentSpan({ "ephem.api_server_timing": fresh })
-        const cc = outwardCacheControl(r.status, url); if (cc) h.set("cache-control", cc)
-        return HttpServerResponse.fromWeb(new Response(r.body, { status: r.status, statusText: r.statusText, headers: h }))
-      }
-      // The loopback itself failed (not an error answer from the Api): compute here rather than fail the request.
-      yield* Effect.annotateCurrentSpan({ "ephem.api_cache": "LOOPBACK_ERROR" })
-      const res = yield* http
-      return withCacheControl(HttpServerResponse.setHeader(res, "x-ephem-cache", "LOOPBACK_ERROR"), outwardCacheControl(res.status, url))
-    }
-    // The search window is the Api's cache unit, reached only over ctx.exports: not a public route.
-    if (edge.role === "front" && url.pathname === SEARCH_WINDOW_PATH) return notFound(url)
-    if (edge.role === "front" && isApi(url)) yield* Effect.annotateCurrentSpan({ "ephem.api_cache": "LOCAL" })
-    const res = yield* http
-    return withCacheControl(res, edge.role === "api" ? internalCacheControl(res.status, url) : outwardCacheControl(res.status, url))
-  })
-}), { global: true })
+export const Gateway = HttpRouter.middleware(
+  Effect.gen(function* () {
+    const edge = yield* Edge
+    return (http) =>
+      Effect.gen(function* () {
+        const req = yield* HttpServerRequest.HttpServerRequest
+        const url = new URL(req.originalUrl, "http://localhost")
+        if (edge.role === "front" && forwards(req.method, url)) {
+          const headers = forwardHeaders(req.headers),
+            key = canonical(url)
+          const forwarded = yield* Effect.tryPromise(() => edge.api(key, { method: req.method, headers })).pipe(
+            Effect.tap((r) =>
+              Effect.annotateCurrentSpan({
+                "ephem.api_cache": r.headers.get("cf-cache-status") ?? "NONE",
+                "http.status_code": r.status,
+              }),
+            ),
+            Effect.withSpan("api.fetch", { attributes: { "ephem.api_key": key } }),
+            Effect.option,
+          )
+          if (forwarded._tag === "Some") {
+            const r = forwarded.value,
+              status = r.headers.get("cf-cache-status") ?? "NONE"
+            yield* Effect.annotateCurrentSpan({ "ephem.api_cache": status })
+            const h = new Headers(r.headers)
+            h.delete("cf-cache-status")
+            h.set("x-ephem-cache", status)
+            // The Api's own Server-Timing is stored with a cached answer: true only for a fresh run (MISS); a HIT would replay
+            // another request's numbers. A fresh run's blocks/geoid entries go on as api-<name> (src/servertiming.ts), the rest is dropped.
+            const apiSt = h.get("server-timing")
+            h.delete("server-timing")
+            const fresh =
+              apiSt && status === "MISS"
+                ? apiSt
+                    .split(/,\s*/)
+                    .filter((e) => /^(blocks|geoid)\b/.test(e))
+                    .map((e) => "api-" + e)
+                    .join(", ")
+                : ""
+            if (fresh) yield* Effect.annotateCurrentSpan({ "ephem.api_server_timing": fresh })
+            const cc = outwardCacheControl(r.status, url)
+            if (cc) h.set("cache-control", cc)
+            return HttpServerResponse.fromWeb(
+              new Response(r.body, { status: r.status, statusText: r.statusText, headers: h }),
+            )
+          }
+          // The loopback itself failed (not an error answer from the Api): compute here rather than fail the request.
+          yield* Effect.annotateCurrentSpan({ "ephem.api_cache": "LOOPBACK_ERROR" })
+          const res = yield* http
+          return withCacheControl(
+            HttpServerResponse.setHeader(res, "x-ephem-cache", "LOOPBACK_ERROR"),
+            outwardCacheControl(res.status, url),
+          )
+        }
+        // The search window is the Api's cache unit, reached only over ctx.exports: not a public route.
+        if (edge.role === "front" && url.pathname === SEARCH_WINDOW_PATH) return notFound(url)
+        if (edge.role === "front" && isApi(url)) yield* Effect.annotateCurrentSpan({ "ephem.api_cache": "LOCAL" })
+        const res = yield* http
+        return withCacheControl(
+          res,
+          edge.role === "api" ? internalCacheControl(res.status, url) : outwardCacheControl(res.status, url),
+        )
+      })
+  }),
+  { global: true },
+)
 
 /** The Api entrypoint's last word: a response with no Cache-Control (e.g. the router's own 404, which no middleware sees)
  *  would get Workers Caching's heuristic TTL (404: 3 min, verified HIT on fd72f501); make it no-store instead. */
 export const defaultNoStore = (res: Response): Response => {
   if (res.headers.has("cache-control")) return res
-  const h = new Headers(res.headers); h.set("cache-control", NO_STORE)
+  const h = new Headers(res.headers)
+  h.set("cache-control", NO_STORE)
   return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h })
 }

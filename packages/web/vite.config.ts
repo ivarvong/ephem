@@ -22,8 +22,11 @@ const moduleList = (): Plugin => ({
   apply: "build",
   writeBundle(options, bundle) {
     const out: Record<string, string[]> = {}
-    for (const [file, c] of Object.entries(bundle)) if (c.type === "chunk")
-      out[file] = Object.entries(c.modules).map(([id, m]) => relative(ROOT, id.replace(/\?.*$/, "").replace(/^\0/, "")) + " " + m.renderedLength).toSorted()
+    for (const [file, c] of Object.entries(bundle))
+      if (c.type === "chunk")
+        out[file] = Object.entries(c.modules)
+          .map(([id, m]) => relative(ROOT, id.replace(/\?.*$/, "").replace(/^\0/, "")) + " " + m.renderedLength)
+          .toSorted()
     writeFileSync(resolve(options.dir ?? ".", "../modules.json"), JSON.stringify(out, null, 1) + "\n")
   },
 })
@@ -38,7 +41,7 @@ export default defineConfig(({ command }) => ({
     emptyOutDir: true,
     manifest: true,
     target: "es2022",
-    assetsInlineLimit: 0,   // fonts and images are files (CSP: no data: fonts), never inlined
+    assetsInlineLimit: 0, // fonts and images are files (CSP: no data: fonts), never inlined
     modulePreload: { polyfill: false },
     cssCodeSplit: true,
     sourcemap: false,

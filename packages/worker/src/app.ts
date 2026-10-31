@@ -26,26 +26,64 @@ import { Cors, provideApp, toHandler } from "./router.ts"
 let docsPages: { html: string; scalar: string; llms: string } | undefined
 const pages = () => (docsPages ??= { html: docsHtml(), scalar: scalarHtml(), llms: llmsTxt() })
 const Docs = Layer.mergeAll(
-  HttpRouter.add("GET", "/docs", Effect.sync(() => HttpServerResponse.text(pages().html, { contentType: "text/html; charset=utf-8", headers: pageHeaders(docsCsp()) }))),
-  HttpRouter.add("GET", "/docs/interactive", Effect.sync(() => HttpServerResponse.text(pages().scalar, { contentType: "text/html; charset=utf-8", headers: pageHeaders(scalarCsp()) }))),
-  HttpRouter.add("GET", "/llms.txt", Effect.sync(() => HttpServerResponse.text(pages().llms, { contentType: "text/plain; charset=utf-8" }))),
+  HttpRouter.add(
+    "GET",
+    "/docs",
+    Effect.sync(() =>
+      HttpServerResponse.text(pages().html, {
+        contentType: "text/html; charset=utf-8",
+        headers: pageHeaders(docsCsp()),
+      }),
+    ),
+  ),
+  HttpRouter.add(
+    "GET",
+    "/docs/interactive",
+    Effect.sync(() =>
+      HttpServerResponse.text(pages().scalar, {
+        contentType: "text/html; charset=utf-8",
+        headers: pageHeaders(scalarCsp()),
+      }),
+    ),
+  ),
+  HttpRouter.add(
+    "GET",
+    "/llms.txt",
+    Effect.sync(() => HttpServerResponse.text(pages().llms, { contentType: "text/plain; charset=utf-8" })),
+  ),
 )
 
 /** `edge`: which side of the front door → Api loopback this router is (src/responses.ts); default `local` (tests, dev).
  *  `geoid`: the Worker passes makeGeoid (R2 bands via BlockStore); the default relies on a band source the caller installed. */
-export const makeApp = (blocks: Layer.Layer<Blocks>, edge: Role = { role: "local" }, weather: Layer.Layer<Weather> = WeatherNone, geoid: Layer.Layer<Geoid> = GeoidInstalled) =>
-  provideApp(Layer.mergeAll(
-    HttpApiBuilder.layer(EphemApi, { openapiPath: "/openapi.json" }),
-    Home,
-    SkyAssets,   // /assets/de440/<sha16>/<i>: the page's in-browser compute reads DE440 blocks (src/sky-assets.ts)
-    Rum,   // POST /rum: browser RUM batches → Basin ephem_rum (src/rum.ts)
-    Docs,
-    RequestLogging,   // first global middleware = outermost: it sees every request, including those Gateway forwards
-    Cors,
-    ClientTrace,   // traceparent → client.trace_id / client.span_id on the root span, x-ephem-trace echo (src/clienttrace.ts)
-    Gateway,
-    Mcp,
-    TracerLive,
-  ), blocks, edge, weather, geoid)
+export const makeApp = (
+  blocks: Layer.Layer<Blocks>,
+  edge: Role = { role: "local" },
+  weather: Layer.Layer<Weather> = WeatherNone,
+  geoid: Layer.Layer<Geoid> = GeoidInstalled,
+) =>
+  provideApp(
+    Layer.mergeAll(
+      HttpApiBuilder.layer(EphemApi, { openapiPath: "/openapi.json" }),
+      Home,
+      SkyAssets, // /assets/de440/<sha16>/<i>: the page's in-browser compute reads DE440 blocks (src/sky-assets.ts)
+      Rum, // POST /rum: browser RUM batches → Basin ephem_rum (src/rum.ts)
+      Docs,
+      RequestLogging, // first global middleware = outermost: it sees every request, including those Gateway forwards
+      Cors,
+      ClientTrace, // traceparent → client.trace_id / client.span_id on the root span, x-ephem-trace echo (src/clienttrace.ts)
+      Gateway,
+      Mcp,
+      TracerLive,
+    ),
+    blocks,
+    edge,
+    weather,
+    geoid,
+  )
 
-export const makeHandler = (blocks: Layer.Layer<Blocks>, edge?: Role, weather?: Layer.Layer<Weather>, geoid?: Layer.Layer<Geoid>) => toHandler(makeApp(blocks, edge, weather, geoid))
+export const makeHandler = (
+  blocks: Layer.Layer<Blocks>,
+  edge?: Role,
+  weather?: Layer.Layer<Weather>,
+  geoid?: Layer.Layer<Geoid>,
+) => toHandler(makeApp(blocks, edge, weather, geoid))

@@ -19,7 +19,8 @@ export const TRACE_HEADER = "x-ephem-trace"
  *  client.trace_id with the document's span id as client.span_id and the journey would join the document by cf-ray only. */
 export const IN_PROCESS_ORIGIN = "http://ephem.internal"
 
-const hex = (n: number) => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => b.toString(16).padStart(2, "0")).join("")
+const hex = (n: number) =>
+  Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => b.toString(16).padStart(2, "0")).join("")
 const HEX16 = /^[0-9a-f]{16}$/
 
 /** The page route (/) carries trace context too (OTel document-load convention). The document's trace id is the
@@ -30,36 +31,64 @@ const HEX16 = /^[0-9a-f]{16}$/
  *  `<meta name="traceparent">` (read first by the page: packages/web/src/client/trace.ts), `Server-Timing: trace;desc="<traceparent>"` (the navigation
  *  entry's serverTiming) and `x-ephem-trace` (curl, CDP). Call it outside the handler's own withSpan, so the current span is
  *  the root request span. The HTML is `private, no-store` and never forwarded to the cached Api, so a per-response id is safe. */
-export const documentTrace = (req: HttpServerRequest.HttpServerRequest) => Effect.gen(function* () {
-  const tp = parseTraceparent(req.headers["traceparent"])
-  const span = yield* Effect.option(Effect.currentSpan)
-  const cur = span._tag === "Some" ? span.value : undefined
-  // No trace header at all: the root Effect span's own trace id (so loopbacks propagate the same id). A trace header that
-  // W3C rejects: a fresh id, since Effect's lenient parser may have parented the span on it.
-  const traceId = tp?.traceId ?? (!req.headers["traceparent"] && !req.headers["b3"] && !req.headers["x-b3-traceid"] && cur && /^[0-9a-f]{32}$/.test(cur.traceId) ? cur.traceId : hex(16))
-  const spanId = cur && HEX16.test(cur.spanId) ? cur.spanId : hex(8)
-  yield* Effect.annotateCurrentSpan({ "client.trace_id": traceId, "client.document_span_id": spanId, "client.trace_origin": tp ? "adopted" : "minted" })
-  // Synthetic (ephem-load, smoke, the CDP journey harness): the page's RUM flags its rows, including the pagehide beacon, which
-  // carries none of the harness's request headers.
-  const synthetic = !!(req.headers["x-ephem-load"] || req.headers["x-ephem-smoke"])
-  return { traceId, spanId, traceparent: `00-${traceId}-${spanId}-01`, synthetic }
-})
-export type DocumentTrace = { readonly traceId: string; readonly spanId: string; readonly traceparent: string; readonly synthetic?: boolean }
-/** Response headers of a page: the id for CDP, curl and the navigation entry's serverTiming. */
-export const documentTraceHeaders = (d: DocumentTrace): Record<string, string> =>
-  ({ [TRACE_HEADER]: d.traceId, "server-timing": `trace;desc="${d.traceparent}"` })
-
-export const ClientTrace = HttpRouter.middleware(Effect.gen(function* () {
-  const edge = yield* Edge
-  return http => Effect.gen(function* () {
-    const req = yield* HttpServerRequest.HttpServerRequest
+export const documentTrace = (req: HttpServerRequest.HttpServerRequest) =>
+  Effect.gen(function* () {
     const tp = parseTraceparent(req.headers["traceparent"])
-    if (!tp || req.originalUrl.startsWith(IN_PROCESS_ORIGIN + "/")) return yield* http
-    // tracestate `ephem=<16 hex>`: the client span's own parent (the page's document span), so the server knows the chain.
-    const parent = /(?:^|,)\s*ephem=([0-9a-f]{16})\s*(?:,|$)/.exec(req.headers["tracestate"] ?? "")?.[1]
-    yield* Effect.annotateCurrentSpan({ "client.trace_id": tp.traceId, "client.span_id": tp.spanId, ...(parent && !/^0+$/.test(parent) ? { "client.parent_id": parent } : {}) })
-    const res = yield* http
-    // The Api's answers are cached by Workers Caching: an echo there would be replayed to other clients.
-    return edge.role === "api" ? res : HttpServerResponse.setHeader(res, TRACE_HEADER, tp.traceId)
+    const span = yield* Effect.option(Effect.currentSpan)
+    const cur = span._tag === "Some" ? span.value : undefined
+    // No trace header at all: the root Effect span's own trace id (so loopbacks propagate the same id). A trace header that
+    // W3C rejects: a fresh id, since Effect's lenient parser may have parented the span on it.
+    const traceId =
+      tp?.traceId ??
+      (!req.headers["traceparent"] &&
+      !req.headers["b3"] &&
+      !req.headers["x-b3-traceid"] &&
+      cur &&
+      /^[0-9a-f]{32}$/.test(cur.traceId)
+        ? cur.traceId
+        : hex(16))
+    const spanId = cur && HEX16.test(cur.spanId) ? cur.spanId : hex(8)
+    yield* Effect.annotateCurrentSpan({
+      "client.trace_id": traceId,
+      "client.document_span_id": spanId,
+      "client.trace_origin": tp ? "adopted" : "minted",
+    })
+    // Synthetic (ephem-load, smoke, the CDP journey harness): the page's RUM flags its rows, including the pagehide beacon, which
+    // carries none of the harness's request headers.
+    const synthetic = !!(req.headers["x-ephem-load"] || req.headers["x-ephem-smoke"])
+    return { traceId, spanId, traceparent: `00-${traceId}-${spanId}-01`, synthetic }
   })
-}), { global: true })
+export type DocumentTrace = {
+  readonly traceId: string
+  readonly spanId: string
+  readonly traceparent: string
+  readonly synthetic?: boolean
+}
+/** Response headers of a page: the id for CDP, curl and the navigation entry's serverTiming. */
+export const documentTraceHeaders = (d: DocumentTrace): Record<string, string> => ({
+  [TRACE_HEADER]: d.traceId,
+  "server-timing": `trace;desc="${d.traceparent}"`,
+})
+
+export const ClientTrace = HttpRouter.middleware(
+  Effect.gen(function* () {
+    const edge = yield* Edge
+    return (http) =>
+      Effect.gen(function* () {
+        const req = yield* HttpServerRequest.HttpServerRequest
+        const tp = parseTraceparent(req.headers["traceparent"])
+        if (!tp || req.originalUrl.startsWith(IN_PROCESS_ORIGIN + "/")) return yield* http
+        // tracestate `ephem=<16 hex>`: the client span's own parent (the page's document span), so the server knows the chain.
+        const parent = /(?:^|,)\s*ephem=([0-9a-f]{16})\s*(?:,|$)/.exec(req.headers["tracestate"] ?? "")?.[1]
+        yield* Effect.annotateCurrentSpan({
+          "client.trace_id": tp.traceId,
+          "client.span_id": tp.spanId,
+          ...(parent && !/^0+$/.test(parent) ? { "client.parent_id": parent } : {}),
+        })
+        const res = yield* http
+        // The Api's answers are cached by Workers Caching: an echo there would be replayed to other clients.
+        return edge.role === "api" ? res : HttpServerResponse.setHeader(res, TRACE_HEADER, tp.traceId)
+      })
+  }),
+  { global: true },
+)

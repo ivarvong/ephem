@@ -1,6 +1,6 @@
 #!/bin/bash
 # The repo's formatters, one entry point (npm run format / npm run format:check; the deploy gate runs the check):
-#   prettier   TS, TSX, JS, CSS, JSON, YAML, Markdown (.prettierrc.json; skips are in .prettierignore)
+#   prettier   TS, TSX, JS, CSS, JSON, YAML (.prettierrc.json; the skips, Markdown among them, and why: .prettierignore)
 #   ruff       Python: `ruff format` + import order (`ruff check`, rule I) (ruff.toml: line length 120)
 #   shfmt      shell: `shfmt -i 2 -ci`
 # ruff and shfmt run through uvx at pinned versions (no Python deps in the repo; uv caches them after the first run).
@@ -43,8 +43,10 @@ if [ "${1:-}" = --check ]; then
   fi
   echo "format: ok (prettier, ruff, shfmt)"
 else
-  npx prettier --write --log-level=warn . || exit 1
-  py | xargs "$UVX" -q "$RUFF" check -q --fix || exit 1
-  py | xargs "$UVX" -q "$RUFF" format -q || exit 1
+  # prettier twice: a member chain can settle only on the second pass (prettier is not always idempotent)
+  npx prettier --write --log-level=warn . && npx prettier --write --log-level=warn . || exit 1
+  # format first (it splits `import x; stmt` lines the import sorter cannot fix), sort imports, format again
+  py | xargs "$UVX" -q "$RUFF" format -q && py | xargs "$UVX" -q "$RUFF" check -q --fix &&
+    py | xargs "$UVX" -q "$RUFF" format -q || exit 1
   shells | xargs "$UVX" -q --from "$SHFMT" shfmt -i 2 -ci -w || exit 1
 fi

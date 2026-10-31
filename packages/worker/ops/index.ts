@@ -1,5 +1,8 @@
 // Local-only caller for ephem's Admin RPC (see wrangler.jsonc next to this file).
-interface Admin { ingest(o?: { force?: boolean }): Promise<unknown>; status(): Promise<unknown> }
+interface Admin {
+  ingest(o?: { force?: boolean }): Promise<unknown>
+  status(): Promise<unknown>
+}
 export default {
   async fetch(req: Request, env: { ADMIN: Admin }): Promise<Response> {
     const u = new URL(req.url)

@@ -13,7 +13,13 @@ status] per region and kind), then from Workers Observability:
      and alike across kinds within a region.
 Pull >= 5 min after the run ends (ingest lag).
 """
-import argparse, collections, json, math, os, sys
+
+import argparse
+import collections
+import json
+import math
+import os
+import sys
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -26,13 +32,21 @@ a = ap.parse_args()
 rep = json.load(open(a.run))
 run = rep["runId"]
 ms = lambda s: int(datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp() * 1000)  # noqa: E731
-W = (ms(rep["window"].get("warmupAt", rep["window"]["startAt"])) - 15_000, ms(rep["window"]["endAt"]) + 45_000)   # prewarm before, timeouts after
+W = (
+    ms(rep["window"].get("warmupAt", rep["window"]["startAt"])) - 15_000,
+    ms(rep["window"]["endAt"]) + 45_000,
+)  # prewarm before, timeouts after
 H = "https://ephem.ivar.workers.dev"
-ROUTES = {"position": [("GET", "/v1/position")], "warm": [("GET", "/v1/day"), ("GET", "/v1/track"), ("GET", "/v1/alignment")],
-          "track": [("GET", "/v1/track")], "weather": [("GET", "/v1/weather")], "search": [("POST", "/v1/alignment/search")]}
+ROUTES = {
+    "position": [("GET", "/v1/position")],
+    "warm": [("GET", "/v1/day"), ("GET", "/v1/track"), ("GET", "/v1/alignment")],
+    "track": [("GET", "/v1/track")],
+    "weather": [("GET", "/v1/weather")],
+    "search": [("POST", "/v1/alignment/search")],
+}
 
 
-def pct(v, q):   # nearest rank, like the client histogram
+def pct(v, q):  # nearest rank, like the client histogram
     v = sorted(v)
     return v[max(0, math.ceil(q * len(v)) - 1)] if v else None
 
@@ -44,21 +58,33 @@ inv = events_all([eq("$metadata.type", "cf-worker-event"), eq("$workers.event.re
 cnt = collections.Counter()
 cpu = collections.defaultdict(list)
 for e in inv:
-    w = e["$workers"]; ev = w.get("event", {})
+    w = e["$workers"]
+    ev = w.get("event", {})
     path = ev.get("path") or ev.get("request", {}).get("url", "").split("?")[0].replace(H, "")
-    cnt[(path, ev.get("request", {}).get("cf", {}).get("colo", "?"), ev.get("response", {}).get("status"), w["scriptVersion"]["id"][:8])] += 1
+    cnt[
+        (
+            path,
+            ev.get("request", {}).get("cf", {}).get("colo", "?"),
+            ev.get("response", {}).get("status"),
+            w["scriptVersion"]["id"][:8],
+        )
+    ] += 1
     cpu[path].append(w.get("cpuTimeMs", 0))
 client_n = sum(s["completed"] for s in rep["totals"].values())
 prewarm = sum(r["prewarm"]["sent"] + r.get("warmup", {}).get("sent", 0) for r in rep["regions"])
-print(f"run {run} window {rep['window']['startAt']} .. {rep['window']['endAt']} (pinned {rep['spec'].get('pin') or 'no'})")
-print(f"\n1. front-door invocations with x-ephem-load: {run}: {len(inv)}; client completed {client_n} + prewarm and warmup {prewarm} = {client_n + prewarm}"
-      f" ({100 * len(inv) / max(1, client_n + prewarm):.1f}%)")
+print(
+    f"run {run} window {rep['window']['startAt']} .. {rep['window']['endAt']} (pinned {rep['spec'].get('pin') or 'no'})"
+)
+print(
+    f"\n1. front-door invocations with x-ephem-load: {run}: {len(inv)}; client completed {client_n} + prewarm and warmup {prewarm} = {client_n + prewarm}"
+    f" ({100 * len(inv) / max(1, client_n + prewarm):.1f}%)"
+)
 print(f"   {'route':22} {'colo':5} {'st':>4} {'version':9} {'n':>6}")
 for (p, c, st, v), n in sorted(cnt.items(), key=lambda kv: (kv[0][0], -kv[1])):
     print(f"   {p:22} {c:5} {st!s:>4} {v:9} {n:>6}")
 print(f"   {'route':22} {'cpu p50':>7} {'p99':>5}  (front-door invocation CPU, ms)")
 for p, v in sorted(cpu.items()):
-    print(f"   {p:22} {fmt(pct(v, .5)):>7} {fmt(pct(v, .99)):>5}")
+    print(f"   {p:22} {fmt(pct(v, 0.5)):>7} {fmt(pct(v, 0.99)):>5}")
 
 # 2. spans of every route the run used, joined root -> Effect request span on traceId; keyed by ray
 need = {r for k in rep["totals"] for r in ROUTES[k]}
@@ -73,35 +99,54 @@ for m, p in sorted(need):
         for e in events_all([eq("$metadata.type", "span"), eq("$metadata.transactionName", name)], W):
             effs.setdefault(e["$metadata"]["traceId"], e["$metadata"])
     for r in roots:
-        md = r["$metadata"]; g = effs.get(md["traceId"])
+        md = r["$metadata"]
+        g = effs.get(md["traceId"])
         if g and md.get("rayId"):
-            by_ray[md["rayId"]] = dict(e2e=g["endTime"] - md["startTime"], wait=g["startTime"] - md["startTime"], colo=r["source"].get("cloudflare", {}).get("colo", "?"), route=p)
+            by_ray[md["rayId"]] = dict(
+                e2e=g["endTime"] - md["startTime"],
+                wait=g["startTime"] - md["startTime"],
+                colo=r["source"].get("cloudflare", {}).get("colo", "?"),
+                route=p,
+            )
 
 # 3. client vs server for the same requests
 rows = []
-print("\n2. client vs server, same requests (joined on cf-ray). client = generator fetch to last body byte; server e2e = runtime"
-      "\n   request span start -> Effect request span end (isolate wait + handler). diff = client - server per request. ms.")
+print(
+    "\n2. client vs server, same requests (joined on cf-ray). client = generator fetch to last body byte; server e2e = runtime"
+    "\n   request span start -> Effect request span end (isolate wait + handler). diff = client - server per request. ms."
+)
 hdr = f"   {'region':6} {'kind':8} {'joined':>9} {'client p50':>10} {'p90':>6} {'p99':>6} | {'server p50':>10} {'p90':>6} {'p99':>6} | {'diff p50':>8} {'p90':>6} {'<0':>4} | {'colo (server)':16} {'client table p50/p99':>20}"
 print(hdr)
 for reg in rep["regions"]:
     for kind, s in reg["kinds"].items():
         j = []
-        for ray, cms, st, *at in s.get("sample") or []:   # [ray, client ms, status, sent at ms after the start]
+        for ray, cms, st, *at in s.get("sample") or []:  # [ray, client ms, status, sent at ms after the start]
             x = by_ray.get(ray.rsplit("-", 1)[0])
             if x:
-                j.append((cms, x)); rows.append(dict(region=reg["region"], kind=kind, ray=ray, client=cms, status=st, at=at[0] if at else None, **x))
-        c = [x[0] for x in j]; sv = [x[1]["e2e"] for x in j]; d = [x[0] - x[1]["e2e"] for x in j]
+                j.append((cms, x))
+                rows.append(
+                    dict(region=reg["region"], kind=kind, ray=ray, client=cms, status=st, at=at[0] if at else None, **x)
+                )
+        c = [x[0] for x in j]
+        sv = [x[1]["e2e"] for x in j]
+        d = [x[0] - x[1]["e2e"] for x in j]
         colos = collections.Counter(x[1]["colo"] for x in j).most_common(2)
-        print(f"   {reg['region']:6} {kind:8} {len(j):>4}/{len(s.get('sample') or []):<4} {fmt(pct(c, .5)):>10} {fmt(pct(c, .9)):>6} {fmt(pct(c, .99)):>6} | "
-              f"{fmt(pct(sv, .5)):>10} {fmt(pct(sv, .9)):>6} {fmt(pct(sv, .99)):>6} | {fmt(pct(d, .5)):>8} {fmt(pct(d, .9)):>6} {sum(1 for x in d if x < -2):>4} | "
-              f"{', '.join(f'{k} {n}' for k, n in colos):16} {fmt(s['ms']['p50']) + '/' + fmt(s['ms']['p99']):>20}")
+        print(
+            f"   {reg['region']:6} {kind:8} {len(j):>4}/{len(s.get('sample') or []):<4} {fmt(pct(c, 0.5)):>10} {fmt(pct(c, 0.9)):>6} {fmt(pct(c, 0.99)):>6} | "
+            f"{fmt(pct(sv, 0.5)):>10} {fmt(pct(sv, 0.9)):>6} {fmt(pct(sv, 0.99)):>6} | {fmt(pct(d, 0.5)):>8} {fmt(pct(d, 0.9)):>6} {sum(1 for x in d if x < -2):>4} | "
+            f"{', '.join(f'{k} {n}' for k, n in colos):16} {fmt(s['ms']['p50']) + '/' + fmt(s['ms']['p99']):>20}"
+        )
 if a.json:
     json.dump(rows, open(a.json, "w"))
 slow = [r for r in rows if r["client"] - r["e2e"] > 200]
 if slow:
-    print(f"\n3. requests whose client time exceeds the server's by > 200 ms: {len(slow)} of {len(rows)} joined; by second after the start:")
+    print(
+        f"\n3. requests whose client time exceeds the server's by > 200 ms: {len(slow)} of {len(rows)} joined; by second after the start:"
+    )
     by = collections.Counter((r["region"], (r["at"] or 0) // 1000) for r in slow)
     for reg in sorted({r["region"] for r in slow}):
         print(f"   {reg:6} " + ", ".join(f"{t}s x{n}" for (g, t), n in sorted(by.items()) if g == reg))
-print("\n(<0: requests whose client time is more than 2 ms under the server's: should be 0. The client table p50/p99 is over every"
-      "\n request, the joined columns over the sample.)")
+print(
+    "\n(<0: requests whose client time is more than 2 ms under the server's: should be 0. The client table p50/p99 is over every"
+    "\n request, the joined columns over the sample.)"
+)

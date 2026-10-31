@@ -22,9 +22,16 @@ export interface Phase {
   readonly elongation?: number
   readonly brightLimbAngle: number
 }
-export interface Moon extends Body { readonly phase: Phase; readonly brightLimbAngleFromVertical?: number }
+export interface Moon extends Body {
+  readonly phase: Phase
+  readonly brightLimbAngleFromVertical?: number
+}
 
-export interface CacheDiag { readonly l1: number; readonly reads: number; readonly [k: string]: number }
+export interface CacheDiag {
+  readonly l1: number
+  readonly reads: number
+  readonly [k: string]: number
+}
 export interface Provenance {
   readonly version?: string
   readonly sources?: ReadonlyArray<string>
@@ -34,7 +41,12 @@ export interface Conventions {
   readonly refraction: { readonly temperatureC: number; readonly pressureHpa: number }
   readonly horizon: { readonly altitude: number }
 }
-export interface Observer { readonly lat: number; readonly lon: number; readonly heightEllipsoid?: number; readonly magneticDeclination?: number }
+export interface Observer {
+  readonly lat: number
+  readonly lon: number
+  readonly heightEllipsoid?: number
+  readonly magneticDeclination?: number
+}
 
 export interface Position {
   readonly time: { readonly utc: string }
@@ -62,7 +74,11 @@ export interface Track {
 }
 
 export type BodyKey = "sun" | "moon"
-export interface DayEvent { readonly body: BodyKey; readonly kind: string; readonly time: string }
+export interface DayEvent {
+  readonly body: BodyKey
+  readonly kind: string
+  readonly time: string
+}
 export interface Day {
   readonly date: string
   readonly start: string
@@ -78,7 +94,10 @@ export interface Wind {
   readonly directionDegTrue: number | null
   readonly gustKt?: number | null
 }
-export interface SkyLayer { readonly cover: string; readonly baseFtAgl: number | null }
+export interface SkyLayer {
+  readonly cover: string
+  readonly baseFtAgl: number | null
+}
 export interface Station {
   readonly stationId: string
   readonly distanceKm: number
@@ -98,13 +117,26 @@ export interface Station {
 }
 export interface Weather {
   readonly observer: { readonly magneticDeclination: number }
-  readonly feed: { readonly ageSeconds: number; readonly stale?: boolean; readonly tier: string; readonly upstreamAgeSeconds: number | null; readonly stations: number }
+  readonly feed: {
+    readonly ageSeconds: number
+    readonly stale?: boolean
+    readonly tier: string
+    readonly upstreamAgeSeconds: number | null
+    readonly stations: number
+  }
   readonly stations: ReadonlyArray<Station>
 }
-export interface Magnetic { readonly magnetic: { readonly declination: number } }
+export interface Magnetic {
+  readonly magnetic: { readonly declination: number }
+}
 
 /** Where the page computes for (the server's choice: query, Cloudflare geolocation, or the default). */
 export interface Visitor {
-  readonly lat: number; readonly lon: number; readonly place: string; readonly city: string; readonly tz: string
-  readonly colo: string | null; readonly source: "query" | "cloudflare" | "default"
+  readonly lat: number
+  readonly lon: number
+  readonly place: string
+  readonly city: string
+  readonly tz: string
+  readonly colo: string | null
+  readonly source: "query" | "cloudflare" | "default"
 }

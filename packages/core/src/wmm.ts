@@ -102,17 +102,30 @@ const COF = `  1  0  -29351.8       0.0       12.0        0.0
  12 12      -0.7       0.2       -0.1       -0.1`
 
 const N = 12
-const A_WGS = 6378.137, F_WGS = 1 / 298.257223563, E2 = F_WGS * (2 - F_WGS), RE = 6371.2   // km; RE = WMM reference radius
+const A_WGS = 6378.137,
+  F_WGS = 1 / 298.257223563,
+  E2 = F_WGS * (2 - F_WGS),
+  RE = 6371.2 // km; RE = WMM reference radius
 const idx = (n: number, m: number) => (n * (n + 1)) / 2 + m
-const G = new Float64Array(idx(N, N) + 1), H = new Float64Array(G.length), GD = new Float64Array(G.length), HD = new Float64Array(G.length)
+const G = new Float64Array(idx(N, N) + 1),
+  H = new Float64Array(G.length),
+  GD = new Float64Array(G.length),
+  HD = new Float64Array(G.length)
 for (const line of COF.split("\n")) {
   const [n, m, g, h, gd, hd] = line.trim().split(/\s+/).map(Number) as [number, number, number, number, number, number]
-  const i = idx(n, m); G[i] = g; H[i] = h; GD[i] = gd; HD[i] = hd
+  const i = idx(n, m)
+  G[i] = g
+  H[i] = h
+  GD[i] = gd
+  HD[i] = hd
 }
 
 /** Decimal year as the WMM software computes it: year + (day of year − 1 + fraction of day) / days in year (UTC). */
 export const decimalYear = (utcMs: number): number => {
-  const d = new Date(utcMs), y = d.getUTCFullYear(), y0 = Date.UTC(y, 0, 1), y1 = Date.UTC(y + 1, 0, 1)
+  const d = new Date(utcMs),
+    y = d.getUTCFullYear(),
+    y0 = Date.UTC(y, 0, 1),
+    y1 = Date.UTC(y + 1, 0, 1)
   return y + (utcMs - y0) / (y1 - y0)
 }
 
@@ -122,7 +135,11 @@ export interface MagneticField {
   /** degrees, down positive */
   readonly inclination: number
   /** nT: north, east, down (geodetic frame), horizontal intensity, total intensity */
-  readonly x: number; readonly y: number; readonly z: number; readonly h: number; readonly f: number
+  readonly x: number
+  readonly y: number
+  readonly z: number
+  readonly h: number
+  readonly f: number
 }
 
 /**
@@ -131,55 +148,86 @@ export interface MagneticField {
  * At the geographic poles declination is undefined; latitude is clamped to ±(90 − 1e-6)°, as the WMM software does.
  */
 export const wmm = (latDeg: number, lonDeg: number, heightKm: number, year: number): MagneticField => {
-  const lat = Math.max(-90 + 1e-6, Math.min(90 - 1e-6, latDeg)) * DEG, lon = lonDeg * DEG
+  const lat = Math.max(-90 + 1e-6, Math.min(90 - 1e-6, latDeg)) * DEG,
+    lon = lonDeg * DEG
   // geodetic → geocentric spherical (report eq. 7–8)
-  const sinLat = Math.sin(lat), cosLat = Math.cos(lat)
+  const sinLat = Math.sin(lat),
+    cosLat = Math.cos(lat)
   const rc = A_WGS / Math.sqrt(1 - E2 * sinLat * sinLat)
-  const p = (rc + heightKm) * cosLat, zc = (rc * (1 - E2) + heightKm) * sinLat
-  const r = Math.hypot(p, zc), latc = Math.asin(zc / r)
-  const x = Math.sin(latc), s = Math.cos(latc)          // cos θ, sin θ (θ = geocentric colatitude)
+  const p = (rc + heightKm) * cosLat,
+    zc = (rc * (1 - E2) + heightKm) * sinLat
+  const r = Math.hypot(p, zc),
+    latc = Math.asin(zc / r)
+  const x = Math.sin(latc),
+    s = Math.cos(latc) // cos θ, sin θ (θ = geocentric colatitude)
   const dt = year - WMM_EPOCH
   // Schmidt semi-normalised P_n^m(cos θ) and dP/dθ by the standard recurrences
-  const P = new Float64Array(G.length), dP = new Float64Array(G.length)
-  P[0] = 1; dP[0] = 0
+  const P = new Float64Array(G.length),
+    dP = new Float64Array(G.length)
+  P[0] = 1
+  dP[0] = 0
   for (let n = 1; n <= N; n++) {
     for (let m = 0; m <= n; m++) {
       const i = idx(n, m)
       if (n === m) {
-        const k = n === 1 ? 1 : Math.sqrt((2 * n - 1) / (2 * n)), j = idx(n - 1, n - 1)
-        P[i] = k * s * P[j]!; dP[i] = k * (s * dP[j]! + x * P[j]!)
+        const k = n === 1 ? 1 : Math.sqrt((2 * n - 1) / (2 * n)),
+          j = idx(n - 1, n - 1)
+        P[i] = k * s * P[j]!
+        dP[i] = k * (s * dP[j]! + x * P[j]!)
       } else {
-        const j = idx(n - 1, m), a = Math.sqrt(n * n - m * m)
+        const j = idx(n - 1, m),
+          a = Math.sqrt(n * n - m * m)
         const b = n >= 2 && m <= n - 2 ? Math.sqrt((n - 1) * (n - 1) - m * m) : 0
-        const p2 = b ? P[idx(n - 2, m)]! : 0, dp2 = b ? dP[idx(n - 2, m)]! : 0
+        const p2 = b ? P[idx(n - 2, m)]! : 0,
+          dp2 = b ? dP[idx(n - 2, m)]! : 0
         P[i] = ((2 * n - 1) * x * P[j]! - b * p2) / a
         dP[i] = ((2 * n - 1) * (x * dP[j]! - s * P[j]!) - b * dp2) / a
       }
     }
   }
   // field in geocentric spherical components (report eq. 10–12): X′ north, Y′ east, Z′ down
-  let X = 0, Y = 0, Z = 0
+  let X = 0,
+    Y = 0,
+    Z = 0
   const ar = RE / r
-  let arn = ar * ar   // (a/r)^(n+2), starting at n = 0
+  let arn = ar * ar // (a/r)^(n+2), starting at n = 0
   for (let n = 1; n <= N; n++) {
     arn *= ar
-    let sx = 0, sy = 0, sz = 0
+    let sx = 0,
+      sy = 0,
+      sz = 0
     for (let m = 0; m <= n; m++) {
-      const i = idx(n, m), g = G[i]! + dt * GD[i]!, h = H[i]! + dt * HD[i]!
-      const cm = Math.cos(m * lon), sm = Math.sin(m * lon)
+      const i = idx(n, m),
+        g = G[i]! + dt * GD[i]!,
+        h = H[i]! + dt * HD[i]!
+      const cm = Math.cos(m * lon),
+        sm = Math.sin(m * lon)
       const t = g * cm + h * sm
-      sx += t * dP[i]!                       // −∂/∂φ′ = +∂/∂θ
+      sx += t * dP[i]! // −∂/∂φ′ = +∂/∂θ
       sy += m * (g * sm - h * cm) * P[i]!
       sz += t * P[i]!
     }
-    X += arn * sx; Y += arn * sy; Z -= (n + 1) * arn * sz
+    X += arn * sx
+    Y += arn * sy
+    Z -= (n + 1) * arn * sz
   }
   Y /= s
   // rotate to the geodetic frame (report eq. 17)
-  const psi = latc - lat, cp = Math.cos(psi), sp = Math.sin(psi)
-  const xg = X * cp - Z * sp, zg = X * sp + Z * cp
+  const psi = latc - lat,
+    cp = Math.cos(psi),
+    sp = Math.sin(psi)
+  const xg = X * cp - Z * sp,
+    zg = X * sp + Z * cp
   const hh = Math.hypot(xg, Y)
-  return { declination: Math.atan2(Y, xg) / DEG, inclination: Math.atan2(zg, hh) / DEG, x: xg, y: Y, z: zg, h: hh, f: Math.hypot(hh, zg) }
+  return {
+    declination: Math.atan2(Y, xg) / DEG,
+    inclination: Math.atan2(zg, hh) / DEG,
+    x: xg,
+    y: Y,
+    z: zg,
+    h: hh,
+    f: Math.hypot(hh, zg),
+  }
 }
 
 /** The model's coefficient rows as embedded (n m g h ġ ḣ), for the provenance test against WMM.COF. */
@@ -189,4 +237,3 @@ export const COMPASS_ZONES = { blackoutBelowNt: 2000, cautionBelowNt: 6000 } as 
 export const compassZone = (hNt: number): "ok" | "caution" | "blackout" =>
   hNt < COMPASS_ZONES.blackoutBelowNt ? "blackout" : hNt < COMPASS_ZONES.cautionBelowNt ? "caution" : "ok"
 export const WMM_COF_ROWS = COF
-

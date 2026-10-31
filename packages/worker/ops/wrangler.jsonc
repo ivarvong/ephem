@@ -8,5 +8,5 @@
   "compatibility_date": "2026-10-01",
   "workers_dev": false,
   "dev": { "port": 8788 },
-  "services": [{ "binding": "ADMIN", "service": "ephem", "entrypoint": "Admin", "remote": true }]
+  "services": [{ "binding": "ADMIN", "service": "ephem", "entrypoint": "Admin", "remote": true }],
 }

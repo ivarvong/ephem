@@ -6,5 +6,8 @@
 # 569353e at "deploy ephem-load"). Bounded here (scripts/bounded.py: TERM, then KILL; the Go CLI ignores SIGALRM): after
 # EPHEM_DOCKER_TIMEOUT_S (default 10) the call fails and wrangler skips its optional image cleanup. No docker on PATH: exit
 # 127, the same outcome.
-d=$(command -v docker) || { echo "docker-bounded: docker not on PATH" >&2; exit 127; }
+d=$(command -v docker) || {
+  echo "docker-bounded: docker not on PATH" >&2
+  exit 127
+}
 exec python3 "$(dirname "$0")/bounded.py" "${EPHEM_DOCKER_TIMEOUT_S:-10}" "docker $1 (wrangler build)" "$d" "$@"

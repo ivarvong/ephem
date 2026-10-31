@@ -9,7 +9,12 @@ export const FONT_URLS = { regular, bold } as const
 /** Add both weights; `done` runs when they are in (the canvas and the timeline re-measure their text). */
 export const loadFonts = (done: () => void) => {
   if (typeof FontFace === "undefined" || !document.fonts) return
-  const faces = [new FontFace("Ephem DIN", `url("${regular}") format("woff2")`, { weight: "400", display: "swap" }), new FontFace("Ephem DIN", `url("${bold}") format("woff2")`, { weight: "700", display: "swap" })]
+  const faces = [
+    new FontFace("Ephem DIN", `url("${regular}") format("woff2")`, { weight: "400", display: "swap" }),
+    new FontFace("Ephem DIN", `url("${bold}") format("woff2")`, { weight: "700", display: "swap" }),
+  ]
   for (const f of faces) document.fonts.add(f)
-  Promise.all(faces.map(f => f.load())).then(done, () => { /* the system faces stay */ })
+  Promise.all(faces.map((f) => f.load())).then(done, () => {
+    /* the system faces stay */
+  })
 }

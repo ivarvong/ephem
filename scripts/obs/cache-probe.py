@@ -11,7 +11,15 @@ Status per request: x-ephem-cache (the internal Api entrypoint's cf-cache-status
 cf-cache-status, else "-". Latency is client wall (new TLS connection per request, like load.sh) and the front door's own
 server-timing total. Every run prints a run id that is embedded in each key (the lat/lon/time jitter is derived from it).
 """
-import argparse, collections, concurrent.futures as cf, random, string, time, urllib.request, urllib.error
+
+import argparse
+import collections
+import concurrent.futures as cf
+import random
+import string
+import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 
 ap = argparse.ArgumentParser()
@@ -27,32 +35,46 @@ run = "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
 rng = random.Random(run)
 
 
-def iso(dt: datetime) -> str: return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+def iso(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def key(route: str) -> str:
     j = rng.random()
     lat, lon = round(20 + 40 * j, 5), round(-120 + 60 * rng.random(), 5)
     t = datetime(2030, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=rng.randrange(0, 3 * 365 * 86400))
-    if route == "day": return f"/v1/day?date={(t.date()).isoformat()}&tz=America/New_York&lat={lat}&lon={lon}"
-    if route == "alignment": return f"/v1/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&start={iso(t)}&end={iso(t + timedelta(hours=24))}"
-    if route == "position": return f"/v1/position?lat={lat}&lon={lon}&time={iso(t)}"
-    if route == "position-now": return f"/v1/position?lat={lat}&lon={lon}"
-    if route == "weather": return f"/v1/weather?lat={lat}&lon={lon}&n=3"
-    if route == "weather-fixed": return "/v1/weather?lat=40.7&lon=-74&n=3"   # one hot key: what SWR on the Api buys
-    if route == "magnetic": return f"/v1/magnetic?lat={lat}&lon={lon}"
-    if route == "home": return "/"
-    if route == "docs": return "/docs"
+    if route == "day":
+        return f"/v1/day?date={(t.date()).isoformat()}&tz=America/New_York&lat={lat}&lon={lon}"
+    if route == "alignment":
+        return f"/v1/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&start={iso(t)}&end={iso(t + timedelta(hours=24))}"
+    if route == "position":
+        return f"/v1/position?lat={lat}&lon={lon}&time={iso(t)}"
+    if route == "position-now":
+        return f"/v1/position?lat={lat}&lon={lon}"
+    if route == "weather":
+        return f"/v1/weather?lat={lat}&lon={lon}&n=3"
+    if route == "weather-fixed":
+        return "/v1/weather?lat=40.7&lon=-74&n=3"  # one hot key: what SWR on the Api buys
+    if route == "magnetic":
+        return f"/v1/magnetic?lat={lat}&lon={lon}"
+    if route == "home":
+        return "/"
+    if route == "docs":
+        return "/docs"
     raise SystemExit(f"unknown route {route}")
 
 
 def get(path: str) -> tuple[str, int, str, float, float]:
     t0 = time.perf_counter()
     try:
-        with urllib.request.urlopen(urllib.request.Request(a.base + path, headers={"user-agent": f"ephem-cache-probe/{run}"}), timeout=30) as r:
-            r.read(); st, h = r.status, r.headers
+        with urllib.request.urlopen(
+            urllib.request.Request(a.base + path, headers={"user-agent": f"ephem-cache-probe/{run}"}), timeout=30
+        ) as r:
+            r.read()
+            st, h = r.status, r.headers
     except urllib.error.HTTPError as e:
-        e.read(); st, h = e.code, e.headers
+        e.read()
+        st, h = e.code, e.headers
     ms = (time.perf_counter() - t0) * 1000
     status = h.get("x-ephem-cache") or h.get("cf-cache-status") or "-"
     stt = h.get("server-timing") or ""
@@ -61,7 +83,7 @@ def get(path: str) -> tuple[str, int, str, float, float]:
 
 
 rows = collections.defaultdict(lambda: ([], []))
-order = collections.defaultdict(list)   # route -> status sequence per key (repeat mode)
+order = collections.defaultdict(list)  # route -> status sequence per key (repeat mode)
 routes = [r for r in a.routes.split(",") if r]
 print(f"run {run} base {a.base} mode {a.mode}")
 if a.mode == "burst":
@@ -69,21 +91,27 @@ if a.mode == "burst":
         p = key(route)
         with cf.ThreadPoolExecutor(a.burst) as ex:
             res = list(ex.map(get, [p] * a.burst))
-        for _, st, s, ms, srv in res: rows[(route, st, s)][0].append(ms); rows[(route, st, s)][1].append(srv)
+        for _, st, s, ms, srv in res:
+            rows[(route, st, s)][0].append(ms)
+            rows[(route, st, s)][1].append(srv)
         print(f"burst {route} {p}: " + ", ".join(f"{k}={v}" for k, v in collections.Counter(r[2] for r in res).items()))
 else:
     reps = a.repeats if a.mode == "repeat" else 1
 
     def seq(route: str):
-        p = key(route); out = []
-        for _ in range(reps): out.append(get(p))
+        p = key(route)
+        out = []
+        for _ in range(reps):
+            out.append(get(p))
         return route, out
+
     with cf.ThreadPoolExecutor(a.parallel) as ex:
         for route, out in ex.map(seq, [r for r in routes for _ in range(a.keys)]):
             order[route].append("".join(s[2][:1] for s in out))
             for i, (_, st, s, ms, srv) in enumerate(out):
                 tag = s if a.mode == "unique" else f"{s}{'' if i else ' (1st)'}"
-                rows[(route, st, tag)][0].append(ms); rows[(route, st, tag)][1].append(srv)
+                rows[(route, st, tag)][0].append(ms)
+                rows[(route, st, tag)][1].append(srv)
 
 
 def pct(v, p):
@@ -93,6 +121,8 @@ def pct(v, p):
 
 print(f"{'route':14} {'http':>4} {'cache':18} {'n':>4}  {'client p50':>10} {'p99':>6}  {'server p50':>10} {'p99':>6}")
 for (route, st, s), (ms, srv) in sorted(rows.items()):
-    print(f"{route:14} {st:>4} {s:18} {len(ms):>4}  {pct(ms, .5):>10} {pct(ms, .99):>6}  {pct(srv, .5):>10} {pct(srv, .99):>6}")
+    print(
+        f"{route:14} {st:>4} {s:18} {len(ms):>4}  {pct(ms, 0.5):>10} {pct(ms, 0.99):>6}  {pct(srv, 0.5):>10} {pct(srv, 0.99):>6}"
+    )
 for route, seqs in order.items():
     print(f"sequence {route}: {' '.join(seqs)}")

@@ -1,77 +1,77 @@
 [
- {
-  "name": "ts",
-  "type": "timestamp",
-  "required": true
- },
- {
-  "name": "script_version",
-  "type": "string",
-  "required": false
- },
- {
-  "name": "entrypoint",
-  "type": "string",
-  "required": false
- },
- {
-  "name": "outcome",
-  "type": "string",
-  "required": true
- },
- {
-  "name": "method",
-  "type": "string",
-  "required": false
- },
- {
-  "name": "route",
-  "type": "string",
-  "required": false
- },
- {
-  "name": "status",
-  "type": "int32",
-  "required": false
- },
- {
-  "name": "ray",
-  "type": "string",
-  "required": false
- },
- {
-  "name": "colo",
-  "type": "string",
-  "required": false
- },
- {
-  "name": "exception_names",
-  "type": "string",
-  "required": false
- },
- {
-  "name": "exceptions",
-  "type": "int32",
-  "required": false
- },
- {
-  "name": "error_logs",
-  "type": "int32",
-  "required": false
- },
- {
-  "name": "basin_send_failed",
-  "type": "int32",
-  "required": false
- },
- {
-  "name": "cpu_ms",
-  "type": "float64",
-  "required": false
- },
- {
-  "name": "wall_ms",
-  "type": "float64",
-  "required": false
- }
+  {
+    "name": "ts",
+    "type": "timestamp",
+    "required": true
+  },
+  {
+    "name": "script_version",
+    "type": "string",
+    "required": false
+  },
+  {
+    "name": "entrypoint",
+    "type": "string",
+    "required": false
+  },
+  {
+    "name": "outcome",
+    "type": "string",
+    "required": true
+  },
+  {
+    "name": "method",
+    "type": "string",
+    "required": false
+  },
+  {
+    "name": "route",
+    "type": "string",
+    "required": false
+  },
+  {
+    "name": "status",
+    "type": "int32",
+    "required": false
+  },
+  {
+    "name": "ray",
+    "type": "string",
+    "required": false
+  },
+  {
+    "name": "colo",
+    "type": "string",
+    "required": false
+  },
+  {
+    "name": "exception_names",
+    "type": "string",
+    "required": false
+  },
+  {
+    "name": "exceptions",
+    "type": "int32",
+    "required": false
+  },
+  {
+    "name": "error_logs",
+    "type": "int32",
+    "required": false
+  },
+  {
+    "name": "basin_send_failed",
+    "type": "int32",
+    "required": false
+  },
+  {
+    "name": "cpu_ms",
+    "type": "float64",
+    "required": false
+  },
+  {
+    "name": "wall_ms",
+    "type": "float64",
+    "required": false
+  }
 ]

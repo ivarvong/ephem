@@ -12,7 +12,9 @@ import { blockPath } from "./blocks.ts"
 import { geoidPath } from "./geoid.ts"
 import { FEED_PATH } from "./metar-feed.ts"
 
-export interface Binding { fetch(req: Request, init?: { cf?: { cacheKey: string } }): Promise<Response> }
+export interface Binding {
+  fetch(req: Request, init?: { cf?: { cacheKey: string } }): Promise<Response>
+}
 export interface Loopback {
   /** pathAndQuery: path + sorted query (responses.ts canonical) */
   readonly api: (pathAndQuery: string, init: { method: string; headers: Record<string, string> }) => Promise<Response>
@@ -34,19 +36,29 @@ export type Bindings = Readonly<Record<string, Binding>>
 type Name = "Api" | "BlockStore" | "MetarFeed" | "Og"
 export type Resolved = { readonly [K in Name]?: Binding | undefined }
 /** Which binding answers each entrypoint: this Worker's own ctx.exports. */
-export const resolveBindings = (exports: Bindings | undefined): Resolved =>
-  ({ Api: exports?.Api, BlockStore: exports?.BlockStore, MetarFeed: exports?.MetarFeed, Og: exports?.Og })
+export const resolveBindings = (exports: Bindings | undefined): Resolved => ({
+  Api: exports?.Api,
+  BlockStore: exports?.BlockStore,
+  MetarFeed: exports?.MetarFeed,
+  Og: exports?.Og,
+})
 
 const tpInit = (tp: string | undefined): RequestInit => (tp ? { headers: { traceparent: tp } } : {})
 
 export const makeLoopback = (bindings: () => Resolved | undefined): Loopback => {
-  const get = (name: Name) => { const b = bindings()?.[name]; if (!b) throw new Error(`loopback ${name} unavailable`); return b }
+  const get = (name: Name) => {
+    const b = bindings()?.[name]
+    if (!b) throw new Error(`loopback ${name} unavailable`)
+    return b
+  }
   return {
     // cf goes in fetch's second argument, as documented for ctx.exports (a Request copy may drop `cf`).
-    api: (pq, init) => get("Api").fetch(new Request(`https://api.internal${pq}`, init), { cf: { cacheKey: apiCacheKey(pq) } }),
+    api: (pq, init) =>
+      get("Api").fetch(new Request(`https://api.internal${pq}`, init), { cf: { cacheKey: apiCacheKey(pq) } }),
     block: (i, tp) => get("BlockStore").fetch(new Request(`https://blocks.internal${blockPath(i)}`, tpInit(tp))),
     geoid: (b, tp) => get("BlockStore").fetch(new Request(`https://blocks.internal${geoidPath(b)}`, tpInit(tp))),
-    feed: tp => get("MetarFeed").fetch(new Request(`https://feed.internal${FEED_PATH}`, tpInit(tp))),
-    og: (pq, tp) => get("Og").fetch(new Request(`https://og.internal${pq}`, tpInit(tp)), { cf: { cacheKey: ogCacheKey(pq) } }),
+    feed: (tp) => get("MetarFeed").fetch(new Request(`https://feed.internal${FEED_PATH}`, tpInit(tp))),
+    og: (pq, tp) =>
+      get("Og").fetch(new Request(`https://og.internal${pq}`, tpInit(tp)), { cf: { cacheKey: ogCacheKey(pq) } }),
   }
 }

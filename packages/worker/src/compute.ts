@@ -15,7 +15,13 @@ import { defaultNoStore } from "./responses.ts"
 import { makeLoopback, resolveBindings, type Bindings } from "./loopback.ts"
 import { pipelineSink, type PipelineLike, type RequestRow } from "./requestlog.ts"
 
-interface Env { readonly EPH: R2BucketLike; readonly GEOID: R2BucketLike; readonly LOGS?: PipelineLike<RequestRow>; readonly VERSION?: { readonly id: string }; readonly REQUEST_LOGS?: string }
+interface Env {
+  readonly EPH: R2BucketLike
+  readonly GEOID: R2BucketLike
+  readonly LOGS?: PipelineLike<RequestRow>
+  readonly VERSION?: { readonly id: string }
+  readonly REQUEST_LOGS?: string
+}
 
 setTracing(tracing)
 let loop: Bindings | undefined
@@ -28,7 +34,11 @@ export class Api extends WorkerEntrypoint<Env> {
   async fetch(request: Request): Promise<Response> {
     loop = this.ctx.exports
     api ??= makeApiHandler(blocks, { role: "api" }, undefined, geoid)
-    const env = this.env, sink = env.LOGS && env.REQUEST_LOGS !== "off" ? pipelineSink(env.LOGS, p => this.ctx.waitUntil(p), env.VERSION?.id, "api") : undefined
+    const env = this.env,
+      sink =
+        env.LOGS && env.REQUEST_LOGS !== "off"
+          ? pipelineSink(env.LOGS, (p) => this.ctx.waitUntil(p), env.VERSION?.id, "api")
+          : undefined
     const res = defaultNoStore(await api(request, sink))
     if (env.VERSION?.id) res.headers.set("x-ephem-compute-version", env.VERSION.id)
     return res
@@ -38,6 +48,8 @@ export class Api extends WorkerEntrypoint<Env> {
 export class BlockStore extends WorkerEntrypoint<Env> {
   async fetch(request: Request): Promise<Response> {
     recordLoopbackTrace(request)
-    return new URL(request.url).pathname.startsWith("/geoid/") ? serveGeoid(request, r2GeoidOrigin(this.env.GEOID)) : serveBlock(request, r2Origin(this.env.EPH))
+    return new URL(request.url).pathname.startsWith("/geoid/")
+      ? serveGeoid(request, r2GeoidOrigin(this.env.GEOID))
+      : serveBlock(request, r2Origin(this.env.EPH))
   }
 }

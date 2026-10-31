@@ -5,7 +5,11 @@
 import { ICON_SVG } from "@ephem/web/server"
 export { ICON_SVG }
 
-const ICON_HEADERS = { "content-type": "image/svg+xml", "cache-control": "public, max-age=31536000, immutable", "x-content-type-options": "nosniff" }
+const ICON_HEADERS = {
+  "content-type": "image/svg+xml",
+  "cache-control": "public, max-age=31536000, immutable",
+  "x-content-type-options": "nosniff",
+}
 
 /** GET/HEAD /favicon.ico → the icon as image/svg+xml (the type, not the extension, decides), immutable. Anything else: undefined. */
 export const favicon = (request: Request): Response | undefined => {

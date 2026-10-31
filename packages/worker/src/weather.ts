@@ -20,104 +20,206 @@ const INHG_HPA = 33.8638866667
 const iso = (ms: number) => new Date(Math.round(ms)).toISOString()
 const r2 = (x: number) => Math.round(x * 100) / 100
 const wrap = (x: number) => ((x % 360) + 360) % 360
-const httpDate = (s: string | null) => { if (!s) return null; const t = Date.parse(s); return Number.isFinite(t) ? t : null }
+const httpDate = (s: string | null) => {
+  if (!s) return null
+  const t = Date.parse(s)
+  return Number.isFinite(t) ? t : null
+}
 
 const WEATHER_CONVENTIONS = {
   definition: CONVENTIONS.weather,
   distance: "Great-circle distance on a sphere of radius 6 371.0088 km.",
-  bearing: "Initial great-circle bearing observer → station, degrees true; magnetic = true − WMM2025 declination at the observer (observer.magneticDeclination, height 0, now).",
+  bearing:
+    "Initial great-circle bearing observer → station, degrees true; magnetic = true − WMM2025 declination at the observer (observer.magneticDeclination, height 0, now).",
   magneticDeclination: "WMM2025 at the observer, now, east positive; the same value /v1/magnetic gives there.",
 }
 const MAGNETIC_CONVENTIONS = {
   model: CONVENTIONS.magnetic,
   declination: "East positive: magnetic bearing = true bearing − declination. Inclination down positive.",
   compass: `WMM2025 compass zones by horizontal intensity H: blackout below ${COMPASS_ZONES.blackoutBelowNt} nT (the declination is unreliable and a compass does not work), caution below ${COMPASS_ZONES.cautionBelowNt} nT, else ok (WMM2025 technical report).`,
-  height: "height (heightRef ellipsoid or msl) sets the WMM evaluation height (above the ellipsoid); omitted: on the geoid (sea level), as every endpoint.",
+  height:
+    "height (heightRef ellipsoid or msl) sets the WMM evaluation height (above the ellipsoid); omitted: on the geoid (sea level), as every endpoint.",
   geoid: { model: GEOID.model, source: GEOID.source, interpolationErrorM: GEOID.interpolationErrorM },
 }
-export const declinationAt = (lat: number, lon: number, utcMs: number, heightM = 0) => wmm(lat, lon, heightM / 1000, decimalYear(utcMs))
+export const declinationAt = (lat: number, lon: number, utcMs: number, heightM = 0) =>
+  wmm(lat, lon, heightM / 1000, decimalYear(utcMs))
 
-export class Weather extends Context.Service<Weather, {
-  readonly nearest: (q: { readonly lat: number; readonly lon: number; readonly count?: number | undefined }) => Effect.Effect<WeatherResponse, Unavailable>
-}>()("@ephem/worker/Weather") {}
+export class Weather extends Context.Service<
+  Weather,
+  {
+    readonly nearest: (q: {
+      readonly lat: number
+      readonly lon: number
+      readonly count?: number | undefined
+    }) => Effect.Effect<WeatherResponse, Unavailable>
+  }
+>()("@ephem/worker/Weather") {}
 
 const station = (s: Metar, distanceKm: number, bearing: number, decl: number, now: number) => {
   const ageS = Math.max(0, (now - s.observationMs) / 1000)
   return {
-    stationId: s.stationId, raw: s.raw, metarType: s.metarType, flightCategory: s.flightCategory,
-    observationTime: iso(s.observationMs), observationAgeSeconds: Math.round(ageS), observationStale: ageS > OBS_STALE_S,
-    lat: s.lat, lon: s.lon, elevationM: s.elevationM,
+    stationId: s.stationId,
+    raw: s.raw,
+    metarType: s.metarType,
+    flightCategory: s.flightCategory,
+    observationTime: iso(s.observationMs),
+    observationAgeSeconds: Math.round(ageS),
+    observationStale: ageS > OBS_STALE_S,
+    lat: s.lat,
+    lon: s.lon,
+    elevationM: s.elevationM,
     distanceKm: Math.round(distanceKm * 1000) / 1000,
     bearing: { true: r2(bearing) % 360, magnetic: r2(wrap(bearing - decl)) % 360 },
-    temperatureC: s.temperatureC, dewpointC: s.dewpointC,
-    wind: { directionDegTrue: s.windDirectionDeg, variable: s.windVariable, calm: s.windSpeedKt === 0, speedKt: s.windSpeedKt, gustKt: s.windGustKt },
+    temperatureC: s.temperatureC,
+    dewpointC: s.dewpointC,
+    wind: {
+      directionDegTrue: s.windDirectionDeg,
+      variable: s.windVariable,
+      calm: s.windSpeedKt === 0,
+      speedKt: s.windSpeedKt,
+      gustKt: s.windGustKt,
+    },
     visibility: { statuteMiles: s.visibilityMi, orMore: s.visibilityPlus },
-    altimeterInHg: s.altimeterInHg, altimeterHpa: s.altimeterInHg === null ? null : Math.round(s.altimeterInHg * INHG_HPA * 10) / 10,
-    seaLevelPressureHpa: s.seaLevelPressureMb, wx: s.wx, sky: s.sky, verticalVisibilityFt: s.verticalVisibilityFt,
+    altimeterInHg: s.altimeterInHg,
+    altimeterHpa: s.altimeterInHg === null ? null : Math.round(s.altimeterInHg * INHG_HPA * 10) / 10,
+    seaLevelPressureHpa: s.seaLevelPressureMb,
+    wx: s.wx,
+    sky: s.sky,
+    verticalVisibilityFt: s.verticalVisibilityFt,
   }
 }
 
 /** One structured line per weather request: the feed tier (cf-cache-status of the MetarFeed loopback), data age, and
  *  whether this request read and parsed a new feed version. Upstream calls are logged by MetarFeed ({"evt":"metar.upstream"}). */
-const logLine = (f: FeedResult | undefined, extra: Record<string, unknown>) => console.log(JSON.stringify({
-  evt: "metar", tier: f?.tier ?? "unavailable", dataAgeS: f ? Math.round(f.dataAgeMs / 1000) : null,
-  bytes: f?.bytes ?? 0, parsed: f?.parsed ?? false, version: f?.snap.version ?? null, error: f?.error ?? null, ...extra,
-}))
+const logLine = (f: FeedResult | undefined, extra: Record<string, unknown>) =>
+  console.log(
+    JSON.stringify({
+      evt: "metar",
+      tier: f?.tier ?? "unavailable",
+      dataAgeS: f ? Math.round(f.dataAgeMs / 1000) : null,
+      bytes: f?.bytes ?? 0,
+      parsed: f?.parsed ?? false,
+      version: f?.snap.version ?? null,
+      error: f?.error ?? null,
+      ...extra,
+    }),
+  )
 
-export const weatherLive = (feed: Feed) => Layer.succeed(Weather, {
-  nearest: q => Effect.gen(function* () {
-    const tp = yield* currentTraceparent
-    const f = yield* Effect.tryPromise({ try: () => feed.get(tp), catch: e => new Unavailable({ message: `METAR feed unavailable: ${e instanceof Error ? e.message : String(e)}` }) }).pipe(
-      Effect.tapError(e => Effect.sync(() => logLine(undefined, { error: e.message }))),
-      Effect.tap(r => Effect.annotateCurrentSpan({
-        "metar.tier": r.tier, "ephem.feed_cache": r.tier.toUpperCase(), "metar.data_age_s": Math.round(r.dataAgeMs / 1000), "metar.bytes": r.bytes, "metar.parsed": r.parsed,
-        "metar.version": r.snap.version, "metar.stations": r.snap.table.count, "metar.error": r.error ?? "",
-      })),
-      Effect.withSpan("metar.feed"))
-    const now = yield* Clock.currentTimeMillis
-    const decl = declinationAt(q.lat, q.lon, now).declination
-    const n = q.count ?? 1
-    const near = yield* Effect.sync(() => nearest(f.snap.table, q.lat, q.lon, n)).pipe(
-      Effect.tap(r => Effect.annotateCurrentSpan({ "metar.n": n, "metar.nearest": r[0]?.station.stationId ?? "", "metar.nearest_km": r[0] ? Math.round(r[0].distanceKm) : -1 })),
-      Effect.withSpan("metar.nearest"))
-    logLine(f, { n, nearest: near[0]?.station.stationId ?? null, km: near[0] ? Math.round(near[0].distanceKm) : null })
-    const lm = httpDate(f.snap.lastModified)
-    return {
-      time: iso(now),
-      observer: { lat: q.lat, lon: q.lon, magneticDeclination: decl },   // full precision: the homepage takes its magnetic bearings from it (no /v1/magnetic call)
-      stations: near.map(x => station(x.station, x.distanceKm, x.bearing, decl, now)),
-      feed: {
-        source: FEED_URL, fetchedAt: iso(f.snap.fetchedAt), ageSeconds: Math.round(f.dataAgeMs / 1000),
-        lastModified: lm === null ? null : iso(lm), upstreamAgeSeconds: lm === null ? null : Math.round((now - lm) / 1000),
-        stale: f.dataAgeMs >= FRESH_MS, tier: f.tier, stations: f.snap.table.count,
-      },
-      conventions: WEATHER_CONVENTIONS,
-      provenance: prov(SOURCES.metar, SOURCES.wmm),
-    }
-  }).pipe(Effect.withSpan("weather")),
-})
+export const weatherLive = (feed: Feed) =>
+  Layer.succeed(Weather, {
+    nearest: (q) =>
+      Effect.gen(function* () {
+        const tp = yield* currentTraceparent
+        const f = yield* Effect.tryPromise({
+          try: () => feed.get(tp),
+          catch: (e) =>
+            new Unavailable({ message: `METAR feed unavailable: ${e instanceof Error ? e.message : String(e)}` }),
+        }).pipe(
+          Effect.tapError((e) => Effect.sync(() => logLine(undefined, { error: e.message }))),
+          Effect.tap((r) =>
+            Effect.annotateCurrentSpan({
+              "metar.tier": r.tier,
+              "ephem.feed_cache": r.tier.toUpperCase(),
+              "metar.data_age_s": Math.round(r.dataAgeMs / 1000),
+              "metar.bytes": r.bytes,
+              "metar.parsed": r.parsed,
+              "metar.version": r.snap.version,
+              "metar.stations": r.snap.table.count,
+              "metar.error": r.error ?? "",
+            }),
+          ),
+          Effect.withSpan("metar.feed"),
+        )
+        const now = yield* Clock.currentTimeMillis
+        const decl = declinationAt(q.lat, q.lon, now).declination
+        const n = q.count ?? 1
+        const near = yield* Effect.sync(() => nearest(f.snap.table, q.lat, q.lon, n)).pipe(
+          Effect.tap((r) =>
+            Effect.annotateCurrentSpan({
+              "metar.n": n,
+              "metar.nearest": r[0]?.station.stationId ?? "",
+              "metar.nearest_km": r[0] ? Math.round(r[0].distanceKm) : -1,
+            }),
+          ),
+          Effect.withSpan("metar.nearest"),
+        )
+        logLine(f, {
+          n,
+          nearest: near[0]?.station.stationId ?? null,
+          km: near[0] ? Math.round(near[0].distanceKm) : null,
+        })
+        const lm = httpDate(f.snap.lastModified)
+        return {
+          time: iso(now),
+          observer: { lat: q.lat, lon: q.lon, magneticDeclination: decl }, // full precision: the homepage takes its magnetic bearings from it (no /v1/magnetic call)
+          stations: near.map((x) => station(x.station, x.distanceKm, x.bearing, decl, now)),
+          feed: {
+            source: FEED_URL,
+            fetchedAt: iso(f.snap.fetchedAt),
+            ageSeconds: Math.round(f.dataAgeMs / 1000),
+            lastModified: lm === null ? null : iso(lm),
+            upstreamAgeSeconds: lm === null ? null : Math.round((now - lm) / 1000),
+            stale: f.dataAgeMs >= FRESH_MS,
+            tier: f.tier,
+            stations: f.snap.table.count,
+          },
+          conventions: WEATHER_CONVENTIONS,
+          provenance: prov(SOURCES.metar, SOURCES.wmm),
+        }
+      }).pipe(Effect.withSpan("weather")),
+  })
 
 /** No feed (tests that don't need one, the Node dev server without network). */
-export const WeatherNone = Layer.succeed(Weather, { nearest: () => Effect.fail(new Unavailable({ message: "no METAR feed configured" })) })
+export const WeatherNone = Layer.succeed(Weather, {
+  nearest: () => Effect.fail(new Unavailable({ message: "no METAR feed configured" })),
+})
 
-export const EarthLive = HttpApiBuilder.group(EphemApi, "earth", h => h
-  .handle("magnetic", ({ query: q }) => Effect.gen(function* () {
-    let ms: number
-    if (q.time === undefined) ms = yield* Clock.currentTimeMillis
-    else {
-      ms = Date.parse(q.time)
-      if (!Number.isFinite(ms)) return yield* new InvalidRequest({ parameter: "time", message: `time=${q.time} is not a real UTC instant: ISO-8601 with a trailing Z, e.g. 2026-11-17T03:45:00Z` })
-      if (ms < SUPPORTED.fromMs || ms >= SUPPORTED.toMs) return yield* new InvalidRequest({ parameter: "time", message: `time=${q.time} is outside the supported range 1972-01-01T00:00:00Z to 2149-12-31T23:59:59Z` })
-    }
-    const g = yield* (yield* Geoid).load(q.lat).pipe(Effect.withSpan("geoid.load"))
-    yield* Effect.annotateCurrentSpan({ "ephem.geoid_cache": geoidCache(g) })
-    const h = observerHeights(q.lat, q.lon, q.height, q.heightRef), year = decimalYear(ms), m = declinationAt(q.lat, q.lon, ms, h.heightEllipsoid)
-    return {
-      time: iso(ms), observer: { lat: q.lat, lon: q.lon, height: h.heightEllipsoid, ...h },
-      magnetic: { model: "WMM2025" as const, declination: m.declination, inclination: m.inclination, horizontalIntensityNt: m.h, totalIntensityNt: m.f,
-        decimalYear: year, inValidityWindow: year >= WMM_VALID.from && year < WMM_VALID.to, compass: compassZone(m.h) },
-      conventions: MAGNETIC_CONVENTIONS,
-      provenance: prov(SOURCES.wmm, SOURCES.egm96),
-    }
-  }).pipe(Effect.withSpan("magnetic")))
-  .handle("weather", ({ query: q }) => Effect.gen(function* () { const w = yield* Weather; return yield* w.nearest(q) })))
+export const EarthLive = HttpApiBuilder.group(EphemApi, "earth", (h) =>
+  h
+    .handle("magnetic", ({ query: q }) =>
+      Effect.gen(function* () {
+        let ms: number
+        if (q.time === undefined) ms = yield* Clock.currentTimeMillis
+        else {
+          ms = Date.parse(q.time)
+          if (!Number.isFinite(ms))
+            return yield* new InvalidRequest({
+              parameter: "time",
+              message: `time=${q.time} is not a real UTC instant: ISO-8601 with a trailing Z, e.g. 2026-11-17T03:45:00Z`,
+            })
+          if (ms < SUPPORTED.fromMs || ms >= SUPPORTED.toMs)
+            return yield* new InvalidRequest({
+              parameter: "time",
+              message: `time=${q.time} is outside the supported range 1972-01-01T00:00:00Z to 2149-12-31T23:59:59Z`,
+            })
+        }
+        const g = yield* (yield* Geoid).load(q.lat).pipe(Effect.withSpan("geoid.load"))
+        yield* Effect.annotateCurrentSpan({ "ephem.geoid_cache": geoidCache(g) })
+        const h = observerHeights(q.lat, q.lon, q.height, q.heightRef),
+          year = decimalYear(ms),
+          m = declinationAt(q.lat, q.lon, ms, h.heightEllipsoid)
+        return {
+          time: iso(ms),
+          observer: { lat: q.lat, lon: q.lon, height: h.heightEllipsoid, ...h },
+          magnetic: {
+            model: "WMM2025" as const,
+            declination: m.declination,
+            inclination: m.inclination,
+            horizontalIntensityNt: m.h,
+            totalIntensityNt: m.f,
+            decimalYear: year,
+            inValidityWindow: year >= WMM_VALID.from && year < WMM_VALID.to,
+            compass: compassZone(m.h),
+          },
+          conventions: MAGNETIC_CONVENTIONS,
+          provenance: prov(SOURCES.wmm, SOURCES.egm96),
+        }
+      }).pipe(Effect.withSpan("magnetic")),
+    )
+    .handle("weather", ({ query: q }) =>
+      Effect.gen(function* () {
+        const w = yield* Weather
+        return yield* w.nearest(q)
+      }),
+    ),
+)

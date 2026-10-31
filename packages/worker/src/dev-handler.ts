@@ -15,11 +15,18 @@ export const FILE = resolve(import.meta.dirname, "../../../data/jpl", DE440.file
 /** `vite`: pages load Vite's dev modules (HMR) instead of the build. */
 export const devHandler = async (vite: boolean) => {
   const fh = await open(FILE, "r")
-  const blocks = makeBlocks(direct(async (first, count) => {
-    const b = Buffer.alloc(count * REC); await fh.read(b, 0, b.length, blockOffset(first))
-    return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer
-  }))
-  setGeoidSource(bundledGeoidBand)   // the grid from the source tree; prod reads bands from R2 (src/geoid.ts)
+  const blocks = makeBlocks(
+    direct(async (first, count) => {
+      const b = Buffer.alloc(count * REC)
+      await fh.read(b, 0, b.length, blockOffset(first))
+      return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer
+    }),
+  )
+  setGeoidSource(bundledGeoidBand) // the grid from the source tree; prod reads bands from R2 (src/geoid.ts)
   if (vite) setDevAssets()
-  return makeHandler(blocks, undefined, weatherLive(makeFeed({ fetch: req => serveFeed(req, { fetch: (u, i) => fetch(u, i) }) })))
+  return makeHandler(
+    blocks,
+    undefined,
+    weatherLive(makeFeed({ fetch: (req) => serveFeed(req, { fetch: (u, i) => fetch(u, i) }) })),
+  )
 }

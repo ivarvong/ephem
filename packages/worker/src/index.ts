@@ -24,19 +24,27 @@ import { ogFront, setOgTracing } from "./og-render.ts"
 import { afterDelivery, deliver } from "./abort.ts"
 import { ROUTES } from "./routes.ts"
 export { Admin } from "./admin.ts"
-export { Og } from "./og-entry.ts"   // cache ON: the link-preview PNG (src/og.ts scene, rendered by glyph)
-export { Api, BlockStore } from "./compute.ts"   // cache ON (cloudflare.config.ts); called over ctx.exports
+export { Og } from "./og-entry.ts" // cache ON: the link-preview PNG (src/og.ts scene, rendered by glyph)
+export { Api, BlockStore } from "./compute.ts" // cache ON (cloudflare.config.ts); called over ctx.exports
 
 // LOGS: Basin stream ephem_requests (one row per request, src/requestlog.ts); VERSION: this Worker version's id for the row;
 // REQUEST_LOGS: "off" disables rows (the logging-overhead A/B). RUM: ephem_rum (POST /rum, src/rum.ts).
-interface Env { readonly LOGS?: PipelineLike<RequestRow>; readonly RUM?: PipelineLike<RumRow>; readonly VERSION?: { readonly id: string }; readonly REQUEST_LOGS?: string }
-interface Ctx { waitUntil(p: Promise<unknown>): void; readonly exports: Bindings }
+interface Env {
+  readonly LOGS?: PipelineLike<RequestRow>
+  readonly RUM?: PipelineLike<RumRow>
+  readonly VERSION?: { readonly id: string }
+  readonly REQUEST_LOGS?: string
+}
+interface Ctx {
+  waitUntil(p: Promise<unknown>): void
+  readonly exports: Bindings
+}
 
 setTracing(tracing)
 setOgTracing(tracing)
 // ctx.exports of the invocation in flight. The bindings are the same objects for every invocation of this isolate.
 let loop: Bindings | undefined
-const lb = makeLoopback(() => resolveBindings(loop))   // every loopback fetch goes through src/loopback.ts (test/loopback.test.ts)
+const lb = makeLoopback(() => resolveBindings(loop)) // every loopback fetch goes through src/loopback.ts (test/loopback.test.ts)
 
 // One Blocks L1 and one parsed METAR table per isolate.
 const blocks = makeBlocks(loopbackBlocks(lb.block))
@@ -50,7 +58,14 @@ let front: ReturnType<typeof makeHandler> | undefined
 // answer, so on a HIT it can be an earlier version.)
 const withVersion = (r: Response, id: string | undefined): Response => {
   if (!id) return r
-  try { r.headers.set("x-ephem-version", id); return r } catch { const c = new Response(r.body, r); c.headers.set("x-ephem-version", id); return c }
+  try {
+    r.headers.set("x-ephem-version", id)
+    return r
+  } catch {
+    const c = new Response(r.body, r)
+    c.headers.set("x-ephem-version", id)
+    return c
+  }
 }
 
 // x-ephem-errors: this isolate's error count since it started (console.error lines, which is every *_failed log, and
@@ -59,26 +74,59 @@ const withVersion = (r: Response, id: string | undefined): Response => {
 // waitUntil after a response shows on the isolate's next request). Not on other responses: nobody else needs it.
 let isolateErrors = 0
 const consoleError = console.error.bind(console)
-console.error = (...args: unknown[]) => { isolateErrors++; consoleError(...args) }
-;(globalThis as { addEventListener?: (t: string, f: () => void) => void }).addEventListener?.("unhandledrejection", () => { isolateErrors++ })
+console.error = (...args: unknown[]) => {
+  isolateErrors++
+  consoleError(...args)
+}
+;(globalThis as { addEventListener?: (t: string, f: () => void) => void }).addEventListener?.(
+  "unhandledrejection",
+  () => {
+    isolateErrors++
+  },
+)
 const withErrors = (r: Response, request: Request): Response => {
   if (!request.headers.has("x-ephem-smoke")) return r
-  try { r.headers.set("x-ephem-errors", String(isolateErrors)); return r } catch { const c = new Response(r.body, r); c.headers.set("x-ephem-errors", String(isolateErrors)); return c }
+  try {
+    r.headers.set("x-ephem-errors", String(isolateErrors))
+    return r
+  } catch {
+    const c = new Response(r.body, r)
+    c.headers.set("x-ephem-errors", String(isolateErrors))
+    return c
+  }
 }
 
 export default {
   async fetch(request: Request, env: Env, ctx: Ctx): Promise<Response> {
-    const icon = favicon(request); if (icon) return withVersion(icon, env.VERSION?.id)   // before the app: no router, no request row
+    const icon = favicon(request)
+    if (icon) return withVersion(icon, env.VERSION?.id) // before the app: no router, no request row
     loop = ctx.exports
     const wu = (p: Promise<unknown>) => ctx.waitUntil(p)
-    const path = new URL(request.url).pathname, route = ROUTES.has(path) ? path : undefined
-    const og = await ogFront(request, lb, tracing); if (og) return deliver(withErrors(withVersion(og, env.VERSION?.id), request), wu, route, tracing).response   // /og.png, its font, the touch icon
+    const path = new URL(request.url).pathname,
+      route = ROUTES.has(path) ? path : undefined
+    const og = await ogFront(request, lb, tracing)
+    if (og) return deliver(withErrors(withVersion(og, env.VERSION?.id), request), wu, route, tracing).response // /og.png, its font, the touch icon
     front ??= makeHandler(blocks, { role: "front", api: lb.api }, weather, geoid)
     // The request row waits for the body to be delivered (src/abort.ts): a client that leaves mid-body is error_tag ClientAbort.
-    const sink = logs(env, wu, "front"), row = sink && afterDelivery(sink.emit, wu)
+    const sink = logs(env, wu, "front"),
+      row = sink && afterDelivery(sink.emit, wu)
     let res: Response
-    try { res = withErrors(withVersion(await front(request, sink && row ? { ...sink, emit: row.emit } : undefined, env.RUM && env.REQUEST_LOGS !== "off" ? rumPipelineSink(env.RUM, wu, env.VERSION?.id) : undefined), env.VERSION?.id), request) }
-    catch (e) { row?.settle(Promise.resolve(false)); throw e }
+    try {
+      res = withErrors(
+        withVersion(
+          await front(
+            request,
+            sink && row ? { ...sink, emit: row.emit } : undefined,
+            env.RUM && env.REQUEST_LOGS !== "off" ? rumPipelineSink(env.RUM, wu, env.VERSION?.id) : undefined,
+          ),
+          env.VERSION?.id,
+        ),
+        request,
+      )
+    } catch (e) {
+      row?.settle(Promise.resolve(false))
+      throw e
+    }
     const d = deliver(res, wu, route, tracing)
     row?.settle(d.aborted)
     return d.response
@@ -88,5 +136,8 @@ const logs = (env: Env, waitUntil: (p: Promise<unknown>) => void, role: string) 
   env.LOGS && env.REQUEST_LOGS !== "off" ? pipelineSink(env.LOGS, waitUntil, env.VERSION?.id, role) : undefined
 
 export class MetarFeed extends WorkerEntrypoint<Env> {
-  async fetch(request: Request): Promise<Response> { recordLoopbackTrace(request); return serveFeed(request, { fetch: (u, i) => fetch(u, i) }) }
+  async fetch(request: Request): Promise<Response> {
+    recordLoopbackTrace(request)
+    return serveFeed(request, { fetch: (u, i) => fetch(u, i) })
+  }
 }
