@@ -11,7 +11,7 @@ import argparse, os, sys
 from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(__file__))
-from telemetry import eq, events  # noqa: E402
+from telemetry import eq, events, starts  # noqa: E402
 
 ap = argparse.ArgumentParser()
 ap.add_argument("trace", nargs="?")
@@ -21,7 +21,8 @@ ap.add_argument("--minutes", type=float, default=60)
 a = ap.parse_args()
 
 if a.latest:
-    inv = [e for e in events(a.minutes, [eq("$metadata.type", "cf-worker-event")], 200)
+    # server-side prefix filter: an unfiltered pull of the newest events can miss a quiet path behind a busy one
+    inv = [e for e in events(a.minutes, [eq("$metadata.type", "cf-worker-event"), starts("$workers.event.request.url", "https://ephem.ivar.workers.dev" + a.latest)], 200)
            if urlparse(e["$workers"].get("event", {}).get("request", {}).get("url", "")).path == a.latest]
     if not inv:
         raise SystemExit(f"no {a.latest} invocation in the last {a.minutes} min")
