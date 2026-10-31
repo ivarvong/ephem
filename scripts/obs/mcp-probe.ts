@@ -79,6 +79,10 @@ async function toolCall(era: "legacy" | "modern", tool: string) {
 }
 
 // ── legacy session (initialize-era clients: today's SDKs, Inspector, Claude Code) ──
+// The three sections run concurrently, and the tool calls within each (~3.3 s sequential → ~1 s); rows print sorted by step.
+let ltlReady!: (v: { json: any }) => void
+const ltlP = new Promise<{ json: any }>(r => { ltlReady = r })
+const legacyPart = (async () => {
 const init = await rpc("legacy.initialize", "initialize", { protocolVersion: LEGACY, capabilities: {}, clientInfo: { name: "mcp-probe", version: run } })
 check("legacy.initialize", `protocolVersion ${LEGACY}`, init, init.status === 200 && init.json?.result?.protocolVersion === LEGACY && !init.headers.get("mcp-session-id"),
   `${init.json?.result?.protocolVersion} server=${init.json?.result?.serverInfo?.name}/${init.json?.result?.serverInfo?.version}`)
@@ -86,19 +90,27 @@ const notif = await send({ jsonrpc: "2.0", method: "notifications/initialized" }
 check("legacy.notifications/initialized", "202, empty", notif, notif.status === 202 && notif.text === "", `body=${JSON.stringify(notif.text)}`)
 const ltl = await legacy("legacy.tools/list", "tools/list")
 const names: string[] = ltl.json?.result?.tools?.map((t: any) => t.name) ?? []
+ltlReady(ltl)
 check("legacy.tools/list", "8 tools with schemas", ltl, names.length === 8 && ltl.json.result.tools.every((t: any) => t.inputSchema?.type === "object" && t.outputSchema?.type === "object"), names.join(","))
-for (const t of names) await toolCall("legacy", t)
+await Promise.all(names.map(t => toolCall("legacy", t)))
 const ping = await legacy("legacy.ping", "ping")
 check("legacy.ping", "result {}", ping, ping.status === 200 && JSON.stringify(ping.json?.result) === "{}", JSON.stringify(ping.json?.result))
 
+})()
+
 // ── modern 2026-07-28 (stateless, per-request _meta) ──
+const modernPart = (async () => {
+const ltl = await ltlP, names: string[] = ltl.json?.result?.tools?.map((t: any) => t.name) ?? []
 const disc = await modern("modern.server/discover", "server/discover")
 check("modern.server/discover", "supportedVersions[0]=2026-07-28", disc, disc.status === 200 && disc.json?.result?.supportedVersions?.[0] === LATEST && disc.json.result.resultType === "complete", disc.json?.result?.supportedVersions?.join(","))
 const mtl = await modern("modern.tools/list", "tools/list")
 check("modern.tools/list", "same tools, ttlMs", mtl, mtl.status === 200 && JSON.stringify(mtl.json?.result?.tools) === JSON.stringify(ltl.json?.result?.tools) && mtl.json.result.ttlMs > 0, `${mtl.json?.result?.tools?.length} tools ttlMs=${mtl.json?.result?.ttlMs}`)
-for (const t of names) await toolCall("modern", t)
+await Promise.all(names.map(t => toolCall("modern", t)))
+
+})()
 
 // ── errors ──
+const errorPart = (async () => {
 const pe = await send("{nope", { "mcp-protocol-version": LEGACY })
 check("err.parse", "400 -32700", pe, pe.status === 400 && pe.json?.error?.code === -32700, `code=${pe.json?.error?.code}`)
 const um = await legacy("err.unknown_method", "resources/list")
@@ -136,6 +148,10 @@ const org = await send({ jsonrpc: "2.0", id: `${run}-err.origin`, method: "ping"
 check("err.bad_origin", "403", org, org.status === 403, "")
 const pre = await fetch(`${base}/mcp`, { method: "OPTIONS", headers: { origin: "https://example.com", "access-control-request-method": "POST", "access-control-request-headers": "content-type,mcp-protocol-version" } })
 check("cors.preflight", "allows POST", { status: pre.status, ms: 0, ray: pre.headers.get("cf-ray") ?? "" }, /POST/.test(pre.headers.get("access-control-allow-methods") ?? ""), pre.headers.get("access-control-allow-methods") ?? "")
+
+})()
+await Promise.all([legacyPart, modernPart, errorPart])
+rows.sort((x, y) => x.step < y.step ? -1 : x.step > y.step ? 1 : 0)
 
 const w = Math.max(...rows.map(r => r.step.length)), we = Math.max(...rows.map(r => r.expect.length))
 console.log(`mcp-probe ${run} → ${base}/mcp   (jsonrpc ids: ${run}-<step>)\n`)

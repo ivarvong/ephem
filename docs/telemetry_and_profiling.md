@@ -105,7 +105,8 @@ Views: `events` (invocations: `$metadata.type = cf-worker-event`; spans: `type =
    come from the new version, then `smoke.sh --pin <new>`, then the **telemetry gate** ("Telemetry gate" below). Prod
    traffic never sees the canary. Either fails → remove it (100% previous), exit 1, no tag.
 4. Promote (new 100%), wait until 5 unpinned `/healthz` in a row carry the new `x-ephem-version` (not a fixed sleep), then
-   `smoke.sh --expect <new>`, then the gate in live mode (the live smoke + 90 s of real traffic). Failed checks are retried once (only those, after `RETRY_S`=5 s). Still failing → route 100%
+   `smoke.sh --expect <new>`; the deploy is done (tagged). Since 2026-10-31 the gate in live mode (the live smoke + 90 s of
+   real traffic), the deferred full canary check and the tail check run in a detached live watcher ("Shipping" below). Failed checks are retried once (only those, after `RETRY_S`=5 s). Still failing → route 100%
    back to the recorded version, wait until it serves, re-smoke it with the last deployed commit's smoke.sh, exit 1, no tag.
 5. A diff touching non-versioned settings (`tailConsumers`, `observability`, `logpush` in cloudflare.config.ts; `GRADUAL=0`
    forces it) skips the 0% stage and uses `cf deploy`: `versions create` says those apply only on the next deployment.
@@ -200,6 +201,51 @@ inner part needs no care for in-flight deploys; change the bootstrap by `mv`ing 
 ```sh
 python3 scripts/obs/canary-gate.py ephem <new> <prev> --since <iso> --run <id> --manifest <file> [--live 90] [--json out]
 ```
+
+
+### Shipping (`scripts/ship.sh`, 2026-10-31)
+
+ivar: "Ship every commit fast." `scripts/ship.sh start` launches a watcher in its own session (`perl POSIX::setsid` +
+`nohup`; survives the terminal; pid `.git/ephem-ship/pid`, output `.git/ephem-ship/ship.out`). Every 2 s it compares
+`refs/heads/main` with the last `deployed/` tag; when main is ahead (and is not the head that already failed) it runs
+`scripts/deploy.sh <main> "ship <n>: <shas>: <subject>" auto` under the usual lock. Commits that land during a deploy
+coalesce into the next one (the newest main contains them). One line per deploy in `~/code/lab_notebook/ephem-ship.log`
+(`ship <sha> [<shipped shas>] ver=<id> wall= rc= result commit->100%= | <stage timings> | log=`), and the live watcher
+appends `live <sha> <ver> ok|ROLLED-BACK …` when its verdict is in. A failure leaves the head unshipped and sends a macOS
+notification; main stays blocked until a newer commit passes. `status`, `stop` (SIGTERM; a running deploy finishes
+first; a live watcher always finishes), `restart`, `log [n]`, `retry` (re-try a flaked head), `once <rev>` (one deploy of
+any rev with ship's log line). Why not launchd: its bare environment lacks the cf OAuth/node/pyproj PATH, and it would
+resume deploying after a reboot nobody watched; the cost is no restart after a crash (`status` shows it). The gate's
+pyproj comes from `~/.cache/ephem-gate-venv` (created by `start`).
+
+**What changed in deploy.sh for speed (same gates, same order of safety):**
+
+| stage | before (4ec0651 redeploy a5b45099; 14 earlier logs for the gates) | after | how |
+| --- | --- | --- | --- |
+| worktree + links | 0.7 s | 0.6 s | |
+| typecheck / lint / tests | 0.8 / 0.2 / 11.3 s, sequential: 12.6 s | 12.0 s parallel (vitest dominates); 0 s on a pass-cache hit | `.git/ephem-gate-pass/<tree>-<node_modules lock hash>` |
+| version upload | 9.2 s after the gate | 10.3 s hidden under the gate (1.0 s wait) | uploaded version is in no deployment until the 0% route, which needs a green gate |
+| canary route + pin wait | 1.7 + 3.6 s | 1.7 + 2.1 s | /healthz poll 0.5 → 0.3 s |
+| pinned smoke | 8.3 s (25 checks + 39-step MCP probe, sequential) | 1.2–3.5 s | checks concurrent (compute → compute-hit ordered), MCP probe sections and tool calls concurrent (3.3 → 1.0 s); still once + retry of the failures only |
+| canary telemetry gate | 34.0 s (35–44 s, n=14) | early pass, see "Telemetry gate" | `--early 0.75`; queries per poll concurrent; baseline loaded during the first polls |
+| promote + serving | 1.6 + 3.4 s | same | |
+| live smoke | 8.3 s | ~1.5 s | concurrent |
+| live gate | 99.0 s (92–113 s, n=14), blocking | background watcher, ~105 s after promotion | rollback + untag on failure; next deploy waits for the verdict |
+| **start → 100%** | **72.5 s**; done at 183.2 s | see the proof rows below | |
+
+**Early canary pass, measured** (smoke of the live version, gate polled every 2 s, n=3): nothing visible for ~10 s;
+all 9 required signals at 19.5–25.7 s with 76–80% coverage; 100% at 30.7–33.4 s. Info logs arrive with the invocations,
+not before them. So the pre-promotion bar is "0 errors, every required span/entrypoint, ≥ 75% coverage", and the full
+check (100% / 95% floor) still runs: the live watcher re-runs canary-gate.py on the canary manifest with `--until
+<promotion>` (so real traffic after promotion can't fail it) and rolls back if it fails. Client-visible signals stay
+primary: `x-ephem-errors` on every pinned response fails the smoke before any telemetry wait.
+
+**Failure paths, proven on throwaway branch commits (never main), through `ship.sh once`:**
+
+| commit | fault | caught by | result |
+| --- | --- | --- | --- |
+| 5c457dc (branch ship-failure-demo) | `console.error({evt:"ship_failure_demo_failed"})` on /v1/magnetic | pinned smoke: `x-ephem-errors` 1 on magnetic + the MCP probe's `isolate.errors`, retried, still failing | canary 4b4abc5b removed; prod stayed f706c88b; 34 s wall; ship log FAILED line + notification |
+| b254b9b (branch ship-failure-demo2) | `console.log({evt:"ship_failure_demo_failed"})` (telemetry-only: no client signal) | canary gate (early mode): the error log at 27.5 s, before the early pass | canary 3ff92eb3 removed 1.5 s after the decision; prod never served it; 50 s wall |
 
 
 ## Remote load (`ephem-load`, packages/load, 2026-10-30)

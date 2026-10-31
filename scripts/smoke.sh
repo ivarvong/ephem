@@ -33,27 +33,35 @@ OVR=$( { [ -n "$PIN" ] && printf 'ephem="%s"' "$PIN"; } || true)
 H=(); [ -n "$OVR" ] && H=(-H "cloudflare-workers-version-overrides: $OVR")
 [ -n "$RUN" ] && H+=(-H "x-ephem-smoke: $RUN")
 T=$(date -u +%Y-%m-%dT%H:%M:%SZ); FAILED=(); N=0
+[[ "$ONLY" == *",compute-hit,"* ]] && ONLY="$ONLY,compute,"   # compute-hit needs compute's fresh key first
 want() { [ -z "$ONLY" ] || [[ "$ONLY" == *",$1,"* ]]; }
-# chk <name> <want-status> <path> [grep-pattern] [POST-json] [want x-ephem-cache] [want x-ephem-compute-version]
-chk() {
-  local name=$1 ws=$2 p=$3 pat=${4:-} data=${5:-} wc=${6:-} wcv=${7:-} c v x cv why=""
-  want "$name" || return 0; N=$((N + 1))
-  if [ -n "$data" ]; then c=$(curl -s -o "$D/b" -D "$D/h" -w '%{http_code}' --max-time 30 ${H[@]+"${H[@]}"} -X POST -H 'content-type: application/json' -d "$data" "$B$p")
-  else c=$(curl -s -o "$D/b" -D "$D/h" -w '%{http_code}' --max-time 30 ${H[@]+"${H[@]}"} "$B$p"); fi
-  v=$(tr -d '\r' < "$D/h" | awk -F': ' 'tolower($1)=="x-ephem-version"{print $2}' | tail -1)
+# chk_one <name> <want-status> <path> [grep-pattern] [POST-json] [want x-ephem-cache] [want x-ephem-compute-version]
+# Checks run concurrently (each one a background job with its own files; a `{ …; …; } &` group keeps the order where one check depends
+# on another: compute → compute-hit). Results are printed in the order the checks are written. ~8 s sequential → ~2 s.
+chk_one() {
+  local name=$1 ws=$2 p=$3 pat=${4:-} data=${5:-} wc=${6:-} wcv=${7:-} c v x cv er why=""
+  want "$name" || return 0
+  local b="$D/$name.b" h="$D/$name.h"
+  if [ -n "$data" ]; then c=$(curl -s -o "$b" -D "$h" -w '%{http_code}' --max-time 30 ${H[@]+"${H[@]}"} -X POST -H 'content-type: application/json' -d "$data" "$B$p")
+  else c=$(curl -s -o "$b" -D "$h" -w '%{http_code}' --max-time 30 ${H[@]+"${H[@]}"} "$B$p"); fi
+  touch "$h" "$b"
+  v=$(tr -d '\r' < "$h" | awk -F': ' 'tolower($1)=="x-ephem-version"{print $2}' | tail -1)
   [ "$c" = "$ws" ] || why="status $c, want $ws"
-  [ -z "$why" ] && [ -n "$pat" ] && ! grep -q -- "$pat" "$D/b" && why="body lacks $pat"
+  [ -z "$why" ] && [ -n "$pat" ] && ! grep -q -- "$pat" "$b" && why="body lacks $pat"
   [ -z "$why" ] && [ -n "$EXPECT" ] && [ "$v" != "$EXPECT" ] && why="answered by version ${v:-none}, want ${EXPECT:0:8}"
-  x=$(tr -d '\r' < "$D/h" | awk -F': ' 'tolower($1)=="x-ephem-cache"{print $2}' | tail -1)
-  cv=$(tr -d '\r' < "$D/h" | awk -F': ' 'tolower($1)=="x-ephem-compute-version"{print $2}' | tail -1)
-  er=$(tr -d '\r' < "$D/h" | awk -F': ' 'tolower($1)=="x-ephem-errors"{print $2}' | tail -1)
+  x=$(tr -d '\r' < "$h" | awk -F': ' 'tolower($1)=="x-ephem-cache"{print $2}' | tail -1)
+  cv=$(tr -d '\r' < "$h" | awk -F': ' 'tolower($1)=="x-ephem-compute-version"{print $2}' | tail -1)
+  er=$(tr -d '\r' < "$h" | awk -F': ' 'tolower($1)=="x-ephem-errors"{print $2}' | tail -1)
   [ -z "$why" ] && [ -n "$PIN" ] && [ -n "$RUN" ] && [ "${er:-0}" != 0 ] && why="isolate logged ${er} errors (x-ephem-errors)"
-  [ -n "$MANIFEST" ] && echo "$(tr -d '\r' < "$D/h" | awk -F': ' 'tolower($1)=="cf-ray"{print $2}' | tail -1 | grep . || echo -) $c $([ -n "$data" ] && echo POST || echo GET) ${p%%\?*} $name" >> "$MANIFEST"
+  [ -n "$MANIFEST" ] && echo "$(tr -d '\r' < "$h" | awk -F': ' 'tolower($1)=="cf-ray"{print $2}' | tail -1 | grep . || echo -) $c $([ -n "$data" ] && echo POST || echo GET) ${p%%\?*} $name" >> "$MANIFEST"
   [ -z "$why" ] && [ -n "$wc" ] && [ "$x" != "$wc" ] && why="x-ephem-cache ${x:-none}, want $wc"
   [ -z "$why" ] && [ -n "$wcv" ] && [ "$wcv" = any ] && [ -z "$cv" ] && why="no x-ephem-compute-version (not computed by the Api)"
   [ -z "$why" ] && [ -n "$wcv" ] && [ "$wcv" != any ] && [ "$cv" != "$wcv" ] && why="computed by Api version ${cv:-none}, want ${wcv:0:8}"
-  if [ -z "$why" ]; then echo "ok   $name $c ${v:0:8}${x:+ $x}${cv:+ compute ${cv:0:8}} $p"; else echo "FAIL $name: $why ($(tr -d '\r' < "$D/h" | awk -F': ' 'tolower($1)=="cf-ray"{print $2}')) $p"; FAILED+=("$name"); fi
+  if [ -z "$why" ]; then echo "ok   $name $c ${v:0:8}${x:+ $x}${cv:+ compute ${cv:0:8}} $p" > "$D/$name.res"; else echo "FAIL $name: $why ($(tr -d '\r' < "$h" | awk -F': ' 'tolower($1)=="cf-ray"{print $2}')) $p" > "$D/$name.res"; fi
 }
+# chk <chk_one args>: one check as a background job (its name joins ORDER, the print order). Check lines stay `chk …`.
+ORDER=()
+chk() { want "$1" || return 0; ORDER+=("$1"); chk_one "$@" & }
 chk home 200 "/"
 chk instrument-gone 404 "/instrument"   # removed 2026-10-31 (ivar: "delete /instrument")
 chk fonts-gone 404 "/fonts/0123456789ab/SofiaSansCondensed-Core.woff2"   # removed 2026-10-31: `/` uses system fonts only
@@ -80,14 +88,20 @@ chk search 200 "/v1/alignment/search" '"enter":{"time":"2026-11-17T03:4' \
   '{"body":"moon","target":{"lat":40.68925,"lon":-74.0445,"height":70,"heightRef":"msl"},"region":[-73.9995,40.7,-73.993,40.706],"observerHeight":5,"heightRef":"msl","start":"2026-11-16T00:00:00Z","end":"2026-11-18T00:00:00Z"}'
 # A deterministic key nobody has asked for (random lat at 1e-7°): MISS computed by the Api, then HIT from its cache.
 U="/v1/position?lat=40.$(printf '%07d' $((RANDOM * 32768 + RANDOM)))&lon=-74&time=$T"
-chk compute 200 "$U" '"provenance"' "" MISS "${CEXPECT:-any}"
-chk compute-hit 200 "$U" '"provenance"' "" HIT any
+want compute && ORDER+=(compute); want compute-hit && ORDER+=(compute-hit)
+{ chk_one compute 200 "$U" '"provenance"' "" MISS "${CEXPECT:-any}"; chk_one compute-hit 200 "$U" '"provenance"' "" HIT any; } &   # in order
 chk blocks-miss 200 "/v1/position?lat=40.7&lon=-74&time=$(python3 -c 'import random,datetime as d; print((d.datetime(1972,1,2)+d.timedelta(seconds=random.randrange(5_617_000_000))).strftime("%Y-%m-%dT%H:%M:%SZ"))')" '"provenance"' "" MISS "${CEXPECT:-any}"
 if want mcp; then
-  N=$((N + 1))
-  if EPHEM_VERSION=$PIN EPHEM_SMOKE_RUN=$RUN EPHEM_SMOKE_MANIFEST=$MANIFEST node --experimental-strip-types "$(dirname "$0")/obs/mcp-probe.ts" "$B" > "$D/mcp" 2>&1; then echo "ok   mcp $(tail -1 "$D/mcp")"
-  else grep -E 'FAIL' "$D/mcp" | head -5; echo "FAIL mcp: $(tail -1 "$D/mcp")"; FAILED+=("mcp"); fi
+  ORDER+=(mcp)
+  { if EPHEM_VERSION=$PIN EPHEM_SMOKE_RUN=$RUN EPHEM_SMOKE_MANIFEST=$MANIFEST node --experimental-strip-types "$(dirname "$0")/obs/mcp-probe.ts" "$B" > "$D/mcp" 2>&1; then echo "ok   mcp $(tail -1 "$D/mcp")" > "$D/mcp.res"
+    else { grep -E 'FAIL' "$D/mcp" | head -5; echo "FAIL mcp: $(tail -1 "$D/mcp")"; } > "$D/mcp.res"; fi; } &
 fi
+wait
+for n in ${ORDER[@]+"${ORDER[@]}"}; do
+  N=$((N + 1))
+  if [ -s "$D/$n.res" ]; then cat "$D/$n.res"; else echo "FAIL $n: no result (check crashed)"; FAILED+=("$n"); continue; fi
+  tail -1 "$D/$n.res" | grep -q '^ok ' || FAILED+=("$n")
+done
 [ -n "$FAILED_TO" ] && { : > "$FAILED_TO"; for f in ${FAILED[@]+"${FAILED[@]}"}; do echo "$f" >> "$FAILED_TO"; done; }
 if [ ${#FAILED[@]} -eq 0 ]; then echo "SMOKE ok $N/$N${PIN:+ (pinned ${PIN:0:8})}${EXPECT:+ (all from ${EXPECT:0:8})}${CEXPECT:+ (compute ${CEXPECT:0:8})}"; exit 0; fi
 echo "SMOKE FAILED ${#FAILED[@]}/$N: ${FAILED[*]}"; exit 1

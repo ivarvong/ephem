@@ -13,6 +13,11 @@ smoke (before promotion) and after the live smoke (with --live, over real traffi
            runtime root span) and every required span is present; at the deadline the --coverage floor decides (missing telemetry
            never passes).
 --live S   after promotion: also judge ALL traffic the new version served in [since, since+S] (waits until then)
+--early F  pass as soon as there are 0 errors, every required entrypoint/span is visible and >= F of the smoke's requests are
+           (prints "GATE ok (early …)"). Measured arrival (n=3, 2026-10-31): nothing for ~10 s, all 9 required signals at
+           19-26 s with 76-80% coverage, 100% at 31-33 s. deploy.sh uses 0.75 before promotion and re-runs this check in
+           full (no --early, --until <promotion>) in the background watcher, which rolls back if it fails.
+--until    judge the new version's own events only before this instant (the deferred canary check runs after promotion)
 
 Joins: front-door invocation (header x-ephem-smoke) → cf-ray → Api invocations (request header x-ephem-ray = front ray)
 and BlockStore invocations (rayId starts with the front ray) on ephem →
@@ -50,6 +55,9 @@ ap.add_argument("--since", required=True); ap.add_argument("--run", required=Tru
 ap.add_argument("--wait", type=float, default=90); ap.add_argument("--live", type=float, default=0)
 ap.add_argument("--baseline-min", type=float, default=15); ap.add_argument("--json")
 ap.add_argument("--coverage", type=float, default=0.95, help="minimum share of the smoke's requests that must be visible")
+ap.add_argument("--poll", type=float, default=0, help="seconds between polls (default 5; live 10)")
+ap.add_argument("--early", type=float, default=0, help="pass before full ingest once 0 errors, every required span/entrypoint, and this share of the smoke's requests are visible (deploy.sh: 0.75; it re-runs the full check after promotion)")
+ap.add_argument("--until", help="ISO: judge only the new version's own events before this (deploy.sh's deferred canary check: before promotion)")
 a = ap.parse_args()
 PREV = None if a.prev in ("", "-") else a.prev
 ms = lambda s: int(datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp() * 1000)  # noqa: E731
@@ -89,30 +97,42 @@ def from_root_span(sp):
                          "event": {"request": {"url": (src.get("url") or {}).get("full", "")}, "response": {"status": ((src.get("http") or {}).get("response") or {}).get("status_code")}}}}
 
 
+def par(fns):
+    """Run thunks concurrently (each is one or more cf CLI queries, ~1 s apiece): a poll was ~10 sequential queries."""
+    import threading   # not concurrent.futures: it imports the stdlib `queue`, which scripts/obs/queue.py shadows
+    res, errs = [None] * len(fns), []
+    def run(i):
+        try: res[i] = fns[i]()
+        except BaseException as x: errs.append(x)   # noqa: B036 (SystemExit from a failed query must surface)
+    ts = [threading.Thread(target=run, args=(i,)) for i in range(len(fns))]
+    for th in ts: th.start()
+    for th in ts: th.join()
+    if errs: raise errs[0]
+    return res
+
+
 def collect(until: int):
     w = (T0, until)
-    front = [e for e in t.events_all([INV, t.eq("$workers.event.request.headers.x-ephem-smoke", a.run)], w, service="ephem")]
+    newsvc = "ephem"
+    lw = (T0, max(until, T0 + 1)) if not a.live else (ms(a.since), until)
+    if a.until: lw = (lw[0], min(lw[1], ms(a.until)))
+    front, mine = par([lambda: list(t.events_all([INV, t.eq("$workers.event.request.headers.x-ephem-smoke", a.run)], w, service="ephem")),
+                       lambda: t.events_all([t.eq("$workers.scriptVersion.id", a.new), NOT_SPAN], lw, service=newsvc)])
     # Second, independent record of every request: the runtime's root span (cloudflare.ray_id, outcome, status, version,
     # cpu). An invocation event can be lost at ingest while its span arrives (1 of 154 smoke requests, 2026-10-30); such a
     # request still counts as visible, judged from its span.
     have = {ray0(e) for e in front}
-    for c in chunks(sorted(rays - have), 40):
-        for sp in t.events(0, [t.eq("$metadata.type", "span"), inn("cloudflare.ray_id", c)], window=w, service="ephem"):
-            front.append(from_root_span(sp))
+    for sps in par([lambda c=c: t.events(0, [t.eq("$metadata.type", "span"), inn("cloudflare.ray_id", c)], window=w, service="ephem")
+                    for c in chunks(sorted(rays - have), 40)]):
+        front += [from_root_span(sp) for sp in sps]
     fr = {ray0(e) for e in front}
-    linked = []
+    jobs = []
     for s in COMPUTE_SVCS:
-        for c in chunks(sorted(fr), 40):
-            linked += t.events(0, [INV, inn("$workers.event.request.headers.x-ephem-ray", c)], window=w, service=s)
-        linked += [e for e in t.events_all([INV, t.eq("$workers.entrypoint", "BlockStore")], w, service=s) if ray0(e) in fr]
+        jobs += [lambda c=c, s=s: t.events(0, [INV, inn("$workers.event.request.headers.x-ephem-ray", c)], window=w, service=s) for c in chunks(sorted(fr), 40)]
+        jobs.append(lambda s=s: [e for e in t.events_all([INV, t.eq("$workers.entrypoint", "BlockStore")], w, service=s) if ray0(e) in fr])
+    linked = [e for r in par(jobs) for e in r]
     traces = sorted({e["$metadata"].get("traceId") for e in front + linked} - {None})
-    tev = []
-    for s in ["ephem"]:
-        for c in chunks(traces, 15):
-            tev += t.events(0, [inn("$metadata.traceId", c)], window=w, service=s)
-    newsvc = "ephem"
-    lw = (T0, max(until, T0 + 1)) if not a.live else (ms(a.since), until)
-    mine = t.events_all([t.eq("$workers.scriptVersion.id", a.new), NOT_SPAN], lw, service=newsvc)
+    tev = [e for r in par([lambda c=c: t.events(0, [inn("$metadata.traceId", c)], window=w, service="ephem") for c in chunks(traces, 15)]) for e in r]
     return front, linked, tev, mine
 
 
@@ -193,7 +213,10 @@ def pct(v, p): v = sorted(v); return v[min(len(v) - 1, int(len(v) * p))] if v el
 
 
 BASE_SIGS, BASE = set(), collections.defaultdict(list)
-if PREV:
+
+
+def load_base():
+    if not PREV: return
     bw = (ms(a.since) - int(a.baseline_min * 60_000), ms(a.since))
     bsvc = "ephem"
     for e in t.events_all([t.eq("$workers.scriptVersion.id", PREV), NOT_SPAN], bw, service=bsvc):
@@ -206,22 +229,38 @@ if PREV:
             m = is_err_log(e)
             if m: BASE_SIGS.add((svc(e), ep(e), "log " + m.split(":")[0], path(e)))
 
-early = False
+
+import threading  # noqa: E402  the baseline (a 15-min events_all) runs while the first polls do
+BASE_T = threading.Thread(target=load_base); BASE_T.start()
+
+early = False; passed_early = None
 start = time.time(); deadline = start + a.wait; live_end = ms(a.since) + int(a.live * 1000)
 polls = 0
+POLLS = []   # per poll: arrival of each signal (guide "Telemetry gate": the measured arrival curve)
 while True:
     polls += 1
+    tq = time.time()
     front, linked, tev, mine = collect(int(time.time() * 1000))
     fails, warns, missing, info = judge(front, linked, tev, mine, False)
+    logs = [e for e in tev + mine if e["$metadata"].get("type") == "cf-worker"]
+    POLLS.append(dict(t=round(time.time() - start, 1), q=round(time.time() - tq, 1), cov=len({ray0(e) for e in front} & rays), of=len(rays),
+                      inv=sum(1 for e in front if e["$metadata"].get("from") != "root span"), linked=len(linked), tev=len(tev), logs=len(logs),
+                      mine=len(mine), need=sum(1 for _, ok in info["need"] if ok), needs=len(info["need"]), fails=len(fails)))
     complete = not missing and len({ray0(e) for e in front} & rays) == len(rays)   # stop early only at 100%; floor applies at the deadline
+    if a.live and fails: BASE_T.join(); fails, warns, missing, info = judge(front, linked, tev, mine, False)   # live: signatures need the baseline
     if fails and not a.live: early = True; break          # an error is definitive: no need to wait for the rest
+    cov = len({ray0(e) for e in front} & rays) / len(rays)
+    if a.early and not a.live and not fails and all(ok for _, ok in info["need"]) and cov >= a.early:
+        passed_early = cov; break
     if complete and (not a.live or time.time() * 1000 >= live_end + 15_000): break
     if time.time() >= deadline and (not a.live or time.time() * 1000 >= live_end + 15_000): break
     if polls == 1 or polls % 3 == 0:
         print(f"  gate: {len({ray0(e) for e in front} & rays)}/{len(rays)} smoke requests ingested, {len(missing)} missing, {time.time() - start:.0f}s", flush=True)
-    time.sleep(10 if a.live else 5)
+    time.sleep(a.poll or (10 if a.live else 5))
 waited = time.time() - start
 first_complete = waited if complete else None
+BASE_T.join()
+if not a.live: fails, warns, missing, info = judge(front, linked, tev, mine, True)   # CPU warnings need the baseline
 
 # --- table ---------------------------------------------------------------------------------------------------------------
 under = "ephem (front door, Api, BlockStore)"
@@ -252,12 +291,15 @@ warns += cpu_warn
 for w in warns[:15]: print("   warn  " + w)
 if early and missing:   # stopped on a definite error before ingest finished: what is still missing is not a finding
     print(f"   (stopped early on {len(fails)} error(s) after {waited:.0f}s; {len(missing)} items not yet ingested, not judged)"); missing = []
+if passed_early is not None and not fails:   # not-yet-ingested requests are not judged here: deploy.sh re-runs the full check
+    print(f"   (passed early at {passed_early:.0%} coverage after {waited:.0f}s; {len(missing)} not-yet-ingested items left to the deferred full check)"); missing = []
 bad = fails + missing
 for f in bad[:25]: print("   FAIL  " + f)
 if len(bad) > 25: print(f"   … {len(bad) - 25} more")
 if a.json:
     json.dump(dict(worker=a.worker, new=a.new, prev=PREV, run=a.run, waited_s=round(waited, 1), first_complete_s=first_complete,
-                   expected=len(rays), seen=len({ray0(e) for e in front} & rays), fails=fails, missing=missing, warns=warns), open(a.json, "w"))
+                   expected=len(rays), seen=len({ray0(e) for e in front} & rays), fails=fails, missing=missing, warns=warns, polls=POLLS, early=passed_early), open(a.json, "w"))
 if bad:
     print(f"GATE FAILED: {len(fails)} errors, {len(missing)} missing ({a.worker} {a.new[:8]})"); sys.exit(1)
-print(f"GATE ok: {a.worker} {a.new[:8]}, {len(rays)} smoke requests, 0 errors, {len(warns)} warnings, ingest {waited:.0f}s")
+early_s = f" (early: {passed_early:.0%} of the requests visible, every required span; full check deferred)" if passed_early is not None else ""
+print(f"GATE ok{early_s}: {a.worker} {a.new[:8]}, {len(rays)} smoke requests, 0 errors, {len(warns)} warnings, ingest {waited:.0f}s")
