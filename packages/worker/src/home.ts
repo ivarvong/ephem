@@ -74,8 +74,8 @@ export const Home = HttpRouter.use(router => Effect.gen(function* () {
     const tail = embeds.pipe(
       Effect.tap(parts => Effect.annotateCurrentSpan({ "home.embedded": parts.filter(Boolean).length })),
       Effect.withSpan("home.embed"),
-      Effect.map(parts => parts.join("") + PAGE_END),
-      Effect.catchCause(() => Effect.succeed(PAGE_END)))   // never fails: the page fetches what is missing
+      Effect.map(parts => parts.join("") + BOOT + FONT_STYLE + PAGE_END),
+      Effect.catchCause(() => Effect.succeed(BOOT + FONT_STYLE + PAGE_END)))   // never fails: the page fetches what is missing
     return yield* streamHtml(pageHead(v, tid), tail, { "cache-control": "private, no-store", ...documentTraceHeaders(tid) })
   }).pipe(Effect.withSpan("home"))
   }))
@@ -495,13 +495,12 @@ function aimText(name, b, pose) {
 `
 
 /** The whole page without embedded data (tests; the client then fetches everything). */
-export const page = (v: Visitor, trace?: DocumentTrace) => pageHead(v, trace) + PAGE_END
+export const page = (v: Visitor, trace?: DocumentTrace) => pageHead(v, trace) + FONT_STYLE + PAGE_END
 
 /** Everything the browser can parse, style, paint and boot before the data: flushed at once (src/embed.ts streamHtml). */
 export const pageHead = (v: Visitor, trace?: DocumentTrace) => `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
-${FONT_STYLE}
 ${traceparentMeta(trace)}
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>ephem · the sky over ${v.city.replace(/[<>&"]/g, "")}</title>
@@ -1198,6 +1197,7 @@ var rsT = 0; addEventListener("resize", function () { resize(); clearTimeout(rsT
 document.addEventListener("visibilitychange", function () { if (!document.hidden) loadPos(); });
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(requestDraw);
 resize(); header();
+window.__ephemBoot = boot;   // the stream calls it right after the embedded answers; DOMContentLoaded is the fallback
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();   // the embedded data is the last thing the server streams
 if (AT == null) setInterval(function () { if (!document.hidden) loadPos(); }, 5000);
 setInterval(tick, 1000); tick();
@@ -1206,6 +1206,10 @@ setInterval(function () { if (!document.hidden) loadWx(); }, 60e3);
 </script>
 `
 const PAGE_END = "</body></html>"
-/** The page's face (src/din.ts), inline at the very top of the head (13.9 KB of woff2, caps only): it travels while the server
- *  computes the embedded answers, instead of ahead of them in the tail. */
+/** The page's face (src/din.ts, 13.9 KB of woff2, caps only), inline at the END of the stream: the head paints at once in the
+ *  system face, the embedded answers boot the page as soon as they are parsed (BOOT, before the font's bytes), then the font
+ *  arrives and swaps in. Measured: at the top of the head it cost FCP ~250 ms on Fast 3G; ahead of the answers in the tail,
+ *  data drawn ~200 ms. */
 const FONT_STYLE = `<style>${DIN_CSS}</style>`
+/** Boot from the embed now, not at DOMContentLoaded (which waits for the font after it). */
+const BOOT = "<script>window.__ephemBoot&&__ephemBoot()</script>"
