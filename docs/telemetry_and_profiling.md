@@ -222,16 +222,34 @@ pyproj comes from `~/.cache/ephem-gate-venv` (created by `start`).
 
 | stage | before (4ec0651 redeploy a5b45099; 14 earlier logs for the gates) | after | how |
 | --- | --- | --- | --- |
-| worktree + links | 0.7 s | 0.6 s | |
-| typecheck / lint / tests | 0.8 / 0.2 / 11.3 s, sequential: 12.6 s | 12.0 s parallel (vitest dominates); 0 s on a pass-cache hit | `.git/ephem-gate-pass/<tree>-<node_modules lock hash>` |
-| version upload | 9.2 s after the gate | 10.3 s hidden under the gate (1.0 s wait) | uploaded version is in no deployment until the 0% route, which needs a green gate |
-| canary route + pin wait | 1.7 + 3.6 s | 1.7 + 2.1 s | /healthz poll 0.5 → 0.3 s |
-| pinned smoke | 8.3 s (25 checks + 39-step MCP probe, sequential) | 1.2–3.5 s | checks concurrent (compute → compute-hit ordered), MCP probe sections and tool calls concurrent (3.3 → 1.0 s); still once + retry of the failures only |
-| canary telemetry gate | 34.0 s (35–44 s, n=14) | early pass, see "Telemetry gate" | `--early 0.75`; queries per poll concurrent; baseline loaded during the first polls |
-| promote + serving | 1.6 + 3.4 s | same | |
-| live smoke | 8.3 s | ~1.5 s | concurrent |
-| live gate | 99.0 s (92–113 s, n=14), blocking | background watcher, ~105 s after promotion | rollback + untag on failure; next deploy waits for the verdict |
-| **start → 100%** | **72.5 s**; done at 183.2 s | see the proof rows below | |
+| worktree + links | 0.7 s | 0.7–1.3 s | |
+| typecheck / lint / tests | 0.8 / 0.2 / 11.3 s, sequential: 12.6 s | 14.6–23.6 s in parallel with the upload (CPU contention; other agents' jobs too); 0 s on a pass-cache hit | `.git/ephem-gate-pass/<tree>-<node_modules lock hash>` |
+| version upload | 9.2 s after the gate (gate + upload 21.8 s) | 13.1–24.3 s under the gate, 1.0–1.9 s wait after it | uploaded version is in no deployment until the 0% route, which needs a green gate |
+| canary route + pin wait | 1.7 + 3.6 s | 1.8–3.6 + 2.1–5.0 s | /healthz poll 0.5 → 0.3 s |
+| pinned smoke | 8.3 s (25 checks + 39-step MCP probe, sequential) | 1.7–4.2 s | checks concurrent (compute → compute-hit ordered), MCP probe sections and tool calls concurrent (3.3 → 1.0 s); still once + retry of the failures only |
+| canary telemetry gate | 34.0 s (35–44 s, n=14) | 22.9–33.5 s (n=6); early pass fired at 89–100% coverage (polls are 6–9 s apart: query latency) | `--early 0.75`; queries per poll concurrent; baseline loaded during the first polls |
+| promote + serving | 1.6 + 3.4 s | 1.6–3.3 + 2.0–4.1 s | |
+| live smoke | 8.3 s | 1.5–6.5 s | concurrent |
+| live gate | 99.0 s (92–113 s, n=14), blocking | background watcher, verdict 97–109 s after promotion | rollback + untag on failure; next deploy waits for the verdict (`wait_prev`) |
+| **start → 100%** | **72.5 s**; done at 183.2 s | **58.2–69.8 s** without a wait; done at 62–76 s | |
+
+**ship.sh, measured** (2026-10-31; `~/code/lab_notebook/ephem-ship.log`; commit→100% = promotion − commit time):
+
+| head | commits shipped | version | wait_prev | start→100% | commit→100% | live verdict |
+| --- | --- | --- | --- | --- | --- | --- |
+| cd6482a | 1 (this change) | 1f4b9648 | 0 | 63.0 s | (rebased 2 min before landing) | ok, 103 s |
+| a452222 | 3, coalesced: 44b216b c215a95 a452222 (landed 01:25:06, :13, :17 while another deploy ran) | 53b208a8 | 70.9 s (another agent's manual 91e5e6e) | 135.8 s | 151 s newest, 162 s oldest | ROLLED-BACK (o11y API 500) |
+| 0218a4b | 1 | dcd42316 | 16.7 s | 69.8 s | 78 s | ROLLED-BACK (o11y API 500) |
+| 2df9fa2 | 1 (query retry) | 955eae3b | 14.6 s | 67.9 s | 70 s | ok, 109 s |
+| d187c0c | 1 (query concurrency cap) | 954e80e8 | 0 | 58.2 s | 61 s | ROLLED-BACK (live smoke /rum never ingested: 76/79) |
+
+The rollbacks were automatic and fast (decision → previous version serving 3.4–4.2 s, re-smoked 25/25), and each waiting
+deploy read the restored version as PREV. Two were `[10500] Internal authentication error` 500s from the o11y query API
+(never seen in the 25 sequential-gate logs; telemetry.py now retries 3× and caps concurrent queries at 6 per process); one
+was 3 live-smoke requests lost at ingest (invocation and root span both absent; ~0.4% of the ~790 concurrent smoke
+requests, vs 1 of 154 before), which the "every check has telemetry" rule fails closed on. ship.sh retries such a head once
+automatically when no error was reported. Worst case commit→100% is a deploy that waits for the previous live verdict:
+~105 s + ~60 s.
 
 **Early canary pass, measured** (smoke of the live version, gate polled every 2 s, n=3): nothing visible for ~10 s;
 all 9 required signals at 19.5–25.7 s with 76–80% coverage; 100% at 30.7–33.4 s. Info logs arrive with the invocations,
