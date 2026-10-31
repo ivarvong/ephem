@@ -26,6 +26,8 @@ export const STATES: Array<[string, string, number, number, string, string]> = [
   ["14-nyc-scrub-dusk", ...NYC, "2026-10-30T19:00:00Z&keys=R20"], ["15-nyc-scrub-dawn", ...NYC, "2026-10-30T13:00:00Z&keys=L12"],
   ["16-sydney-scrub", "Sydney", -33.8688, 151.2093, "Australia/Sydney", "2026-10-30T02:00:00Z&keys=R30"],
   ["17-nyc-scrub-back-live", ...NYC, "2026-10-30T19:00:00Z&keys=R20,Esc"],
+  // the scrub cursor on a node (drawn as the node selected): on sunset (21:54:41Z), and on the next event (moonrise 01:43:18Z)
+  ["18-nyc-scrub-on-sunset", ...NYC, "2026-10-30T19:04:41Z&keys=R17"], ["19-nyc-scrub-on-next-moonrise", ...NYC, "2026-10-31T00:03:18Z&keys=R10"],
 ]
 const [base, out, filter] = process.argv.slice(2)
 if (!base || !out) { console.error("usage: home-states.ts <base> <outDir> [filter]"); process.exit(2) }

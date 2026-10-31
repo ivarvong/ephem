@@ -59,6 +59,7 @@ fails loudly rather than returning a partial result).
 | `node --experimental-strip-types journey.ts <url> [--device iphone\|desktop] [--net fast3g\|4g\|none] [--cpu 4] [--cold\|--warm] [--script home-drag\|none] [--duration 70] [--out dir]` | Unified client+server trace of one page view through our CDP client (`cdp/`). See "Page views". `--rebuild <name>.raw.json` after a model/viewer change. |
 | `node --experimental-strip-types trace-view.ts <client trace id>\|--latest [--real] [--out dir]` | A real page view rebuilt from production RUM + request rows + o11y; same viewer. |
 | `[SIZES=390,375] node --experimental-strip-types home-states.ts <base> <outDir> [filter]` | Screenshots of `/` in every sky state (debug `?at=`), light and dark, with the chart's label layout from `window.__sky` (overlaps, dropped, crossed: must be empty). |
+| `node --experimental-strip-types boot-input.ts <url> [--runs 3] [--mode cold\|warm] [--after 100]` | The boot against an early tap: emulated iPhone, Fast 3G, CPU 4×; a real CDP touch on the timeline at data drawn + N ms (scheduled on the harness clock from the navigation, corrected run to run; the recorded offset is reported). Per run: data drawn (Element Timing), the tap's input delay and duration (Event Timing `first-input`), whether it scrubbed (only once the browser computes), long tasks in the first 6 s (Long Tasks API). |
 | `node --experimental-strip-types scrub.ts <url> [--device iphone\|desktop] [--cpu 4] [--out dir]` | Time scrubbing measured: a ~60 Hz touch (or mouse) drag across the timeline under CPU throttling; the page's own per-frame work (`window.__compute.frames`: n, mean, max ms), rAF intervals during the drag (p50, p95, max, > 20 ms), a vertical swipe on the strip (must scroll, not scrub), screenshots mid-scrub, at the end and after LIVE. |
 | `node --experimental-strip-types sky-parity-chrome.ts [cases] [seed]` | The page's built core module (packages/web/dist) in real headless Chrome vs the API's server path in Node, every position field; max \|Δ\| per field. The gate's packages/web/test/core-parity.test.ts does the same (4 000 + 300 + 300 cases) in Node. |
 | `node --experimental-strip-types page-console.ts <url>… [--wait ms] [--eval expr]` | Loads pages in headless Chrome and prints the served CSP and every console message, exception, CSP violation and failed request; exit 1 on any. Run it on `/`, `/docs`, `/docs/interactive` after a UI change. |
@@ -584,7 +585,10 @@ some spans).
   tomorrow, /v1/magnetic) it renders the whole first frame from them (@ephem/web renderHomeBody: the SVG sky chart, the
   countdown, the timeline, the readouts) and streams it, then `<script type="application/json" id="ephem-…">` with the
   API's own bodies, then `</body>`. The sky and the numbers paint when this is parsed: no script on the path. The module
-  (deferred) seeds the same state from the embeds at the server's instant, hydrates (no DOM change), then goes live.
+  (deferred) seeds the same state from the embeds at the server's instant, hydrates (no DOM change; mark `ephem:hydrated`),
+  then goes live, in four tasks (seed, hydrate, go live, data) with a 0 ms timeout between each, so an early tap waits for
+  one of them (boot-input.ts; numbers in "Current numbers"). Not `scheduler.yield()`: its continuations run ahead of a
+  waiting tap (input delay ~90 vs ~60 ms, measured).
   Spans: `home.embed` (`home.embedded`: how many), `html.stream`. Marks: `ephem:data` at the browser's Element Timing of the
   server's frame (`elementtiming="ephem-data"` on the readouts; `detail.source` = element-timing, or first-client-frame
   when the server had no answer), then `ephem:embedded` or `ephem:fetched` when the module ran. `?at=` renders that
@@ -593,7 +597,7 @@ some spans).
 - **Static assets** (`/assets/<name>-<hash>.{js,css,woff2}`): Workers Static Assets, before the Worker, so no invocation,
   no span and no request row; RUM still records them (resource rows, target `other`). Immutable for a year.
 - **Bytes (2026-10-31, web build 406980da, SVG chart + server first frame):** home module 92.9 KB / 36.4 KB gzip / 32.7 KB
-  brotli (Preact + signals ≈ 11 KB gzip of it), core module 14.1 / 6.4 / 5.9 KB, stylesheet 11.1 / 3.1 / 2.7 KB (inlined in
+  brotli (Preact + signals ≈ 11 KB gzip of it), core module 14.1 / 6.4 / 5.9 KB, stylesheet 10.0 / 2.8 / 2.5 KB (inlined in
   the document), Ephem DIN 10.6 + 10.8 KB (loaded after boot, src/client/fonts.ts), document ≈ 25.7 KB on the wire (it
   carries the rendered frame). Before (4722a49, inline): document 161.7 KB / 70.7 KB gzip (inline JS 87.0 / 28.7 KB gzip,
   CSS + base64 font 37.2 / 24.6 KB gzip), ephem-sky.js 15.0 / 6.9 KB.
@@ -681,6 +685,7 @@ The latest measurement of each, with its version. Older and superseded numbers: 
 | homepage in-browser compute (local dev, streaming + gzip), iPhone Fast 3G 4× cold, 5 interleaved pairs | data drawn median 890 → 887 ms, FCP 667 → 638, LCP 667 → 662; takeover (`ephem:core`) ~1.6 s cold, ~0.95 s warm; requests in the 60 s after load 18 → 3 (weather, 2 × /rum); `load` 952 → 1 565 ms (the async bundle) | uncommitted, 2026-10-31 |
 | scrubbing, iPhone CPU 4× (scrub.ts) | 89 frames, page work mean 9.5 / max 23.3 ms; rAF p95 16.7 ms, 1 of 215 intervals > 20 ms (33.3) | uncommitted, 2026-10-31 |
 | homepage, server-rendered first frame (local dev), iPhone Fast 3G 4× cold / warm, 2 interleaved pairs | data drawn median 704 / 692 ms vs 868 / 868 (d6ba49e); FCP 654 vs 640; longest task 150 vs 55 ms (hydration, after data drawn) | web 406980da, 2026-10-31 |
+| boot vs an early tap (boot-input.ts, local, interleaved with 3caabe3, 6 runs each; tap at data drawn + 96–105 ms recorded) | longest task 144 → 60 ms (warm and cold); input delay median warm 106 → 64 ms, cold 103 → 77 ms; data drawn unchanged (688 / 690 ms) | branch after 3caabe3, 2026-10-31 |
 | scrubbing, SVG chart, iPhone CPU 4× (scrub.ts), 3 runs | 89 frames, page work mean 4.8–5.0 / max 23.7–24.5 ms; rAF p95 16.7–16.8 ms, 0–1 of ~205 intervals > 20 ms (ref canvas: mean 6.6 / max 18.6, 0) | web 406980da, 2026-10-31 |
 | browser vs server parity | Node: 0 on 4 000 positions + 300 tracks + 300 days (4 902 events); Chrome 156: ≤ 2.3e-13°; Safari not run | sky-core 0c32f42f |
 | remote load, client p50 (enam + weur) | position 8 ms, warm HIT 11 ms, weather 15 ms, cold track 288 ms, cold scan 238 ms | d489af37, L20261031T045109Z-uqz8 |

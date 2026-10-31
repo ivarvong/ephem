@@ -11,7 +11,14 @@ export const clockOffset = (serverNow: number, nav: { readonly requestStart: num
 }
 
 /** "YYYY-MM-DD" in zone tz. */
-export const localDate = (ms: number, tz: string): string => new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(ms))
+// A formatter per zone: constructing an Intl.DateTimeFormat costs ~0.1 ms, and the boot calls this hundreds of times (the
+// profile at CPU 4×: 10 ms of the boot task, 2026-10-31).
+const dateFmts = new Map<string, Intl.DateTimeFormat>()
+export const localDate = (ms: number, tz: string): string => {
+  let f = dateFmts.get(tz)
+  if (!f) { f = new Intl.DateTimeFormat("en-CA", { timeZone: tz }); dateFmts.set(tz, f) }
+  return f.format(new Date(ms))
+}
 /** The calendar day after "YYYY-MM-DD". */
 export const nextDate = (d: string): string => { const [y, m, dd] = d.split("-").map(Number); return new Date(Date.UTC(y!, m! - 1, dd! + 1)).toISOString().slice(0, 10) }
 export const isoSeconds = (ms: number): string => new Date(ms).toISOString().slice(0, 19) + "Z"

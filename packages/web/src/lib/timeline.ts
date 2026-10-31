@@ -36,6 +36,21 @@ export const scrubOffset = (s0: number, span: number, t: number, base: number): 
 /** A marker's x on a half-pixel grid (it moves only when it moves visibly). */
 export const halfPx = (x: number): number => Math.round(x * 2) / 2
 
+// ---- the scrub cursor on a node ----
+/** Half-width (px) of the NOW bar and the scrub cursor, page-coloured edge included (stroke 5). */
+export const TL_BAR_HALF = 2.5
+/** Radius (px) of the circle around the next event, and around the selected node (stroke 1.25 / 1.5, centred on it). */
+export const TL_RING = 7
+/** Half-width (px) of a node's marks: the next event's circle, else the disc (r 3.5, stroke 1.5). */
+export const nodeExtent = (n: TlNode): number => (n.next ? TL_RING + 0.75 : 4.25)
+/** The node the scrub cursor at x would touch, nearest first, or null. That node is drawn selected (circled in amber) and the
+ *  cursor is not drawn, so the two never overlap (test/timeline.test.ts sweeps it). */
+export const cursorNode = (nodes: ReadonlyArray<TlNode>, x: number): TlNode | null => {
+  let best: TlNode | null = null, bd = Infinity
+  for (const n of nodes) { const d = Math.abs(n.x - x); if (d < nodeExtent(n) + TL_BAR_HALF && d < bd) { best = n; bd = d } }
+  return best
+}
+
 const phase = (a: number): TlPhase => (a >= -0.833 ? "day" : a >= -6 ? "civil" : a >= -12 ? "nautical" : a >= -18 ? "astro" : "night")
 
 /**

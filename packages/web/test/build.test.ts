@@ -51,6 +51,40 @@ describe("the client build", () => {
     expect(home.some(m => m.includes("node_modules/effect"))).toBe(false)
     expect(file(manifest.home.js).toString("utf8")).toContain(manifest.core.js.split("/").pop())   // the lazy import names the hashed core
   })
+  it("the stylesheet has exactly the utilities the markup uses, and defines every class the markup names", () => {
+    // Tailwind's automatic source detection makes a utility of any candidate word in its sources: `"hidden"`, `overflow="visible"`,
+    // `addEventListener("resize"`, a comment saying "ring" (2 KB of ring utilities, 2026-10-31). app.css turns it off
+    // (source(none)) and lists the utilities the markup uses (@source inline); this test keeps that list exact.
+    const css = manifest.css.text as string, at = css.indexOf("@layer utilities{")
+    expect(at).toBeGreaterThan(0)
+    let depth = 0, end = at
+    for (let i = css.indexOf("{", at); i < css.length; i++) { if (css[i] === "{") depth++; else if (css[i] === "}" && --depth === 0) { end = i; break } }
+    const classesIn = (text: string) => {
+      const out = new Set<string>()
+      for (const m of text.matchAll(/([^{};]+)\{/g)) {
+        if (m[1]!.trim().startsWith("@")) continue
+        for (const c of m[1]!.matchAll(/\.((?:\\.|[A-Za-z_-])(?:\\.|[A-Za-z0-9_-])*)/g)) out.add(c[1]!.replace(/\\(.)/g, "$1"))
+      }
+      return out
+    }
+    const utilities = classesIn(css.slice(at + 17, end)), defined = classesIn(css)
+    // the markup's class names: every string literal in a class attribute (static, or inside class={...}) under src/
+    const used = new Set<string>(), walk = (d: string): void => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const p = resolve(d, e.name)
+        if (e.isDirectory()) walk(p)
+        else if (e.name.endsWith(".tsx")) for (const m of readFileSync(p, "utf8").matchAll(/\bclass=(?:"([^"]*)"|\{([^}]*)\})/g)) {
+          const lits = m[1] != null ? [m[1]] : [...m[2]!.matchAll(/(===|!==)?\s*"([^"]*)"/g)].filter(x => !x[1]).map(x => x[2]!)   // not a compared value
+          for (const l of lits) for (const t of l.split(/\s+/)) if (t) used.add(t)
+        }
+      }
+    }
+    walk(resolve(__dirname, "../src"))
+    expect(used.size).toBeGreaterThan(30)
+    for (const u of utilities) expect(used.has(u), `utility .${u} is in no class attribute under src/`).toBe(true)
+    for (const c of used) expect(defined.has(c), `class "${c}" is used in the markup and defined nowhere in the stylesheet`).toBe(true)
+    expect(css).not.toContain("--tw-ring")
+  })
   it("the stylesheet's @theme tokens are the canvas colours (lib/tokens.ts)", () => {
     const src = readFileSync(resolve(__dirname, "../src/styles/app.css"), "utf8")
     for (const [k, v] of Object.entries(COLOR)) expect(src, k).toContain(`--color-${k}: ${v};`)

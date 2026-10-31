@@ -9,7 +9,10 @@
    (scripts/build-web.ts; the CSP allows exactly its sha256). Fonts are self-hosted, hashed woff2. */
 @layer theme, base, components, utilities;
 @import "tailwindcss/theme.css" layer(theme);
-@import "tailwindcss/utilities.css" layer(utilities);
+/* No automatic source detection: it makes a utility of any candidate word in the sources ("hidden", "resize", a comment's
+   "ring"). The utilities the markup uses are listed here; test/build.test.ts keeps the list exact. */
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+@source inline("sr-only");
 
 @theme {
   --color-*: initial;

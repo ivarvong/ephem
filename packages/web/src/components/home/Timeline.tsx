@@ -5,7 +5,7 @@
 import { computed, type ReadonlySignal } from "@preact/signals"
 import { useLayoutEffect, useRef } from "preact/hooks"
 import { COLOR } from "../../lib/tokens.ts"
-import type { TlPhase } from "../../lib/timeline.ts"
+import { TL_RING, cursorNode, type TlPhase } from "../../lib/timeline.ts"
 import { nowX, scrubX, strip } from "../../client/home/state.ts"
 import { useActions } from "./actions.ts"
 
@@ -14,7 +14,11 @@ const BODY = { sun: COLOR.sun, moon: COLOR.moon } as const
 const nowT = computed(() => (nowX.value == null ? undefined : "translate(" + nowX.value + ",0)"))
 const nowShow = computed(() => (nowX.value == null ? "none" : undefined))   // the SVG display attribute, not a style (CSP)
 const scrubT = computed(() => (scrubX.value == null ? undefined : "translate(" + scrubX.value + ",0)"))
-const scrubShow = computed(() => (scrubX.value == null ? "none" : undefined))
+// The cursor on a node (it would touch the node's marks): the node is drawn selected (circled in amber) and the cursor is not.
+const selNode = computed(() => { const s = strip.value, x = scrubX.value; return s && x != null ? cursorNode(s.L.nodes, x) : null })
+const scrubShow = computed(() => (scrubX.value == null || selNode.value ? "none" : undefined))
+const selCx = computed(() => (selNode.value ? String(selNode.value.x) : undefined))
+const selShow = computed(() => (selNode.value ? undefined : "none"))
 
 const Layout = () => {
   const s = strip.value
@@ -26,13 +30,15 @@ const Layout = () => {
     {L.nodes.map(n => {
       const col = BODY[n.body], other = n.bodies.find(b => b !== n.bodies[0])
       return <>
-        {n.next ? <circle cx={n.x} cy={L.mid} r={7} fill="none" stroke={COLOR.accent} stroke-width={1.25} /> : null}
+        {n.next ? <circle cx={n.x} cy={L.mid} r={TL_RING} fill="none" stroke={COLOR.accent} stroke-width={1.25} /> : null}
         {other ? <>   {/* a merged node of both bodies: half amber, half silver */}
           <path d={"M" + n.x + "," + (L.mid - 4) + "a4,4 0 0 0 0,8z"} fill={col} />
           <path d={"M" + n.x + "," + (L.mid - 4) + "a4,4 0 0 1 0,8z"} fill={BODY[other]} />
         </> : <circle cx={n.x} cy={L.mid} r={3.5} fill={n.past ? col : COLOR.bg} stroke={col} stroke-width={1.5} />}
       </>
     })}
+    {/* the scrub cursor on a node: that node, selected (drawn over the next event's cyan circle when it is that one) */}
+    <circle pointer-events="none" cx={selCx} cy={L.mid} r={TL_RING} fill="none" stroke={COLOR.caution} stroke-width={1.5} display={selShow} />
     {L.labels.map(lb => {
       const cx = lb.x + lb.w / 2, c1 = lb.next ? COLOR.accent : lb.past ? COLOR.faint : COLOR.muted, c2 = lb.next ? COLOR.accent : lb.past ? COLOR.faint : COLOR.ink
       return <>

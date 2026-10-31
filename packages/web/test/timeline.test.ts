@@ -6,7 +6,7 @@ import { existsSync, readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { DE440, day, track } from "@ephem/core"
 import { diskBlocks } from "../../core/test/helpers/blocks.ts"
-import { timelineLayout, type TlEvent } from "../src/lib/timeline.ts"
+import { TL_BAR_HALF, TL_RING, cursorNode, nodeExtent, timelineLayout, type TlEvent } from "../src/lib/timeline.ts"
 import { overlapArea } from "../src/lib/labels.ts"
 import type { BodyKey } from "../src/lib/types.ts"
 
@@ -20,7 +20,7 @@ describe("the timeline never overlaps (bounding boxes, 400 windows, markers ever
   const r = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647 }
   const zones = ["America/New_York", "Europe/Oslo", "Australia/Sydney", "Asia/Singapore", "Pacific/Auckland", "America/Anchorage", "UTC"]
   it("390, 375 and 1100 px", () => {
-    let windows = 0, merged = 0, other = 0
+    let windows = 0, merged = 0, other = 0, cursorOn = 0
     for (let n = 0; n < 400; n++) {
       const lat = -66 + 132 * r(), lon = -180 + 360 * r(), tz = zones[n % zones.length]!
       const now = Date.parse("2026-01-01T00:00:00Z") + Math.floor(r() * 365 * 864e5), s0 = now - 3 * 3600e3, span = 24 * 3600e3
@@ -51,9 +51,21 @@ describe("the timeline never overlaps (bounding boxes, 400 windows, markers ever
           const bar = { x: x - 2.5, y: L.mid - L.mark, w: 5, h: 2 * L.mark }
           for (const a of L.labels) if (overlapArea(bar, a) > 0) expect.fail(`${where}: a marker at x ${x} on label "${a.name}"`)
         }
+        // the scrub cursor on (and around) every node, every 0.5 px: either the node is selected (the cursor is not drawn,
+        // the selected ring touches no other node and no label) or the cursor's bar touches no node's marks
+        for (const nd of L.nodes) for (let x = nd.x - 12; x <= nd.x + 12; x += 0.5) {
+          const sel = cursorNode(L.nodes, x)
+          if (sel) {
+            const ring = { x: sel.x - TL_RING - 0.75, y: L.mid - TL_RING - 0.75, w: 2 * TL_RING + 1.5, h: 2 * TL_RING + 1.5 }
+            for (const o of L.nodes) if (o !== sel && Math.abs(o.x - sel.x) < TL_RING + 0.75 + nodeExtent(o)) expect.fail(`${where}: the selected ring at ${sel.x} on the node at ${o.x}`)
+            for (const a of L.labels) if (overlapArea(ring, a) > 0) expect.fail(`${where}: the selected ring at ${sel.x} on label "${a.name}"`)
+            cursorOn++
+          } else for (const o of L.nodes) if (Math.abs(o.x - x) < nodeExtent(o) + TL_BAR_HALF) expect.fail(`${where}: the cursor at ${x} drawn on the node at ${o.x}`)
+        }
       }
     }
     expect(windows).toBe(1200)
-    console.log(`timeline sweep: ${windows} windows, ${merged} merged nodes, ${other} labels in their other row; NOW bar and scrub cursor checked every 5 px in each`)
+    expect(cursorOn).toBeGreaterThan(1000)
+    console.log(`timeline sweep: ${windows} windows, ${merged} merged nodes, ${other} labels in their other row; NOW bar and scrub cursor checked every 5 px in each, the cursor on a node ${cursorOn} times`)
   }, 120_000)
 })
