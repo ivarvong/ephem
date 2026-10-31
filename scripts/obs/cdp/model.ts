@@ -138,7 +138,12 @@ export function buildModel(c: Client, srvIn: Server, meta: Record<string, unknow
       const before = tk ? tk[0] : cursor
       // Only requests the page can wait on: not the browser's own (favicon, type Other) nor RUM beacons. Before this, a
       // /favicon.ico that ended 0.5 ms after the data fetches was named the top critical-path cost (J20261031T000045Z-y64q).
-      const r = reqModel.filter(q => q.end != null && q.end <= before + 0.5 && !crit.req.includes(q.i) && q.join !== "external" && q.type !== "Other" && q.type !== "Ping" && q.path !== "/rum").toSorted((a, b) => b.end! - a.end!)[0]
+      const waits = (q: typeof reqModel[number]) => !crit.req.includes(q.i) && q.join !== "external" && q.type !== "Other" && q.type !== "Ping" && q.path !== "/rum"
+      // A streamed document (src/embed.ts streamHtml: head first, the embedded answers last) delivers the data before its last
+      // byte: data drawn at 1113 ms, document done at 1164 ms (J20261031T032654Z-jejr), so "ended before" never found it and the
+      // path was empty. A completed request wins; else the document, once its first byte had arrived.
+      const r = reqModel.filter(q => q.end != null && q.end <= before + 0.5 && waits(q)).toSorted((a, b) => b.end! - a.end!)[0]
+        ?? reqModel.find(q => q.type === "Document" && waits(q) && q.ph.wait != null && q.ph.wait[1] <= before + 0.5)
       if (!r) break
       crit.req.push(r.i)
       for (const x of srv) if (x.req === r.i && x.track !== "waituntil") crit.srv.push(x.k)

@@ -844,6 +844,33 @@ Then: drive (`home-drag`: drag the sky left and right), dwell to `--duration`
 request's root span and every MISS's Api invocation is in, `--wait`), pull the page's own RUM rows from Basin and check them
 against CDP. Outputs `<name>.html` (self-contained viewer), `.perfetto.json` (ui.perfetto.dev), `.model.json`, `.rum.json`, `.png`.
 
+**The viewer** (`<name>.html`, scripts/obs/cdp/viewer.ts; 2026-10-30, after "this trace looks bad"). A waterfall tree, one row
+per span, on one time axis (browser clock, ms since navigation start; server spans shifted by θ):
+
+| Row | What it shows |
+| --- | --- |
+| browser request | `GET /v1/day` + type + cache badge; its network phases (queue, dns, connect, tls, send, wait, download) inside the bar; duration and size after it |
+| front door (child) | headers (solid, to `time_to_first_byte_ms`), then for a streamed document the **streaming body** (lighter solid, to `bodyEnd`), then a thin line while the invocation stays alive for waitUntil; ± θ as a whisker; label `headers · body · cpu · wall` |
+| Effect spans, subrequests | nested by `effect.parent_id`; a runtime `fetch` sits under the Effect span that made it, a loopback entrypoint (Api, BlockStore, MetarFeed) under that `fetch`. Frozen clock: subrequests print `I/O <n> ms`; an Effect span with I/O below it (or 0 ms) prints `—`; the detail panel keeps the true wall |
+| Basin send | the only hatched bars: waitUntil, after the response |
+| main thread | one row: long tasks (≥ 50 ms, labelled) over a category-activity strip; expand for the call tree |
+| N requests after load | polls and beacons folded into one row (Whole journey opens it) |
+
+FCP, LCP, data drawn, interactions, DCL/load are lines across the waterfall. The critical path to data drawn (model.ts
+`crit`) is underlined in cyan; "Critical path" dims the rest. Page load (default) fits the responses the page waited for, not
+the waitUntil tails; Whole journey folds them. Zoom: wheel on the axis or minimap, ⌘/ctrl-wheel or pinch on the rows; pan:
+shift-wheel, drag the axis, the minimap. Keys: ↑↓ rows, ←→ fold, Enter detail, W S A D, 0 whole, 1 load, C critical, Z zoom
+to row, Esc. Header: five numbers (TTFB, first paint, data drawn, requests joined, server CPU); everything else in "Run
+details". Dark only, Ephem DIN; at 390 px the waterfall scrolls inside its own container.
+
+- **Streaming body** (model.ts `bodyEnd`, `bodyEndFrom`): no span marks a streamed document's last chunk (the Effect request
+  span closes at the first byte), so its end is the browser's download end on the same clock, capped by the invocation's end
+  (an upper bound: DevTools throttling delays receipt). J20261031T032654Z-jejr: headers 7 ms, body to the invocation end (773 ms;
+  the browser's download end, 1164 ms, is later under Fast 3G).
+- **Critical path** (model.ts): back from data drawn, the latest request that completed before each task; if none, the
+  document once its first byte has arrived (streamHtml delivers the embed before the last byte). Before this the walk found
+  nothing on `/` (data drawn 1113 ms, document done 1164 ms): now document → data drawn.
+
 **Clock offset** (model.ts). Each request with a server root span bounds θ = server − client: the root span starts after the
 browser sent (t2 > t1 + θ) and its first byte (`cloudflare.response.time_to_first_byte_ms`) leaves before the browser had the
 headers (t3 < t4 + θ), so θ ∈ (t3 − t4, t2 − t1), ±1 ms for whole-ms server times; the estimate is the midpoint of the
@@ -896,7 +923,7 @@ scratchpad `journey/`):
 - A RUM beacon at pagehide shows in CDP as `net::ERR_ABORTED` (the page is gone) though the server stored it: model.ts joins
   `/rum` requests to the trace's `/rum` invocations by order.
 - Headless Event Timing durations (INP) are not comparable to a headed browser's.
-- A comment inside a one-line JS function in the viewer template swallowed the rest of the line (blank viewer); use `/* */`.
+- A comment inside a one-line JS function in the viewer template swallowed the rest of the line (blank viewer); use `/* */`. The client script is a `String.raw` template: no backticks or `${` inside it.
 - `cf o11y telemetry query` rejects fractional timeframe bounds (ZodError invalid_type): round them.
 - `cloudflare.config.ts` pipeline bindings for new streams: a version upload once failed with `[10021] Pipeline binding error`
   (transient; the retry deployed).

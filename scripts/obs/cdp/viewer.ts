@@ -255,8 +255,6 @@ for (const m of M.marks) if (m.kind !== "nav") END = Math.max(END, m.t);
 /* critical path: the model's walk back from data drawn; the document is always on it (it carries the page) */
 const crit = { req: new Set(M.crit.req), srv: new Set(M.crit.srv) };
 const doc = M.reqs.find(r => r.type === "Document");
-let critDocNote = "";
-if (k.data != null && doc && !crit.req.has(doc.i)) { crit.req.add(doc.i); critDocNote = "the document (added by the viewer: data drawn at " + fmt(k.data) + " before its last byte at " + fmt(rEnd(doc)) + ", streamed HTML)"; }
 
 const nodes = new Map();
 const mk = (key, o) => { o.key = key; o.kids = []; o.parent = null; nodes.set(key, o); return o; };
@@ -795,7 +793,7 @@ $("rdg").innerHTML =
     ["LCP", fmt(k.lcp)], ["INP", fmt(k.inp) + (rumSrc ? "" : " (headless: not comparable)")], ["CLS", k.cls != null ? String(k.cls) : null],
     ["long tasks", k.longTasks != null ? k.longTasks + " (longest " + fmt(k.longestTask, 1) + ")" : null], ["Api cache", hm(k.cache) || null], ["blocks / geoid", hm(k.blocks) || null]])) +
   sec("Coverage", kv([["joined", cov.joined + " of " + cov.total + " (" + cov.byTrace + " also by trace id)"], ["fetches", cov.fetchesSameTrace + " of " + cov.fetches + " carried the document's trace id"],
-    ["critical path", critDocNote || null]]) +
+    ["critical path", M.crit.req.length ? M.crit.req.map(i => (reqByI.get(i) || {}).path).join(" ← ") + " → data drawn" : "none found"]]) +
     (cov.unjoined.length || joinedNotes.length ? '<ul class="ls" style="margin-top:8px">' + cov.unjoined.map(u => '<li><a data-go="r' + u.i + '" style="color:var(--caution);cursor:pointer">#' + u.i + " " + esc(u.url) + "</a>: " + esc(u.join) + ", " + esc(u.reason) + "</li>").join("") +
       joinedNotes.map(r => '<li><a data-go="r' + r.i + '" style="color:var(--ink2);cursor:pointer">#' + r.i + " " + esc(r.url) + "</a>: " + esc(r.reason) + "</li>").join("") + "</ul>" : "")) +
   sec("Top client-side costs", '<ol class="ls">' + (M.costs || []).slice(0, 6).map(c => "<li><span class=tn>" + esc(fmt(c.ms)) + "</span> " + esc(c.what) + ' <span style="color:var(--faint)">' + esc(c.detail) + "</span></li>").join("") + "</ol>");
