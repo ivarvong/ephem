@@ -9,7 +9,7 @@ import { isValidZone } from "@ephem/core"
 import { RUM_JS } from "./rum.ts"
 import { ICON_LINK } from "./favicon.ts"
 import { DIN_CSS, DIN_LICENSE } from "./din.ts"
-import { READ_EMBED_JS, jsonScript, routeText, streamHtml } from "./embed.ts"
+import { FLUSH, READ_EMBED_JS, jsonScript, routeText, streamHtml } from "./embed.ts"
 import { CLIENT_TRACE_JS, documentTrace, documentTraceHeaders, traceparentMeta, type DocumentTrace } from "./clienttrace.ts"
 
 interface CfLocation {
@@ -74,8 +74,8 @@ export const Home = HttpRouter.use(router => Effect.gen(function* () {
     const tail = embeds.pipe(
       Effect.tap(parts => Effect.annotateCurrentSpan({ "home.embedded": parts.filter(Boolean).length })),
       Effect.withSpan("home.embed"),
-      Effect.map(parts => parts.join("") + BOOT + FONT_STYLE + PAGE_END),
-      Effect.catchCause(() => Effect.succeed(BOOT + FONT_STYLE + PAGE_END)))   // never fails: the page fetches what is missing
+      Effect.map(parts => parts.join("") + BOOT + FLUSH + FONT_STYLE + PAGE_END),   // the font: a chunk of its own, after the boot
+      Effect.catchCause(() => Effect.succeed(BOOT + FLUSH + FONT_STYLE + PAGE_END)))   // never fails: the page fetches what is missing
     return yield* streamHtml(pageHead(v, tid), tail, { "cache-control": "private, no-store", ...documentTraceHeaders(tid) })
   }).pipe(Effect.withSpan("home"))
   }))

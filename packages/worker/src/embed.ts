@@ -32,12 +32,25 @@ export const routeText = (router: HttpRouter.HttpRouter, req: HttpServerRequest.
 export const jsonScript = (id: string, json: string): string =>
   `<script type="application/json" id="${id}">${json.replace(/</g, "\\u003c")}</script>`
 
-/** A streamed HTML response: `head` is sent at once, `tail` when it has run (forked now, so it starts at once too). The
- *  tail must not fail: give it its own fallback. */
+/** Where a tail splits into chunks of its own: everything after it is written separately, so what comes before is flushed and
+ *  parsed without waiting (the homepage sends its inline font after the answers that boot it). */
+export const FLUSH = "<!--flush-->"
+
+/** The inline <script> and <style> blocks of a head without comment lines and indentation (the homepage's 98 KB head → ~60).
+ *  Only whole lines that start with // are dropped from scripts (no string in them spans lines), and block comments from
+ *  styles; JSON scripts and markup are untouched. */
+export const minifyInline = (h: string): string =>
+  h.replace(/(<script>)([\s\S]*?)(<\/script>)|(<style>)([\s\S]*?)(<\/style>)/g, (_m, a, js, b, c, css, d) => js != null
+    ? a + js.split("\n").map((l: string) => l.trim()).filter((l: string) => l && !l.startsWith("//")).join("\n") + b
+    : c + css.replace(/\/\*[\s\S]*?\*\//g, "").split("\n").map((l: string) => l.trim()).filter(Boolean).join("\n") + d)
+
+/** A streamed HTML response: `head` (minified) is sent at once, `tail` when it has run (forked now, so it starts at once
+ *  too), in chunks split at FLUSH. The tail must not fail: give it its own fallback. */
 export const streamHtml = (head: string, tail: Effect.Effect<string>, headers: Record<string, string>) => Effect.gen(function* () {
   const fiber = yield* Effect.forkDetach(tail)
   const enc = new TextEncoder()
-  const body = Stream.concat(Stream.make(enc.encode(head)), Stream.fromEffect(Fiber.join(fiber).pipe(Effect.map(s => enc.encode(s)))))
+  const body = Stream.concat(Stream.make(enc.encode(minifyInline(head))),
+    Stream.fromEffect(Fiber.join(fiber)).pipe(Stream.flatMap(s => Stream.fromIterable(s.split(FLUSH).map(p => enc.encode(p))))))
   return HttpServerResponse.stream(body, { contentType: "text/html; charset=utf-8", headers })
 })
 
