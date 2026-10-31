@@ -66,3 +66,4 @@ def events_all(filters: list, window: tuple[int, int], step: int = 60_000, worke
                     seen.add(i); out.append(e)
     return out
 # ship.sh proof commit 1 (2026-10-31T01:25:06Z): comment only
+# ship.sh proof commit 2 (2026-10-31T01:25:13Z): comment only
