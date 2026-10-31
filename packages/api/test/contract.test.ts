@@ -5,7 +5,7 @@ import { HttpApiBuilder, OpenApi } from "effect/http-api"
 import { EphemApi } from "../src/index.ts"
 
 const stubBody = { azimuth: 1, altitude: 2, apparentAltitude: 2.3, altitudeRate: 0.1, azimuthRate: 0.2, rightAscension: 3, declination: 4, distanceKm: 5, angularRadius: 0.26, eclipticLongitude: 6, eclipticLatitude: 0 }
-const prov = { implementation: "stub", version: "0", ephemeris: "none" }
+const prov = { implementation: "stub", version: "0", sources: ["none"] }
 const obs = (q: { lat: number; lon: number; height?: number }) => ({ lat: q.lat, lon: q.lon, height: q.height ?? 0, heightEllipsoid: q.height ?? 0, heightMsl: 0, geoidUndulation: 0, heightRef: "default" as const })
 const geoid = { model: "EGM96" as const, source: "stub", interpolationErrorM: { rms: 0, p99: 0, max: 0 } }
 const horizon = { kind: "sea" as const, altitude: 0, dip: 0, terrestrialRefractionK: 0.13, profile: null }
@@ -30,9 +30,11 @@ const Sky = HttpApiBuilder.group(EphemApi, "sky", h => h
     conventions: { refraction: posConv.refraction, horizon, geoid }, provenance: prov })))
 const Earth = HttpApiBuilder.group(EphemApi, "earth", h => h
   .handle("magnetic", ({ query }) => Effect.succeed({ time: "2026-10-28T11:51:00Z", observer: obs(query),
-    magnetic: { model: "WMM2025" as const, declination: -12.5, inclination: 66, horizontalIntensityNt: 2e4, totalIntensityNt: 5e4, decimalYear: 2026.8, inValidityWindow: true } }))
+    magnetic: { model: "WMM2025" as const, declination: -12.5, inclination: 66, horizontalIntensityNt: 2e4, totalIntensityNt: 5e4, decimalYear: 2026.8, inValidityWindow: true },
+    conventions: { model: "", declination: "", height: "", geoid }, provenance: prov }))
   .handle("weather", ({ query }) => Effect.succeed({ time: "2026-10-28T11:51:00Z", observer: { lat: query.lat, lon: query.lon, magneticDeclination: -12.5 }, stations: [],
-    feed: { source: "stub", fetchedAt: "2026-10-28T11:51:00Z", ageSeconds: query.count ?? 1, lastModified: null, upstreamAgeSeconds: null, stale: false, tier: "hit" as const, stations: 0 } })))
+    feed: { source: "stub", fetchedAt: "2026-10-28T11:51:00Z", ageSeconds: query.count ?? 1, lastModified: null, upstreamAgeSeconds: null, stale: false, tier: "hit" as const, stations: 0 },
+    conventions: { definition: "", distance: "", bearing: "", magneticDeclination: "" }, provenance: prov })))
 const searchConv = { definition: "", region: "", segments: "", passes: "", candidates: "", windows: "", filters: "", azimuth: "", terrestrialRefraction: "", heights: "",
   heightRef: "default" as const, targetHeightRef: "ellipsoid" as const, terrestrialRefractionK: 0.13, refraction: { model: "", temperatureC: 10, pressureHpa: 1010 }, geoid }
 const geometry = { reference: { lat: 0, lon: 0 }, distanceM: { min: 1, max: 2 }, elevation: { min: 0, max: 1 }, azimuth: { min: 0, max: 1 },

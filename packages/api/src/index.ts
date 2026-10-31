@@ -28,10 +28,10 @@ export const CONVENTIONS = {
   weather: "Nearest METAR stations by great-circle distance from aviationweather.gov's all-stations feed, cached ≤ 60 s fresh, served up to 10 min stale while it refreshes; feed.tier and feed.ageSeconds say which.",
   crossing: "/crossing: every instant in the window when the aim point (default the centre) reaches `altitude`, true (default) or apparent (the same refraction model as /position and /day), or meets a horizonProfile; rise = upward.",
   rates: "altitudeRate, azimuthRate: degrees per minute, analytic (DE440 Chebyshev velocity through light time, aberration and Earth rotation; no finite difference).",
-  unknownParameters: "Every endpoint rejects query parameters it does not define with 400 InvalidRequest, listing the allowed ones.",
+  unknownParameters: "Every endpoint rejects parameters (and POST body fields) it does not define with 400 InvalidRequest, naming them, suggesting the intended one (renamed or misspelled) and listing the allowed ones.",
   track: "/track: the Sun's and Moon's azimuth, true altitude and apparent altitude at every point of a UTC grid (start, end on multiples of stepSeconds since 1970-01-01T00:00Z), columnar; each sample equals /position's values at that instant bit for bit. Bounded: stepSeconds 60–3600, at most 8 days and 1 441 samples.",
   sightline: "/sightline: the sight line's height above sea level against ground distance from an eye to a target (straight chord between WGS-84 ECEF points, so Earth's curvature is included; and the refracted ray with k = 0.13, which runs k·s₁·s₂/(2R) higher), plus each obstacle point's clearance. Terrestrial refraction is modelled as that constant coefficient only.",
-  search: "POST /alignment/search (JSON body): every pass in [start, end) (≤ 400 days) when the alignment standing point lies inside a region (GeoJSON Polygon / MultiPolygon with holes, or bbox [w, s, e, n]); segments with exact entry / exit (solved on the track to 1 mm), the Moon's az / alt / illuminated fraction and the Sun's altitude per pass; filters minIlluminated, maxSunAltitude; include sun, phase; aim. Candidates come from the target's elevation and bearing band over the whole region (no representative elevation), scanned with proven rate bounds. Computed per 30-day window (GET /internal/alignment-search-window, immutable), so overlapping scans hit the cache.",
+  search: "POST /alignment/search (JSON body): every pass in [start, end) (≤ 400 days) when the alignment standing point lies inside a region (GeoJSON Polygon / MultiPolygon with holes, or bbox [w, s, e, n]); segments with exact entry / exit (solved on the track to 1 mm), the body's azimuth / apparent altitude / angular radius, the Moon's illuminatedFraction and the Sun's sunAltitude per pass; filters minIlluminated, maxSunAltitude; include sun, phase; aim. Candidates come from the target's elevation and bearing band over the whole region (no representative elevation), scanned with proven rate bounds. Computed per 30-day window, each an immutable cached unit, so overlapping scans share work.",
   passes: "/alignment with lat/lon (a fixed spot): instants when the body's azimuth equals the azimuth to the target (±180° wraps excluded); altitudeOffset tells whether it is above (+) or behind (−) the target top.",
 } as const
 
@@ -125,7 +125,8 @@ export const MoonPhase = S.Struct({
   phaseAngle: Degrees, illuminatedFraction: S.Finite, elongation: Degrees, brightLimbAngle: Degrees, name: PhaseName,
 })
 export const Provenance = S.Struct({
-  implementation: S.String, version: S.String, ephemeris: S.String,
+  implementation: S.String, version: S.String,
+  sources: S.Array(S.String).annotate(d0("The data and models this answer comes from (ephemeris, geoid, field model, feed), with versions.")),
   diagnostics: S.optionalKey(S.Struct({ blocks: S.Array(S.Int), computeMs: S.Finite, cache: S.optionalKey(S.Record(S.String, S.Int)) })),
 })
 export const PositionConventions = S.Struct({
@@ -369,7 +370,8 @@ export const Magnetic = S.Struct({
   decimalYear: S.Finite,
   inValidityWindow: S.Boolean.annotate(d("WMM2025 is valid 2025.0–2030.0; outside it the secular variation is extrapolated.")),
 })
-export const MagneticResponse = S.Struct({ time: UtcString, observer: SkyObserver, magnetic: Magnetic })
+export const MagneticResponse = S.Struct({ time: UtcString, observer: SkyObserver, magnetic: Magnetic,
+  conventions: S.Struct({ model: S.String, declination: S.String, height: S.String, geoid: GeoidConventions }), provenance: Provenance })
 
 export const WeatherQuery = {
   lat: num(Lat), lon: num(Lon),
@@ -417,6 +419,8 @@ export const WeatherResponse = S.Struct({
   observer: S.Struct({ lat: Lat, lon: Lon, magneticDeclination: Degrees.annotate(d("WMM2025 at the observer, height 0, now; east positive. Full precision (was rounded to 0.01° before 2026-10-29): the same value /magnetic gives for lat/lon now.")) }),
   stations: S.Array(Station),   // nearest first
   feed: Feed,
+  conventions: S.Struct({ definition: S.String, distance: S.String, bearing: S.String, magneticDeclination: S.String }),
+  provenance: Provenance,
 })
 
 // ─────────────────────────────── /alignment/search ───────────────────────────────

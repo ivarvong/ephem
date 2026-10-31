@@ -6,8 +6,10 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder"
 import { EphemApi, InvalidRequest, Unavailable, type WeatherResponse } from "@ephem/api"
-import { SUPPORTED, WMM_VALID, decimalYear, observerHeights, wmm } from "@ephem/core"
+import { GEOID, SUPPORTED, WMM_VALID, decimalYear, observerHeights, wmm } from "@ephem/core"
 import { Geoid, geoidCache } from "./geoid.ts"
+import { SOURCES, prov } from "./provenance.ts"
+import { CONVENTIONS } from "@ephem/api"
 import { nearest, type Metar } from "./metar.ts"
 import { currentTraceparent } from "./trace.ts"
 import { FEED_URL, FRESH_MS, type Feed, type FeedResult } from "./metar-feed.ts"
@@ -20,6 +22,18 @@ const r2 = (x: number) => Math.round(x * 100) / 100
 const wrap = (x: number) => ((x % 360) + 360) % 360
 const httpDate = (s: string | null) => { if (!s) return null; const t = Date.parse(s); return Number.isFinite(t) ? t : null }
 
+const WEATHER_CONVENTIONS = {
+  definition: CONVENTIONS.weather,
+  distance: "Great-circle distance on a sphere of radius 6 371.0088 km.",
+  bearing: "Initial great-circle bearing observer → station, degrees true; magnetic = true − WMM2025 declination at the observer (observer.magneticDeclination, height 0, now).",
+  magneticDeclination: "WMM2025 at the observer, now, east positive; the same value /magnetic gives there.",
+}
+const MAGNETIC_CONVENTIONS = {
+  model: CONVENTIONS.magnetic,
+  declination: "East positive: magnetic bearing = true bearing − declination. Inclination down positive.",
+  height: "height (heightRef ellipsoid or msl) sets the WMM evaluation height (above the ellipsoid); omitted: on the geoid (sea level), as every endpoint.",
+  geoid: { model: GEOID.model, source: GEOID.source, interpolationErrorM: GEOID.interpolationErrorM },
+}
 export const declinationAt = (lat: number, lon: number, utcMs: number, heightM = 0) => wmm(lat, lon, heightM / 1000, decimalYear(utcMs))
 
 export class Weather extends Context.Service<Weather, {
@@ -76,6 +90,8 @@ export const weatherLive = (feed: Feed) => Layer.succeed(Weather, {
         lastModified: lm === null ? null : iso(lm), upstreamAgeSeconds: lm === null ? null : Math.round((now - lm) / 1000),
         stale: f.dataAgeMs >= FRESH_MS, tier: f.tier, stations: f.snap.table.count,
       },
+      conventions: WEATHER_CONVENTIONS,
+      provenance: prov(SOURCES.metar, SOURCES.wmm),
     }
   }).pipe(Effect.withSpan("weather")),
 })
@@ -99,6 +115,8 @@ export const EarthLive = HttpApiBuilder.group(EphemApi, "earth", h => h
       time: iso(ms), observer: { lat: q.lat, lon: q.lon, height: h.heightEllipsoid, ...h },
       magnetic: { model: "WMM2025" as const, declination: m.declination, inclination: m.inclination, horizontalIntensityNt: m.h, totalIntensityNt: m.f,
         decimalYear: year, inValidityWindow: year >= WMM_VALID.from && year < WMM_VALID.to },
+      conventions: MAGNETIC_CONVENTIONS,
+      provenance: prov(SOURCES.wmm, SOURCES.egm96),
     }
   }).pipe(Effect.withSpan("magnetic")))
   .handle("weather", ({ query: q }) => Effect.gen(function* () { const w = yield* Weather; return yield* w.nearest(q) })))

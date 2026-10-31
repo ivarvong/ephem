@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest"
 import { QUERY_PARAMS } from "@ephem/api"
 import { makeHandler } from "../src/app.ts"
 import { direct, makeBlocks } from "../src/blocks.ts"
-import { ENDPOINTS } from "../src/docs.ts"
+import { ENDPOINTS, QUICKSTART, docsHtml, llmsTxt } from "../src/docs.ts"
 
 const handler = makeHandler(makeBlocks(direct(async () => { throw new Error("no blocks needed") })))
 const get = async (p: string) => { const r = await handler(new Request(`http://x${p}`)); return { r, text: await r.text() } }
@@ -33,5 +33,13 @@ describe("docs for non-browser clients", () => {
   })
   it("examples in the docs are valid requests (no unknown parameters)", () => {
     for (const e of ENDPOINTS) { const u = new URL("http://x" + e.example); for (const k of u.searchParams.keys()) expect(QUERY_PARAMS[e.path], `${e.path} ${k}`).toContain(k) }
+  })
+  it("/docs and /llms.txt open with three copy-paste calls that answer the top questions, before any reference", async () => {
+    const html = docsHtml(), llms = llmsTxt()
+    expect(QUICKSTART).toHaveLength(3)
+    for (const q of QUICKSTART) {
+      expect(html.indexOf(q.path.replace(/&/g, "&amp;"))).toBeLessThan(html.indexOf("<h2>Endpoints"))
+      expect(llms.indexOf(q.path)).toBeLessThan(llms.indexOf("## Endpoints"))
+    }
   })
 })

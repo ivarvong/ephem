@@ -200,7 +200,9 @@ def default_cases(seed=440):
                dict(NYC, _path="/crossing", body="sun", date="2026-10-29", tz="America/New_York"),            # neither altitude nor profile
                dict(NYC, _path="/crossing", body="sun", altitude="-3", altitudeType="apparent", date="2026-10-29", tz="America/New_York"),   # below the floor
                dict(NYC, _path="/day", date="2026-10-29", tz="America/New_York", horizon="sea", horizonProfile="0:1"),
-               dict(NYC, _path="/day", date="2026-10-29", tz="America/New_York", height="5000", heightRef="msl")]   # sea horizon below the floor
+               dict(NYC, _path="/day", date="2026-10-29", tz="America/New_York", height="5000", heightRef="msl"),   # sea horizon below the floor
+               dict(NYC, _path="/day", date="2026-10-29", tz="America/New_York", limb="upper"),           # renamed to aim (2026-10-31)
+               dict(_path="/alignment", body="moon", targetLat="40.68925", targetLon="-74.0445", targetHeight="70", observerHeight="5", start="2026-11-17T03:44:30Z", end="2026-11-17T03:46:00Z")]   # observerHeight renamed to height
     align = [dict(body="moon", targetLat="40.68925", targetLon="-74.0445", targetHeight="63.4", height="-30.9",
                   start="2026-10-28T23:45:00Z", end="2026-10-29T02:00:00Z", stepSeconds="900", maxDistanceKm="20"),
              dict(body="sun", targetLat="40.748441", targetLon="-73.985664", targetHeight="410", height="-25",

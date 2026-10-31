@@ -548,8 +548,12 @@
             "version": {
              "type": "string"
             },
-            "ephemeris": {
-             "type": "string"
+            "sources": {
+             "type": "array",
+             "items": {
+              "type": "string"
+             },
+             "description": "The data and models this answer comes from (ephemeris, geoid, field model, feed), with versions."
             },
             "diagnostics": {
              "type": "object",
@@ -584,7 +588,7 @@
            "required": [
             "implementation",
             "version",
-            "ephemeris"
+            "sources"
            ],
            "additionalProperties": false
           }
@@ -602,29 +606,22 @@
        }
       }
      },
-     "422": {
-      "description": "OutOfRange | InvalidInput",
+     "400": {
+      "description": "InvalidRequest",
       "content": {
        "application/json": {
         "schema": {
-         "anyOf": [
-          {
-           "$ref": "#/components/schemas/OutOfRangeEncoded"
-          },
-          {
-           "$ref": "#/components/schemas/InvalidInputEncoded"
-          }
-         ]
+         "$ref": "#/components/schemas/InvalidRequestEncoded"
         }
        }
       }
      },
      "503": {
-      "description": "GeoidUnavailable",
+      "description": "Unavailable",
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/GeoidUnavailableEncoded"
+         "$ref": "#/components/schemas/UnavailableEncoded"
         }
        }
       }
@@ -1143,8 +1140,12 @@
             "version": {
              "type": "string"
             },
-            "ephemeris": {
-             "type": "string"
+            "sources": {
+             "type": "array",
+             "items": {
+              "type": "string"
+             },
+             "description": "The data and models this answer comes from (ephemeris, geoid, field model, feed), with versions."
             },
             "diagnostics": {
              "type": "object",
@@ -1179,7 +1180,7 @@
            "required": [
             "implementation",
             "version",
-            "ephemeris"
+            "sources"
            ],
            "additionalProperties": false
           }
@@ -1199,29 +1200,22 @@
        }
       }
      },
-     "422": {
-      "description": "OutOfRange | InvalidInput",
+     "400": {
+      "description": "InvalidRequest",
       "content": {
        "application/json": {
         "schema": {
-         "anyOf": [
-          {
-           "$ref": "#/components/schemas/OutOfRangeEncoded"
-          },
-          {
-           "$ref": "#/components/schemas/InvalidInputEncoded"
-          }
-         ]
+         "$ref": "#/components/schemas/InvalidRequestEncoded"
         }
        }
       }
      },
      "503": {
-      "description": "GeoidUnavailable",
+      "description": "Unavailable",
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/GeoidUnavailableEncoded"
+         "$ref": "#/components/schemas/UnavailableEncoded"
         }
        }
       }
@@ -1814,8 +1808,12 @@
             "version": {
              "type": "string"
             },
-            "ephemeris": {
-             "type": "string"
+            "sources": {
+             "type": "array",
+             "items": {
+              "type": "string"
+             },
+             "description": "The data and models this answer comes from (ephemeris, geoid, field model, feed), with versions."
             },
             "diagnostics": {
              "type": "object",
@@ -1850,7 +1848,7 @@
            "required": [
             "implementation",
             "version",
-            "ephemeris"
+            "sources"
            ],
            "additionalProperties": false
           }
@@ -1869,29 +1867,22 @@
        }
       }
      },
-     "422": {
-      "description": "OutOfRange | InvalidInput",
+     "400": {
+      "description": "InvalidRequest",
       "content": {
        "application/json": {
         "schema": {
-         "anyOf": [
-          {
-           "$ref": "#/components/schemas/OutOfRangeEncoded"
-          },
-          {
-           "$ref": "#/components/schemas/InvalidInputEncoded"
-          }
-         ]
+         "$ref": "#/components/schemas/InvalidRequestEncoded"
         }
        }
       }
      },
      "503": {
-      "description": "GeoidUnavailable",
+      "description": "Unavailable",
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/GeoidUnavailableEncoded"
+         "$ref": "#/components/schemas/UnavailableEncoded"
         }
        }
       }
@@ -2607,8 +2598,12 @@
             "version": {
              "type": "string"
             },
-            "ephemeris": {
-             "type": "string"
+            "sources": {
+             "type": "array",
+             "items": {
+              "type": "string"
+             },
+             "description": "The data and models this answer comes from (ephemeris, geoid, field model, feed), with versions."
             },
             "diagnostics": {
              "type": "object",
@@ -2643,7 +2638,7 @@
            "required": [
             "implementation",
             "version",
-            "ephemeris"
+            "sources"
            ],
            "additionalProperties": false
           }
@@ -2660,29 +2655,22 @@
        }
       }
      },
-     "422": {
-      "description": "OutOfRange | InvalidInput",
+     "400": {
+      "description": "InvalidRequest",
       "content": {
        "application/json": {
         "schema": {
-         "anyOf": [
-          {
-           "$ref": "#/components/schemas/OutOfRangeEncoded"
-          },
-          {
-           "$ref": "#/components/schemas/InvalidInputEncoded"
-          }
-         ]
+         "$ref": "#/components/schemas/InvalidRequestEncoded"
         }
        }
       }
      },
      "503": {
-      "description": "GeoidUnavailable",
+      "description": "Unavailable",
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/GeoidUnavailableEncoded"
+         "$ref": "#/components/schemas/UnavailableEncoded"
         }
        }
       }
@@ -3125,8 +3113,12 @@
             "version": {
              "type": "string"
             },
-            "ephemeris": {
-             "type": "string"
+            "sources": {
+             "type": "array",
+             "items": {
+              "type": "string"
+             },
+             "description": "The data and models this answer comes from (ephemeris, geoid, field model, feed), with versions."
             },
             "diagnostics": {
              "type": "object",
@@ -3161,7 +3153,7 @@
            "required": [
             "implementation",
             "version",
-            "ephemeris"
+            "sources"
            ],
            "additionalProperties": false
           }
@@ -3182,22 +3174,22 @@
        }
       }
      },
-     "422": {
-      "description": "InvalidInput",
+     "400": {
+      "description": "InvalidRequest",
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/InvalidInputEncoded"
+         "$ref": "#/components/schemas/InvalidRequestEncoded"
         }
        }
       }
      },
      "503": {
-      "description": "GeoidUnavailable",
+      "description": "Unavailable",
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/GeoidUnavailableEncoded"
+         "$ref": "#/components/schemas/UnavailableEncoded"
         }
        }
       }
@@ -3635,8 +3627,12 @@
             "version": {
              "type": "string"
             },
-            "ephemeris": {
-             "type": "string"
+            "sources": {
+             "type": "array",
+             "items": {
+              "type": "string"
+             },
+             "description": "The data and models this answer comes from (ephemeris, geoid, field model, feed), with versions."
             },
             "diagnostics": {
              "type": "object",
@@ -3671,7 +3667,7 @@
            "required": [
             "implementation",
             "version",
-            "ephemeris"
+            "sources"
            ],
            "additionalProperties": false
           }
@@ -3692,29 +3688,22 @@
        }
       }
      },
-     "422": {
-      "description": "OutOfRange | InvalidInput",
+     "400": {
+      "description": "InvalidRequest",
       "content": {
        "application/json": {
         "schema": {
-         "anyOf": [
-          {
-           "$ref": "#/components/schemas/OutOfRangeEncoded"
-          },
-          {
-           "$ref": "#/components/schemas/InvalidInputEncoded"
-          }
-         ]
+         "$ref": "#/components/schemas/InvalidRequestEncoded"
         }
        }
       }
      },
      "503": {
-      "description": "GeoidUnavailable",
+      "description": "Unavailable",
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/GeoidUnavailableEncoded"
+         "$ref": "#/components/schemas/UnavailableEncoded"
         }
        }
       }
@@ -4446,8 +4435,12 @@
             "version": {
              "type": "string"
             },
-            "ephemeris": {
-             "type": "string"
+            "sources": {
+             "type": "array",
+             "items": {
+              "type": "string"
+             },
+             "description": "The data and models this answer comes from (ephemeris, geoid, field model, feed), with versions."
             },
             "diagnostics": {
              "type": "object",
@@ -4482,7 +4475,7 @@
            "required": [
             "implementation",
             "version",
-            "ephemeris"
+            "sources"
            ],
            "additionalProperties": false
           }
@@ -4504,29 +4497,22 @@
        }
       }
      },
-     "422": {
-      "description": "OutOfRange | InvalidInput",
+     "400": {
+      "description": "InvalidRequest",
       "content": {
        "application/json": {
         "schema": {
-         "anyOf": [
-          {
-           "$ref": "#/components/schemas/OutOfRangeEncoded"
-          },
-          {
-           "$ref": "#/components/schemas/InvalidInputEncoded"
-          }
-         ]
+         "$ref": "#/components/schemas/InvalidRequestEncoded"
         }
        }
       }
      },
      "503": {
-      "description": "GeoidUnavailable",
+      "description": "Unavailable",
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/GeoidUnavailableEncoded"
+         "$ref": "#/components/schemas/UnavailableEncoded"
         }
        }
       }
@@ -5030,41 +5016,150 @@
             "inValidityWindow"
            ],
            "additionalProperties": false
+          },
+          "conventions": {
+           "type": "object",
+           "properties": {
+            "model": {
+             "type": "string"
+            },
+            "declination": {
+             "type": "string"
+            },
+            "height": {
+             "type": "string"
+            },
+            "geoid": {
+             "type": "object",
+             "properties": {
+              "model": {
+               "type": "string",
+               "enum": [
+                "EGM96"
+               ]
+              },
+              "source": {
+               "type": "string"
+              },
+              "interpolationErrorM": {
+               "type": "object",
+               "properties": {
+                "rms": {
+                 "type": "number"
+                },
+                "p99": {
+                 "type": "number"
+                },
+                "max": {
+                 "type": "number"
+                }
+               },
+               "required": [
+                "rms",
+                "p99",
+                "max"
+               ],
+               "additionalProperties": false
+              }
+             },
+             "required": [
+              "model",
+              "source",
+              "interpolationErrorM"
+             ],
+             "additionalProperties": false
+            }
+           },
+           "required": [
+            "model",
+            "declination",
+            "height",
+            "geoid"
+           ],
+           "additionalProperties": false
+          },
+          "provenance": {
+           "type": "object",
+           "properties": {
+            "implementation": {
+             "type": "string"
+            },
+            "version": {
+             "type": "string"
+            },
+            "sources": {
+             "type": "array",
+             "items": {
+              "type": "string"
+             },
+             "description": "The data and models this answer comes from (ephemeris, geoid, field model, feed), with versions."
+            },
+            "diagnostics": {
+             "type": "object",
+             "properties": {
+              "blocks": {
+               "type": "array",
+               "items": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+               }
+              },
+              "computeMs": {
+               "type": "number"
+              },
+              "cache": {
+               "type": "object",
+               "additionalProperties": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+               }
+              }
+             },
+             "required": [
+              "blocks",
+              "computeMs"
+             ],
+             "additionalProperties": false
+            }
+           },
+           "required": [
+            "implementation",
+            "version",
+            "sources"
+           ],
+           "additionalProperties": false
           }
          },
          "required": [
           "time",
           "observer",
-          "magnetic"
+          "magnetic",
+          "conventions",
+          "provenance"
          ],
          "additionalProperties": false
         }
        }
       }
      },
-     "422": {
-      "description": "OutOfRange | InvalidInput",
+     "400": {
+      "description": "InvalidRequest",
       "content": {
        "application/json": {
         "schema": {
-         "anyOf": [
-          {
-           "$ref": "#/components/schemas/OutOfRangeEncoded"
-          },
-          {
-           "$ref": "#/components/schemas/InvalidInputEncoded"
-          }
-         ]
+         "$ref": "#/components/schemas/InvalidRequestEncoded"
         }
        }
       }
      },
      "503": {
-      "description": "GeoidUnavailable",
+      "description": "Unavailable",
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/GeoidUnavailableEncoded"
+         "$ref": "#/components/schemas/UnavailableEncoded"
         }
        }
       }
@@ -5498,13 +5593,92 @@
             "stations"
            ],
            "additionalProperties": false
+          },
+          "conventions": {
+           "type": "object",
+           "properties": {
+            "definition": {
+             "type": "string"
+            },
+            "distance": {
+             "type": "string"
+            },
+            "bearing": {
+             "type": "string"
+            },
+            "magneticDeclination": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "definition",
+            "distance",
+            "bearing",
+            "magneticDeclination"
+           ],
+           "additionalProperties": false
+          },
+          "provenance": {
+           "type": "object",
+           "properties": {
+            "implementation": {
+             "type": "string"
+            },
+            "version": {
+             "type": "string"
+            },
+            "sources": {
+             "type": "array",
+             "items": {
+              "type": "string"
+             },
+             "description": "The data and models this answer comes from (ephemeris, geoid, field model, feed), with versions."
+            },
+            "diagnostics": {
+             "type": "object",
+             "properties": {
+              "blocks": {
+               "type": "array",
+               "items": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+               }
+              },
+              "computeMs": {
+               "type": "number"
+              },
+              "cache": {
+               "type": "object",
+               "additionalProperties": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+               }
+              }
+             },
+             "required": [
+              "blocks",
+              "computeMs"
+             ],
+             "additionalProperties": false
+            }
+           },
+           "required": [
+            "implementation",
+            "version",
+            "sources"
+           ],
+           "additionalProperties": false
           }
          },
          "required": [
           "time",
           "observer",
           "stations",
-          "feed"
+          "feed",
+          "conventions",
+          "provenance"
          ],
          "additionalProperties": false
         }
@@ -5512,11 +5686,11 @@
       }
      },
      "503": {
-      "description": "WeatherUnavailable",
+      "description": "Unavailable",
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/WeatherUnavailableEncoded"
+         "$ref": "#/components/schemas/UnavailableEncoded"
         }
        }
       }
@@ -5569,13 +5743,13 @@
  },
  "components": {
   "schemas": {
-   "WeatherUnavailableEncoded": {
+   "UnavailableEncoded": {
     "type": "object",
     "properties": {
      "_tag": {
       "type": "string",
       "enum": [
-       "WeatherUnavailable"
+       "Unavailable"
       ]
      },
      "message": {
@@ -5588,55 +5762,26 @@
     ],
     "additionalProperties": false
    },
-   "GeoidUnavailableEncoded": {
+   "InvalidRequestEncoded": {
     "type": "object",
     "properties": {
      "_tag": {
       "type": "string",
       "enum": [
-       "GeoidUnavailable"
+       "InvalidRequest"
       ]
      },
      "message": {
       "type": "string"
-     }
-    },
-    "required": [
-     "_tag",
-     "message"
-    ],
-    "additionalProperties": false
-   },
-   "InvalidInputEncoded": {
-    "type": "object",
-    "properties": {
-     "_tag": {
-      "type": "string",
-      "enum": [
-       "InvalidInput"
-      ]
      },
-     "message": {
+     "parameter": {
       "type": "string"
-     }
-    },
-    "required": [
-     "_tag",
-     "message"
-    ],
-    "additionalProperties": false
-   },
-   "OutOfRangeEncoded": {
-    "type": "object",
-    "properties": {
-     "_tag": {
-      "type": "string",
-      "enum": [
-       "OutOfRange"
-      ]
      },
-     "message": {
-      "type": "string"
+     "allowed": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
      }
     },
     "required": [

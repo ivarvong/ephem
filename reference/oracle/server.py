@@ -21,7 +21,7 @@ EPH = load(os.path.join(ROOT, "reference/terrain_sunset/inputs/de440s.bsp"))
 SUN, MOON, EARTH = EPH["sun"], EPH["moon"], EPH["earth"]
 BASE_TS = load.timescale(builtin=True)
 GEOD = Geod(ellps="WGS84")
-PROV = dict(implementation="skyfield-oracle", version="skyfield 1.55", ephemeris="JPL DE440s")
+PROV = dict(implementation="skyfield-oracle", version="skyfield 1.55", sources=["JPL DE440s"])
 SUN_SD_1AU = 959.63 / 3600
 MOON_RADIUS_KM = 1737.4
 AU_KM = 149597870.7

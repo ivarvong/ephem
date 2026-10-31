@@ -9,10 +9,9 @@ import { Blocks, blocksCache } from "./blocks.ts"
 import { Geoid, geoidCache } from "./geoid.ts"
 import { EarthLive } from "./weather.ts"
 
-export const VERSION = "0.1.0"
-export const PROV = { implementation: "@ephem/worker", version: VERSION, ephemeris: "JPL DE440 (linux_p1550p2650.440)" }
+export { PROV, SOURCES, VERSION, prov } from "./provenance.ts"
+import { PROV, SOURCES, VERSION, prov } from "./provenance.ts"
 
-/** A UTC instant parameter: the schema checked the shape; this checks it is a real date in the supported range. */
 export const parseUtc = (s: string, parameter = "time") => Effect.gen(function* () {
   const ms = Date.parse(s)
   if (!Number.isFinite(ms)) return yield* new InvalidRequest({ parameter, message: `${parameter}=${s} is not a real UTC instant: ISO-8601 with a trailing Z, e.g. 2026-11-17T03:45:00Z` })
@@ -53,7 +52,7 @@ export const compute = <A, E = never, R = never>(name: string, blocks: ReadonlyA
     Effect.withSpan(`compute.${name}`))
   const computeMs = performance.now() - t0
   yield* Effect.annotateCurrentSpan({ computeMs, blocks: stats.blocks.size, reads: stats.reads, ...loaded.stats, "ephem.isolate_computes": ++isolateComputes })
-  return { out, provenance: { ...PROV, diagnostics: { blocks: [...stats.blocks].toSorted((a, b) => a - b), computeMs: Math.round(computeMs * 1000) / 1000, cache: { ...loaded.stats, reads: stats.reads } } } }
+  return { out, provenance: { ...(blocks.length ? PROV : prov(SOURCES.egm96)), diagnostics: { blocks: [...stats.blocks].toSorted((a, b) => a - b), computeMs: Math.round(computeMs * 1000) / 1000, cache: { ...loaded.stats, reads: stats.reads } } } }
 })
 
 export const SkyLive = HttpApiBuilder.group(EphemApi, "sky", h => h

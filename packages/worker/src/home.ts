@@ -1170,7 +1170,7 @@ function diag() {
   // the telemetry bar: provenance stays on screen, the detail lives in Under the hood
   function tel(k, v) { return "<span><i>" + k + "</i>" + v + "</span>"; }
   var dg = prov && prov.diagnostics, c1 = dg && dg.cache;
-  if (!S.err) setHtml("foot", tel("ephem", esc((prov && prov.version) || "")) + tel("Ephemeris", esc((prov && prov.ephemeris) || "JPL DE440")) +
+  if (!S.err) setHtml("foot", tel("ephem", esc((prov && prov.version) || "")) + tel("Ephemeris", esc((prov && prov.sources && prov.sources[0]) || "JPL DE440")) +
     (S.last ? tel("Round trip", S.last.ms == null ? "embedded" : S.last.ms.toFixed(1) + " ms") : "") + (c1 ? tel("Block cache", esc(["L1 " + c1.l1].concat(Object.keys(c1).filter(function (k) { return k.indexOf("blocks_") === 0; }).map(function (k) { return k.slice(7) + " " + c1[k]; })).join(" \\u00b7 "))) : "") + tel("Edge", esc(LOC.colo || "\\u2014")) +
     tel("Location", loc.source === "cloudflare" ? "approximate, from Cloudflare" : loc.source === "device" ? "from your device" : loc.source === "query" ? "from the link" : "default"));
 }
