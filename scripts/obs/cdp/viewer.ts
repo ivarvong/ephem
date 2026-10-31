@@ -96,6 +96,8 @@ button.ic{width:30px;padding:0;font-size:14px;letter-spacing:0}
 .b.sub{background:rgba(245,184,96,.10);box-shadow:inset 0 0 0 1px rgba(245,184,96,.65)}
 .b.after{background:repeating-linear-gradient(135deg,rgba(245,184,96,.34) 0 2px,transparent 2px 5px);box-shadow:inset 0 0 0 1px rgba(245,184,96,.38)}
 .b.cr{-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 28px),transparent);mask-image:linear-gradient(to right,#000 calc(100% - 28px),transparent)}
+.b.body{background:linear-gradient(to bottom,rgba(245,184,96,.5),rgba(245,184,96,.32));box-shadow:inset 0 1px 0 rgba(245,184,96,.8)}
+.b.alive{top:calc(var(--rh) / 2 - 1px);height:2px;background:rgba(245,184,96,.35);border-radius:0}
 .b.zero{width:2px;min-width:2px;background:var(--eff)}
 .b.wh{top:calc(var(--rh) / 2 - 4px);height:8px;border-left:1px solid rgba(245,184,96,.35);border-right:1px solid rgba(245,184,96,.35);background:linear-gradient(to bottom,transparent 3.5px,rgba(245,184,96,.28) 3.5px 4.5px,transparent 4.5px);border-radius:0}
 .tk .b.cl,.row.req .tk .b.cl{top:auto;bottom:2px;height:2px;background:var(--accent);border-radius:1px}
@@ -325,7 +327,8 @@ function srvLabel(n) {
   const x = n.x, d = n.e - n.s;
   if (x.root && x.ep === "default") {
     const r = reqByI.get(x.ri), cpu = r && r.front ? r.front.cpu : x.a.cpu_time_ms;
-    return (x.respEnd != null ? "resp " + fmt(x.respEnd - x.s) + ' <span class="c">· cpu ' + fmt(cpu) + " · total " + fmt(d) + "</span>" : fmt(d) + ' <span class="c">· cpu ' + fmt(cpu) + "</span>");
+    if (x.respEnd == null) return fmt(d) + ' <span class="c">· cpu ' + fmt(cpu) + "</span>";
+    return (x.bodyEnd != null ? "headers " + fmt(x.respEnd - x.s) + " · body " + fmt(x.bodyEnd - x.s) : "resp " + fmt(x.respEnd - x.s)) + ' <span class="c">· cpu ' + fmt(cpu) + " · wall " + fmt(d) + "</span>";
   }
   if (x.root) { const v = internalOf(x); return fmt(d) + (v ? ' <span class="c">· cpu ' + fmt(v.cpu) + "</span>" : ""); }
   return d < 0.5 ? '<span class="z">0 ms</span>' : fmt(d);
@@ -440,9 +443,13 @@ function trackCell(n) {
   }
   const x = n.x;
   if (x.root && PM) t += bar(n.s - PM, n.e + PM, "wh", "± " + fmt(PM, 1) + " clock offset");
-  if (x.root && x.ep === "default" && x.respEnd != null && !n.after) t += bar(n.s, x.respEnd, "front", "until the response left") + bar(x.respEnd, n.e, "after", "after the response: waitUntil");
-  else t += bar(n.s, n.e, srvCls(n) + (n.e - n.s < 0.5 ? " zero" : ""), n.e - n.s < 0.5 ? ZERO : "");
-  if (n.crit) t += bar(n.s, x.root && x.respEnd != null ? x.respEnd : n.e, "cl");
+  const respDone = x.bodyEnd != null ? x.bodyEnd : x.respEnd;
+  if (x.root && x.ep === "default" && x.respEnd != null && !n.after) {
+    t += bar(n.s, x.respEnd, "front", "headers: first byte " + fmt(x.respEnd - x.s));
+    if (x.bodyEnd != null) t += bar(x.respEnd, x.bodyEnd, "body", "streaming body until " + fmt(x.bodyEnd, 1) + " (" + x.bodyEndFrom + ")");
+    t += bar(respDone, n.e, "alive", "invocation alive after the response (waitUntil below)");
+  } else t += bar(n.s, n.e, srvCls(n) + (n.e - n.s < 0.5 ? " zero" : ""), n.e - n.s < 0.5 ? ZERO : "");
+  if (n.crit) t += bar(n.s, x.root && respDone != null ? respDone : n.e, "cl");
   t += lab(n.s, n.e, srvLabel(n) + (x.cache ? ' <span class="mc">· ' + esc(x.cache) + "</span>" : ""), x.root ? PM : 0);
   return '<div class="tk">' + t + "</div>";
 }
@@ -597,9 +604,10 @@ function detailHtml(n) {
   const x = n.x, r = reqByI.get(x.ri), nm = srvName(x), d = n.e - n.s;
   const attrs = Object.keys(x.a).sort().map(key => [key, typeof x.a[key] === "object" ? JSON.stringify(x.a[key]) : String(x.a[key]), 1]);
   const v = x.root && x.ep !== "default" ? internalOf(x) : null;
-  return head(esc(nm.t || (x.ep === "default" ? "front door span" : x.ep)) + (n.after ? " · after response" : "") + (n.crit ? ' · <span style="color:var(--accent)">critical path</span>' : ""), nm.n.replace(/<\/?b>/g, "") + (x.cache ? " · " + esc(x.cache) : "")) +
+  return head(esc(nm.t || (x.ep === "default" ? "front door span" : x.ep)) + (n.after ? " · waitUntil, after the response" : "") + (n.crit ? ' · <span style="color:var(--accent)">critical path</span>' : ""), nm.n.replace(/<\/?b>/g, "") + (x.cache ? " · " + esc(x.cache) : "")) +
     "<h3 class=cap>timing (browser clock)</h3>" + kv([["start", fmt(x.s, 1)], ["end", fmt(x.e, 1)], ["duration", d < 0.5 ? "0 ms · " + ZERO : fmt(d, 1)],
-      ["response", x.respEnd != null ? fmt(x.respEnd - x.s, 1) + " to first byte (then waitUntil)" : null],
+      ["headers", x.respEnd != null ? fmt(x.respEnd - x.s, 1) + " to first byte (runtime time_to_first_byte_ms)" : null],
+      ["body", x.bodyEnd != null ? "streams until " + fmt(x.bodyEnd, 1) + " (" + fmt(x.bodyEnd - x.s, 1) + " after the start); end from the " + x.bodyEndFrom + ": the model has no span for the last chunk" : null],
       ["cpu", x.root && x.ep === "default" && r && r.front ? fmt(r.front.cpu) : v ? fmt(v.cpu) : null],
       ["clock", PM ? "server − client θ = " + fmt(off.thetaMs, 1) + " ± " + fmt(PM, 1) + " (" + off.agree + "/" + off.n + " bounds agree)" : null]]) +
     "<h3 class=cap>span</h3>" + kv([["name", x.name], ["entrypoint", x.ep], ["request", r ? '<a data-go="r' + r.i + '">' + esc(r.method + " " + r.path) + "</a>" : null, 0, 1], ["cf-ray", r && r.ray, 1], ["trace id", x.trace, 1], ["span id", x.id, 1], ["parent", x.parent, 1]]) +
@@ -786,7 +794,7 @@ for (const a of $("rdg").querySelectorAll("[data-go]")) a.onclick = () => select
 
 $("legend").innerHTML = [
   '<span class="h">network</span>' + PH.map(p => "<span><i style=\"background:var(--" + p + ')"></i>' + PHN[p].replace(" (ttfb)", "") + "</span>").join(""),
-  '<span class="h">server</span><span><i style="background:var(--front)"></i>front door</span><span><i style="background:var(--eff)"></i>span</span><span><i style="background:var(--int)"></i>entrypoint</span><span><i style="background:var(--store)"></i>storage</span><span><i class="sub"></i>subrequest</span><span><i class="after"></i>after response</span><span>|—| ± clock</span>',
+  '<span class="h">server</span><span><i style="background:var(--front)"></i>front door</span><span><i style="background:var(--eff)"></i>span</span><span><i style="background:var(--int)"></i>entrypoint</span><span><i style="background:var(--store)"></i>storage</span><span><i class="sub"></i>subrequest</span><span><i style="background:rgba(245,184,96,.45)"></i>streaming body</span><span><i class="after"></i>waitUntil</span><span><i style="height:2px;vertical-align:2px;background:rgba(245,184,96,.5)"></i>invocation alive</span><span>|—| ± clock</span>',
   '<span class="h">main</span>' + CATS.map(c => '<span><i style="background:' + CATC[c] + '"></i>' + c + "</span>").join("") + '<span><i style="background:#ef6a5e"></i>long task</span>',
   '<span><i class="cl" style="background:var(--accent)"></i>critical path to data drawn</span>',
 ].map(x => "<span>" + x + "</span>").join("");

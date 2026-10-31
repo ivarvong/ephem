@@ -99,8 +99,16 @@ export function buildModel(c: Client, srvIn: Server, meta: Record<string, unknow
     const cache = s.a["ephem.api_cache"] ?? s.a["ephem.blocks_cache"] ?? s.a["ephem.geoid_cache"] ?? s.a["ephem.feed_cache"] ?? s.a["metar.tier"] ?? null
     const label = s.name === "jsRpcCall" ? `Basin send (${s.a["jsrpc.method"] ?? "rpc"})` : (isRoot ? `${s.ep === "default" ? "front door" : s.ep} ${s.a["url.path"] ?? ""}` : s.name) + (cache ? ` · ${cache}` : "")
     const x = { k, req: reqByRay.get(r0) ?? -1, trace: s.trace, id: s.id, parent: s.parent ?? null, name: s.name, ep: s.ep, track: isRoot && s.ep !== "default" ? "internal" : track(s), root: isRoot,
-      s: srvRel(s.s), e: srvRel(s.e), ttfb, respEnd: null as number | null, label, cache, a: s.a }
+      s: srvRel(s.s), e: srvRel(s.e), ttfb, respEnd: null as number | null, bodyEnd: null as number | null, bodyEndFrom: null as string | null, label, cache, a: s.a }
     if (isRoot && s.ep === "default" && ttfb != null) x.respEnd = +(x.s + ttfb).toFixed(3)   // after it: waitUntil (the Basin send)
+    // A streamed document's body keeps leaving after the headers (streamHtml). No span marks the last chunk (the Effect request
+    // span closes when the handler returns, at the first byte), so its end is the browser's download end on the same clock
+    // (server spans are already shifted by θ), capped by the invocation's end: an upper bound, since throttling delays receipt.
+    const rq = reqModel[reqByRay.get(r0) ?? -1]
+    if (x.respEnd != null && rq?.type === "Document" && rq.ph.download) {
+      const end = Math.min(x.e, rq.ph.download[1])
+      if (end > x.respEnd) Object.assign(x, { bodyEnd: +end.toFixed(3), bodyEndFrom: end < x.e ? "browser download end (client clock, shifted by θ)" : "invocation end (the browser's download end, " + rq.ph.download[1].toFixed(1) + " ms, is later: throttling delays receipt)" })
+    }
     return x
   })
 
