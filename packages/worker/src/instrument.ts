@@ -325,7 +325,7 @@ function fit() {
   S.geo = { dpr: dpr, w: L.w, d: L.d, dotDevicePx: L.d * dpr, pitch: p, lcd: [x + dx, y + dy, r.width, r.height], lcdDevice: [(x + dx) * dpr, (y + dy) * dpr], fits: h + 2 * L.gv <= L.vh, wide: L.wide };
 }
 if (window.ResizeObserver) new ResizeObserver(function () { fit(); }).observe(calc); else fit();
-var lastW = root.clientWidth, lastH = window.innerHeight, raf = 0;
+var lastW = S.lay.vw, lastH = S.lay.vh, raf = 0;   // from the head: reading clientWidth here would force the first layout
 function relayout() { var keep = S.lay; S.lay = S.vars(root.clientWidth); S.lay.dx = keep.dx; S.lay.dy = keep.dy; fit(); }
 window.addEventListener("resize", function () {
   if (root.clientWidth === lastW && Math.abs(window.innerHeight - lastH) < 2) return;
