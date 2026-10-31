@@ -37,6 +37,17 @@ describe("Workers tracing bridge", () => {
     expect(by["compute.day"]!["ephem.block_reads"]).toBeGreaterThan(0)
     expect(by["blocks.load"]).toMatchObject({ "cache.blocks_origin": 1, "ephem.blocks_cache": "ORIGIN:1", status: "ok" })
   })
+  it("a streamed page records its body end: html.stream ends only after the last chunk was read", async () => {
+    const { spans, tracing } = recorder(); setTracing(tracing)
+    const req = new Request("https://ephem.example/?lat=40.7128&lon=-74.006&tz=America/New_York")
+    const res = await makeHandler(makeBlocks(origin))(req)
+    const before = spans.some(s => s.name === "html.stream")
+    const bytes = (await res.arrayBuffer()).byteLength
+    const st = spans.find(s => s.name === "html.stream"), home = spans.find(s => s.name === "home")
+    expect(before).toBe(false)   // still open while the body has not been read
+    expect(st?.attrs).toMatchObject({ "html.bytes": bytes, "html.stream_outcome": "done", status: "ok", "effect.parent_id": home!.attrs["effect.span_id"] })
+    expect(st!.attrs["html.chunks"]).toBeGreaterThanOrEqual(3)   // head, data + boot, font + end (FLUSH)
+  })
   it("a tracer that throws on every call does not fail the request", async () => {
     setTracing({ startSpan: () => { throw new Error("boom") } })
     expect((await makeHandler(makeBlocks(origin))(new Request("http://x" + DAY))).status).toBe(200)

@@ -5,7 +5,9 @@
 // embeds their response bodies verbatim as `<script type="application/json" id="…">`, so the numbers are the API's by
 // construction. The response streams: the head (CSS, fonts, boot script) is flushed at once, so the browser parses and
 // styles while the server waits for the data; the rest (body + data + glue) follows when the data is in.
+import * as Clock from "effect/Clock"
 import * as Effect from "effect/Effect"
+import * as Exit from "effect/Exit"
 import * as Fiber from "effect/Fiber"
 import * as Stream from "effect/Stream"
 import * as HttpRouter from "effect/http/HttpRouter"
@@ -46,12 +48,24 @@ export const minifyInline = (h: string): string =>
     : c + css.replace(/\/\*[\s\S]*?\*\//g, "").split("\n").map((l: string) => l.trim()).filter(Boolean).join("\n") + d)
 
 /** A streamed HTML response: `head` (minified) is sent at once, `tail` when it has run (forked now, so it starts at once
- *  too), in chunks split at FLUSH. The tail must not fail: give it its own fallback. */
+ *  too), in chunks split at FLUSH. The tail must not fail: give it its own fallback.
+ *  `html.stream` span: opened with the response, ended when the body stream has handed its last chunk to the runtime (or was
+ *  cancelled), so a streamed document's body end is recorded (the request span closes when the handler returns, at the first
+ *  byte). Workers' clock only advances on I/O, so the end reads the last I/O before the close. Attributes: html.chunks,
+ *  html.bytes, html.stream_outcome (done / interrupted). */
 export const streamHtml = (head: string, tail: Effect.Effect<string>, headers: Record<string, string>) => Effect.gen(function* () {
+  const span = yield* Effect.makeSpan("html.stream")
   const fiber = yield* Effect.forkDetach(tail)
   const enc = new TextEncoder()
+  let chunks = 0, bytes = 0
   const body = Stream.concat(Stream.make(enc.encode(minifyInline(head))),
-    Stream.fromEffect(Fiber.join(fiber)).pipe(Stream.flatMap(s => Stream.fromIterable(s.split(FLUSH).map(p => enc.encode(p))))))
+    Stream.fromEffect(Fiber.join(fiber)).pipe(Stream.flatMap(s => Stream.fromIterable(s.split(FLUSH).map(p => enc.encode(p)))))).pipe(
+    Stream.tap(b => Effect.sync(() => { chunks++; bytes += b.byteLength })),
+    Stream.onExit(exit => Effect.flatMap(Clock.currentTimeNanos, now => Effect.sync(() => {
+      span.attribute("html.chunks", chunks); span.attribute("html.bytes", bytes)
+      span.attribute("html.stream_outcome", Exit.isSuccess(exit) ? "done" : "interrupted")
+      span.end(now, exit)
+    }))))
   return HttpServerResponse.stream(body, { contentType: "text/html; charset=utf-8", headers })
 })
 
