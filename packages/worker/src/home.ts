@@ -1198,7 +1198,9 @@ document.addEventListener("visibilitychange", function () { if (!document.hidden
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(requestDraw);
 resize(); header();
 window.__ephemBoot = boot;   // the stream calls it right after the embedded answers; DOMContentLoaded is the fallback
-if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();   // the embedded data is the last thing the server streams
+// The font arrives last, inert (a <template>, so its bytes block no rendering); adopted once the document is complete.
+function adoptFont() { var t = $("ephem-font"); if (t && t.content) { document.head.appendChild(t.content.cloneNode(true)); t.remove(); if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { mw = {}; requestDraw(); drawStrip(); }); } }
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { boot(); adoptFont(); }); else { boot(); adoptFont(); }   // the embedded data is the last thing the server streams
 if (AT == null) setInterval(function () { if (!document.hidden) loadPos(); }, 5000);
 setInterval(tick, 1000); tick();
 setInterval(function () { if (!document.hidden) loadWx(); }, 60e3);
@@ -1210,6 +1212,6 @@ const PAGE_END = "</body></html>"
  *  system face, the embedded answers boot the page as soon as they are parsed (BOOT, before the font's bytes), then the font
  *  arrives and swaps in. Measured: at the top of the head it cost FCP ~250 ms on Fast 3G; ahead of the answers in the tail,
  *  data drawn ~200 ms. */
-const FONT_STYLE = `<style>${DIN_CSS}</style>`
-/** Boot from the embed now, not at DOMContentLoaded (which waits for the font after it). */
+const FONT_STYLE = `<template id="ephem-font"><style>${DIN_CSS}</style></template>`   // inert until the page adopts it
+/** Boot from the embed now, not at DOMContentLoaded (which waits for the font's bytes after it). */
 const BOOT = "<script>window.__ephemBoot&&__ephemBoot()</script>"
