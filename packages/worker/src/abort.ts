@@ -3,8 +3,9 @@
 // router response re-wrapped by toHandler) made the runtime log `Network connection lost.` at level error with an
 // exception, mark the root span error, outcome ok, no response status. The live gate rolled ac16823e back on four of them.
 //
-// deliver(): the front door hands the runtime a native stream and pumps the body into it itself (in waitUntil). A failed
-// write is then ours to see: the client went away. It is recorded as a countable event, never at error level:
+// deliver(): the runtime never gets a JS stream. A known-length body is read and sent as bytes. A streamed body goes through
+// an IdentityTransformStream we pump ourselves (in waitUntil): a failed write is then ours to see, the client went away,
+// recorded as a countable event, never at error level:
 //   - span `client.abort`: client.aborted=true, ephem.outcome=canceled, client.abort_phase=body, client.abort_bytes
 //   - log  {"evt":"client_aborted","phase":"body","route","bytes","error"} (console.log: level info)
 //   - the request row (Basin ephem_requests) gets error_tag "ClientAbort" (its schema is immutable: no new column)
@@ -31,24 +32,21 @@ const recordAbort = (e: unknown, route: string | undefined, bytes: number, traci
 const streamFailed = (e: unknown, route: string | undefined, bytes: number) =>
   console.error(JSON.stringify({ response_stream_failed: { route: route ?? null, bytes, error: errText(e) } }))
 
-/** Known length (Content-Length, no content-encoding: every JSON answer): read it, then hand the runtime a FixedLengthStream
- *  with the one write and the close queued together. Awaiting the write before closing let a client that had all N bytes
- *  hang up before our close: the runtime then saw outcome canceled, no status, on a delivered /day (canary a2d91cc3,
- *  2026-10-31). Unknown length (the streamed homepage, forwarded Api streams): IdentityTransformStream, chunk by chunk (the
+/** Known length (Content-Length, no content-encoding: every JSON answer): read it and answer with the bytes, which the
+ *  runtime sends natively (no JS stream: a client leaving is not an exception; lab Worker, 2026-10-31). A FixedLengthStream
+ *  written from waitUntil does not work: a client that has all N bytes hangs up before the runtime sees our close, and the
+ *  runtime records outcome canceled, no status, on a delivered 200 (canaries a2d91cc3 and 7e2a3a79: 1 then 10 smoke
+ *  requests). Unknown length (the streamed homepage, forwarded Api streams): IdentityTransformStream, chunk by chunk (the
  *  client cannot finish before our close: chunked framing ends with it). */
 export const deliver = async (res: Response, waitUntil: (p: Promise<unknown>) => void, route: string | undefined, tracing: Tracing | undefined): Promise<Delivery> => {
   if (!res.body || res.webSocket) return { response: res, aborted: Promise.resolve(false) }
   const headers = new Headers(res.headers), init = { status: res.status, statusText: res.statusText, headers }
   const len = headers.get("content-length")
   if (len !== null && /^\d+$/.test(len) && !headers.has("content-encoding")) {
-    let buf: Uint8Array<ArrayBuffer>
-    try { buf = new Uint8Array(await res.arrayBuffer()) } catch (e) { streamFailed(e, route, 0); throw e }   // a server error: the runtime answers 500
-    if (!native) return { response: new Response(buf, init), aborted: Promise.resolve(false) }
+    let buf: ArrayBuffer
+    try { buf = await res.arrayBuffer() } catch (e) { streamFailed(e, route, 0); throw e }   // a server error: the runtime answers 500
     headers.set("content-length", String(buf.byteLength))
-    const { readable, writable } = new FixedLengthStream(buf.byteLength), out = writable.getWriter()
-    const aborted = Promise.all([out.write(buf), out.close()]).then(() => false, (e: unknown) => recordAbort(e, route, 0, tracing))
-    waitUntil(aborted)
-    return { response: new Response(readable, init), aborted }
+    return { response: new Response(buf, init), aborted: Promise.resolve(false) }
   }
   headers.delete("content-length")
   const { readable, writable } = native ? new IdentityTransformStream() : new TransformStream<Uint8Array, Uint8Array>()
