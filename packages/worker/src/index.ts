@@ -21,6 +21,8 @@ import { pipelineSink, type PipelineLike, type RequestRow } from "./requestlog.t
 import { rumPipelineSink, type RumRow } from "./rum.ts"
 import { favicon } from "./favicon.ts"
 import { ogFront, setOgTracing } from "./og-render.ts"
+import { afterDelivery, deliver } from "./abort.ts"
+import { ROUTES } from "./routes.ts"
 export { Admin } from "./admin.ts"
 export { Og } from "./og-entry.ts"   // cache ON: the link-preview PNG (src/og.ts scene, rendered by glyph)
 export { Api, BlockStore } from "./compute.ts"   // cache ON (cloudflare.config.ts); called over ctx.exports
@@ -68,10 +70,18 @@ export default {
   async fetch(request: Request, env: Env, ctx: Ctx): Promise<Response> {
     const icon = favicon(request); if (icon) return withVersion(icon, env.VERSION?.id)   // before the app: no router, no request row
     loop = ctx.exports
-    const og = await ogFront(request, lb, tracing); if (og) return withErrors(withVersion(og, env.VERSION?.id), request)   // /og.png, its font, the touch icon
-    front ??= makeHandler(blocks, { role: "front", api: lb.api }, weather, geoid)
     const wu = (p: Promise<unknown>) => ctx.waitUntil(p)
-    return withErrors(withVersion(await front(request, logs(env, wu, "front"), env.RUM && env.REQUEST_LOGS !== "off" ? rumPipelineSink(env.RUM, wu, env.VERSION?.id) : undefined), env.VERSION?.id), request)
+    const path = new URL(request.url).pathname, route = ROUTES.has(path) ? path : undefined
+    const og = await ogFront(request, lb, tracing); if (og) return deliver(withErrors(withVersion(og, env.VERSION?.id), request), wu, route, tracing).response   // /og.png, its font, the touch icon
+    front ??= makeHandler(blocks, { role: "front", api: lb.api }, weather, geoid)
+    // The request row waits for the body to be delivered (src/abort.ts): a client that leaves mid-body is error_tag ClientAbort.
+    const sink = logs(env, wu, "front"), row = sink && afterDelivery(sink.emit, wu)
+    let res: Response
+    try { res = withErrors(withVersion(await front(request, sink && row ? { ...sink, emit: row.emit } : undefined, env.RUM && env.REQUEST_LOGS !== "off" ? rumPipelineSink(env.RUM, wu, env.VERSION?.id) : undefined), env.VERSION?.id), request) }
+    catch (e) { row?.settle(Promise.resolve(false)); throw e }
+    const d = deliver(res, wu, route, tracing)
+    row?.settle(d.aborted)
+    return d.response
   },
 }
 const logs = (env: Env, waitUntil: (p: Promise<unknown>) => void, role: string) =>

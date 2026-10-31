@@ -50,7 +50,10 @@ fails loudly rather than returning a partial result).
 | `python3 basin.py status\|failures\|sql <name>\|crosscheck\|types\|create-streams\|provision\|teardown` | Basin request logs. See "Request logs (Basin)". |
 | `node --experimental-strip-types mcp-probe.ts [base]` | Full MCP session against `/mcp` (legacy handshake + modern 2026-07-28 flow + error cases); every tool call checked equal to its REST endpoint. Pass/fail table with cf-rays. Part of the smoke. |
 | `scripts/smoke.sh <base> [--pin <id>] [--expect <id>] [--expect-compute <id>] [--only a,b] [--run id --manifest file]` | Every route + content checks + the MCP probe, concurrently. See "Ship and roll back". |
-| `python3 canary-gate.py ephem <new> <prev> --since ISO --run ID --manifest FILE [--live 90] [--early 0.75] [--until ISO] [--json out]` | deploy.sh's telemetry gate. Not run by hand normally. |
+| `python3 canary-gate.py ephem <new> <prev> --since ISO --run ID --manifest FILE [--live 90] [--early 0.75] [--until ISO] [--json out]` | deploy.sh's telemetry gate. Not run by hand normally. Per-event rules: `gate_rules.py` (test: packages/worker/test/canary-gate.test.ts). |
+| `node --experimental-strip-types abort-probe.ts [base] [--run id] [--pin id] [--only mcp-fast,home-stream,…] [--delay ms]` | Client disconnects on purpose (raw TLS, drop the socket mid-request): `/mcp`, streamed `/`, `/position`, `/track`. Requests carry `x-ephem-smoke: <run>`. |
+| `python3 abort-read.py <run> [--minutes 15]` | What an abort-probe run left: per request outcome, status, error spans, every log line with its level. |
+| `python3 gate-fixture.py <out.json> <ray>… [--service ephem] [--note …]` | Record a gate test fixture (the rays' invocation, logs, spans, trimmed: no headers or IP) into packages/worker/test/fixtures/gate/. |
 | `python3 tail-check.py [--minutes 10] [--version <id>] [--wait 90] [--require /track,…]` | ephem-tail health from its own o11y events: invocations by (version, outcome), `basin_send_failed`, route labels. deploy.sh runs it after a tail deploy. |
 | `node --experimental-strip-types journey.ts <url> [--device iphone\|desktop] [--net fast3g\|4g\|none] [--cpu 4] [--cold\|--warm] [--script home-drag\|none] [--duration 70] [--out dir]` | Unified client+server trace of one page view through our CDP client (`cdp/`). See "Page views". `--rebuild <name>.raw.json` after a model/viewer change. |
 | `node --experimental-strip-types trace-view.ts <client trace id>\|--latest [--real] [--out dir]` | A real page view rebuilt from production RUM + request rows + o11y; same viewer. |
@@ -86,6 +89,7 @@ counts and the invocation's `cpuTimeMs`; for where the CPU goes, profile.
 | `mcp.<method>` | src/mcp.ts | see "MCP" |
 | `home.embed`, `home.og`, `html.stream` | src/home.ts, src/embed.ts | see "Homepage" |
 | `og.front`, `og.render` | src/og.ts | see "Link previews" |
+| `client.abort` | src/abort.ts | the client left while the front door wrote the body: `client.aborted=true`, `ephem.outcome=canceled`, `client.abort_phase=body`, `client.abort_bytes`, `http.route`. See "Client disconnects" |
 | `GET` (runtime) | workerd | `cpu_time_ms`, `wall_time_ms`, `cloudflare.ray_id`, `outcome`, geo |
 | `fetch` / `jsRpcCall` (runtime) | workerd | a loopback fetch; `jsRpcCall method=send` is the Basin pipeline send (~0.5–1 s, after the response) |
 
@@ -258,15 +262,19 @@ before progressing").
   visible.
 - **Pass:** early (`--early 0.75`) at 0 errors + every required span/entrypoint + 75 % of the requests visible; full check
   ≥ 95 % visible and every smoke check with at least one visible request (missing telemetry never passes; `--wait 90`).
-- **FAIL:** outcome ≠ ok; any 5xx or a server status that differs from the client's; any log at level error, any key
+- **FAIL:** outcome other than ok / canceled; any 5xx or a server status that differs from the client's; any log at level error, any key
   ending `_failed`, any `{"evt":"*_failed"}`; a smoke request answered by another version; missing `GET`/`POST`/`api.fetch`
   spans, `mcp.initialize` + `mcp.tools/call`, an Api invocation with `position` + `blocks.load`, a BlockStore invocation
   when an Api `blocks.load` reports a MISS (smoke `blocks-miss` asks for a random instant in 1972–2149), a linked
   Api/BlockStore invocation on another version.
 - **WARN only: CPU** (new p50 > 2× the previous version's and +5 ms, or new max > previous p99 + 50 ms, n ≥ 10): the smoke
   sends 1–3 requests per route to fresh isolates, so no threshold separates start-up from a regression at that n.
+- **Client aborts never fail** (one `client aborts: N (…)` warning; rules in `gate_rules.py`, tested on recorded events):
+  outcome `canceled`; the runtime's `Network connection lost.` exception log when that ray's invocation shows no server
+  error (outcome ok / canceled, no status or < 500; still unjoined at the deadline → error, fail closed);
+  `{"evt":"client_aborted"}`. A 5xx, an exception outcome or any other error log on the same request still fails.
 - **Live:** an error on real traffic fails only if its signature (service, entrypoint, kind, path) did not occur on the
-  previous version in its last 15 min; a pre-existing signature or a user's `canceled` outcome is a warning.
+  previous version in its last 15 min; a pre-existing signature is a warning.
 - **`x-ephem-errors`:** the front door counts `console.error` lines and unhandled rejections per isolate and returns the
   count on requests carrying `x-ephem-smoke`; a pinned canary's isolates serve only the smoke, so the smoke and the probe
   (`isolate.errors`) fail on any non-zero count with no ingest wait. Not on the Api (its responses are cached).
@@ -401,7 +409,7 @@ as `x-ephem-ray`, so `JOIN … ON f.ray = a.ray` pairs them. Count requests with
 | `ts`, `ray`, `colo`, `country`, `city` | end of request; `cf-ray` (or `x-ephem-ray`), `request.cf` (synthetic rows' country/city are the Workers egress's) |
 | `version`, `build`, `role` | version-metadata binding, `__EPHEM_BUILD__`, entrypoint |
 | `method`, `route`, `status`, `ok` | `http.route`, or the path when it is in `ROUTES`; never a raw path |
-| `error_tag` | the typed failure's `_tag`, `InvalidRequest` (schema 400, incl. unknown parameters), `RouteNotFound`, a defect's name, or the JSON-RPC error name |
+| `error_tag` | the typed failure's `_tag`, `InvalidRequest` (schema 400, incl. unknown parameters), `RouteNotFound`, a defect's name, the JSON-RPC error name, or `ClientAbort` (the client left mid-body; front rows only, src/abort.ts) |
 | `wall_ms` | `performance.now()` around the request: I/O wall, not total |
 | `api_cache`, `blocks_cache`, `feed_cache` | the loopbacks' cf-cache-status, verbatim |
 | `blocks`, `blocks_mem`, `origin_reads`, `origin_bytes`, `block_reads`, `iterations` | block and work counts |
@@ -632,6 +640,24 @@ The latest measurement of each, with its version. Older and superseded numbers: 
 | `/og.png` | MISS 1.3–1.6 s, HIT 0.14 s client; PNG ~166 KB | b4694777 smoke |
 | CPU per cold 12-month park scan | 500–519 ms (Σ 14 windows + merge) | 8413211a (2026-10-30) |
 
+## Client disconnects
+
+Measured on prod 7c99bb80 with `abort-probe.ts` + `abort-read.py` (2026-10-31):
+
+| client leaves | runtime records (before src/abort.ts) |
+| --- | --- |
+| before the response exists (`/track`, `/mcp` tools/call track: forwarded to the Api) | outcome `canceled`, no status, no log |
+| after the response exists, while the body is written (`/mcp` position at +5–15 ms, streamed `/` after the head, `/position`) | outcome **ok**, no status, root span level error `Network connection lost.`, an **error-level log** `{"message":"Network connection lost.","exception":{"name":"Error"}}` |
+| `POST /mcp` with half the body sent | nothing: the edge never invokes the Worker |
+
+`request.signal` does not fire on a disconnect at our compatibility date (lab Worker, 2026-10-31), so Effect's
+`ClientAbort` (499) never triggers. src/abort.ts `deliver()`: the front door returns a native stream
+(FixedLengthStream when Content-Length is known and there is no content-encoding, else IdentityTransformStream) and pumps
+the body into it from waitUntil; a failed write is the client leaving → span `client.abort` (`client.aborted=true`,
+`ephem.outcome=canceled`), log `{"evt":"client_aborted","phase":"body",…}` at info, request row `error_tag = ClientAbort`
+(the row waits for delivery). A failed read of our own body is still a server error: `{"response_stream_failed":…}` at
+error level. Count them: o11y `source.evt = client_aborted`; Basin `error_tag = 'ClientAbort'`.
+
 ## Gotchas
 
 - **`$metadata.id` is not unique**: dedupe by the whole `$metadata` (or ray + type), count rays or trace ids. An id dedup
@@ -643,9 +669,9 @@ The latest measurement of each, with its version. Older and superseded numbers: 
 - Console JSON lines have no `$metadata.level`; `console.error` lines have level `error`.
 - Ingest lags: right after a load run invocation counts are short (196 of 240 at +60 s, all at +5 min). Wait before final
   numbers.
-- **A client that disconnects mid-request to `/mcp` logs `Network connection lost.` at level error, and the live gate
-  rolls back on it** (a crashed mcp-probe rolled back ac16823e, git f32d46b, 2026-10-31). Don't run a broken probe against
-  prod during a live window.
+- **Client disconnects** (fixed 2026-10-31; see "Client disconnects"): before, a client leaving while the runtime wrote
+  our body logged `Network connection lost.` at level error and the live gate rolled back on it (a crashed mcp-probe
+  rolled back ac16823e, git f32d46b).
 - Invocation `wallTimeMs` includes waitUntil (the ~1 s Basin send): compare wall only between versions with the same
   `REQUEST_LOGS`.
 - The tracing API's `setStatus` takes `{ code: "ok" | "error" }`, not a string (a string threw in prod: ~2 min of 500s);
