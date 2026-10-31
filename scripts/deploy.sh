@@ -440,15 +440,16 @@ git -C "$ROOT" tag -f "$TAG" "$SHA" >/dev/null
 TO100=$(python3 -c "print(f'{float(\"$T_PROMOTED\")-float(\"$T_INNER\"):.1f}')")
 echo "== deployed ephem $SHA ($NEW): 100% at +${TO100}s, live smoke ok; tagged $TAG"
 # The live watcher: detached (own session: survives this terminal and the caller), holds $LL, owns the worktree from here.
+# It gets $SHA, not $REV: `deploy.sh main` re-resolved in the watcher named the newer main (found 2026-10-31, 91e5e6e).
 LIVELOG="$LIVEDIR/$SHA-$(date -u +%Y%m%dT%H%M%SZ).log"
 mkdir -p "$LL"; echo "$SHA $NEW pid - $(iso_now)" > "$LL/owner" || true   # never fail here: NEW serves 100%
 export EPHEM_DEPLOY_LIVE=1 NEW PREV PREV_TAG CS RUN T0ISO LRUN TAG CANARY_EARLY TAIL_NEW TAIL_PREV O11Y_LIVE_S
 if [ "${LIVE_WAIT:-}" = 1 ]; then   # foreground: the deploy's exit code includes the live verdict (old behaviour)
   KEEP_WT=1; rm -rf "$LOCK"; trap - EXIT; TIMED=1
   echo "TIMINGS$TIMINGS to_100=$TO100 promoted_at=$T_PROMOTED new=$NEW live_log=$LIVELOG" | sed 's/^TIMINGS/== timings/'
-  bash "$WT/scripts/deploy.sh" "$REV" "$MSG" "$TARGET" 2>&1 | tee "$LIVELOG"; exit "${PIPESTATUS[0]}"
+  bash "$WT/scripts/deploy.sh" "$SHA" "$MSG" "$TARGET" 2>&1 | tee "$LIVELOG"; exit "${PIPESTATUS[0]}"
 fi
-perl -MPOSIX -e 'POSIX::setsid(); open STDIN, "<", "/dev/null"; exec @ARGV or die' bash "$WT/scripts/deploy.sh" "$REV" "$MSG" "$TARGET" > "$LIVELOG" 2>&1 &
+perl -MPOSIX -e 'POSIX::setsid(); open STDIN, "<", "/dev/null"; exec @ARGV or die' bash "$WT/scripts/deploy.sh" "$SHA" "$MSG" "$TARGET" > "$LIVELOG" 2>&1 &
 WPID=$!
 KEEP_WT=1
 for _ in 1 2 3 4 5 6 7 8 9 10; do grep -q " pid $WPID " "$LL/owner" 2>/dev/null && break; sleep 0.2; done
