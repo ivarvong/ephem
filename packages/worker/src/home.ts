@@ -226,17 +226,11 @@ function altU(a) { a = Math.max(-90, Math.min(90, a)); return a >= -18 ? a : -18
 var U_TOP = 90, U_BOT = altU(-90);
 // A continuous azimuth sequence (no 360° jumps), so a track crosses the chart's seam as one line.
 function unwrapAz(azs) { var out = [], prev = null; for (var i = 0; i < azs.length; i++) { var a = prev == null ? azs[i] : prev + wrap180(azs[i] - prev); out.push(a); prev = a; } return out; }
-// The default frame shows all 360°, centred on the meridian (south in the north, north in the south) unless that puts a body
-// within 30° of the seam (the chart's left/right edge, centre ± 180°); then the nearest centre, in 5° steps, that keeps both clear.
+// The default frame shows all 360°, centred between the two bodies (the middle of the shorter arc from one to the other, to
+// the degree), so both sit well inside the frame and the seam (centre ± 180°) falls where neither is. lat is unused now.
 function chartCenter(lat, azs) {
-  var mer = lat >= 0 ? 180 : 0, best = mer, bestS = -Infinity;
-  for (var k = 0; k < 72; k++) {
-    var c = wrap360(mer + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 5), d = 180;
-    azs.forEach(function (a) { d = Math.min(d, Math.abs(wrap180(a - c - 180))); });
-    var s = Math.min(d, 30) - 0.01 * Math.abs(wrap180(c - mer));
-    if (s > bestS) { bestS = s; best = c; }
-  }
-  return best;
+  if (azs.length < 2) return wrap360(Math.round(azs[0] == null ? (lat >= 0 ? 180 : 0) : azs[0]));
+  return wrap360(Math.round(azs[0] + wrap180(azs[1] - azs[0]) / 2));
 }
 // Horizon crossings and culminations from track samples [{t, alt (true), az}]: h0 is the centre's true altitude at rise/set.
 // Crossings interpolate linearly between samples; transit and anti-transit (upper and lower culmination) take the vertex of a
@@ -355,7 +349,6 @@ function chartModel(st) {
   var g = chartGeom(st.W, st.H, st.insetL, st.insetR), c = st.center, LH = st.LH, m = { g: g, lines: {}, hard: [], items: [], marks: [], discs: [], bands: [], sunBand: -1, segs: [] };
   var minus = function (a, d) { return (a < 0 ? "\\u2212" : "") + Math.abs(a).toFixed(d) + "\\u00b0"; };
   m.hard.push({ id: "horizon", x: -1e4, y: g.hy - 2, w: 2e4, h: 4 });
-  var y18b = chY(-18, g); m.hard.push({ id: "break-l", x: g.x0, y: y18b - 6, w: 10, h: 12 }, { id: "break-r", x: g.x1 - 10, y: y18b - 6, w: 10, h: 12 });
   for (var az = 0; az < 360; az += 15) chXs(az, g, c).forEach(function (x) { m.hard.push({ id: "tick" + az, x: x - 1, y: g.hy, w: 2, h: az % 45 ? 3 : 6 }); });
   if (st.ctl) m.hard.push(st.ctl);
   if (st.pose) { var px = chX(st.pose.az, g, c), py = chY(st.pose.alt, g); m.pose = { x: px, y: py }; m.hard.push({ id: "pose", x: px - 21, y: py - 21, w: 42, h: 42 }); }
@@ -371,12 +364,13 @@ function chartModel(st) {
   });
   // the scale: altitude rings above, depth rings below (the ground under -18° is at a quarter scale: a break mark, chartGeom)
   [30, 60, -30, -60].forEach(function (alt) { var t = (alt < 0 ? "\u2212" : "") + Math.abs(alt) + "\u00b0", w = st.meas(t, "scale"), y = Math.round(chY(alt, g)) + 0.5;
-    m.items.push({ id: "alt" + alt, t: t, font: "scale", role: "scale", w: w, h: LH.scale, prio: 4, spots: spotsAlong(y, w, LH.scale, g).filter(function (s) { return s[0] < g.x0 + 60 || s[0] > g.x1 - 60 - w; }) }); });
+    m.items.push({ id: "alt" + alt, t: t, font: "scale", role: "scale", w: w, h: LH.scale, prio: 4, spots: [[g.x0 + 2, y - LH.scale - 2], [g.x0 + 2, y + 2]] }); });   // always the left edge
   // tracks, their events, the bodies
   st.bodies.forEach(function (b) {
     if (b.pts && b.pts.length > 1) { var tl = trackLines(b.pts, g, c, st.now); m.lines[b.key] = tl; m.segs = m.segs.concat(tl.segs); }
     (b.events || []).forEach(function (e) {
       var future = e.t > st.now, cross = e.kind === "rise" || e.kind === "set", ey = cross ? g.hy : chY(e.alt, g);
+      if (Math.abs(wrap180(e.az - b.az)) < 5 && Math.abs((cross ? 0 : e.alt) - b.alt) < 5) return;   // the body is on its own mark: one mark, the body
       chXs(e.az, g, c).forEach(function (ex, n) {
         m.marks.push({ key: b.key, kind: e.kind, x: ex, y: ey, future: future });
         m.hard.push(cross ? { id: b.key + e.kind + "m", x: ex - 2, y: g.hy - 6, w: 4, h: 12 } : { id: b.key + e.kind + "m", x: ex - 3.5, y: ey - 3.5, w: 7, h: 7 });
@@ -416,6 +410,13 @@ function poseFrom(e, decl) {
   return { az: wrap360(mag + (decl || 0)), alt: Math.asin(Math.max(-1, Math.min(1, vz))) * 180 / Math.PI };
 }
 // "Moon, 23.4° below the horizon: turn 40° left, tilt 41° down". b: {az, alt}; pose: {az, alt}. Within 3° is on target.
+// The compact form, one line per body: "SUN ← 157° · ↓ 22°" (arrows: which way to turn and tilt; "on target" within 3°).
+function aimShort(name, b, pose) {
+  var d = wrap180(b.az - pose.az), e = b.alt - pose.alt, parts = [];
+  if (Math.abs(d) >= 3) parts.push((d < 0 ? "\u2190 " : "\u2192 ") + Math.round(Math.abs(d)) + "\u00b0");
+  if (Math.abs(e) >= 3) parts.push((e < 0 ? "\u2193 " : "\u2191 ") + Math.round(Math.abs(e)) + "\u00b0");
+  return name.toUpperCase() + "  " + (parts.length ? parts.join(" \u00b7 ") : "on target");
+}
 function aimText(name, b, pose) {
   var d = wrap180(b.az - pose.az), e = b.alt - pose.alt, parts = [];
   if (Math.abs(d) >= 3) parts.push("turn " + Math.round(Math.abs(d)) + "\\u00b0 " + (d < 0 ? "left" : "right"));
@@ -743,9 +744,9 @@ var TI = { key: "" };
 function trackInfo(nowMs) {
   var key = S.track.length + ":" + (S.track[0] && S.track[0].t) + ":" + (S.day && S.day.date) + ":" + (S.day && S.day.events.length) + ":" + Math.floor(nowMs / 60e3);
   if (TI.key === key) return TI;
-  // One full cycle per body around now (a solar day; a lunar day, 24 h 50 min), plus a sample each side: the track closes on
-  // itself instead of ending mid-sky.
-  var HALF = { sun: 12 * 3600e3 + 20 * 60e3, moon: 12 * 3600e3 + 45 * 60e3 }, out = { key: key, win: {} };
+  // One full cycle per body around now (a solar day; a lunar day, 24 h 50 min) and no more: the track closes on itself instead
+  // of ending mid-sky, and no stretch of it is drawn twice at the seam.
+  var HALF = { sun: 12 * 3600e3, moon: 12 * 3600e3 + 25 * 60e3 }, out = { key: key, win: {} };
   var dayEv = [].concat(S.day ? S.day.events : [], S.tomorrow ? S.tomorrow.events : []);
   ["sun", "moon"].forEach(function (body) {
     var win = out.win[body] = S.track.filter(function (x) { return Math.abs(x.t - nowMs) <= HALF[body]; });
@@ -789,10 +790,8 @@ function draw() {
   [30, 60, -30, -60].forEach(function (alt) { var y = Math.round(chY(alt, g)) + 0.5; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); });
   ctx.strokeStyle = P.gridV;
   for (var vz = 0; vz < 360; vz += 45) chXs(vz, g, c).forEach(function (vx) { vx = Math.round(vx) + 0.5; if (vx < 0 || vx > W) return; ctx.beginPath(); ctx.moveTo(vx, 0); ctx.lineTo(vx, g.bot); ctx.stroke(); });
-  // the scale break at -18° (true scale above, a quarter below): a faint line and a break mark at each edge
+  // the scale break at -18° (true scale above, a quarter below): a faint line; the depth rings say the rest
   ctx.strokeStyle = P.gridV; ctx.beginPath(); ctx.moveTo(0, Math.round(y18) + 0.5); ctx.lineTo(W, Math.round(y18) + 0.5); ctx.stroke();
-  ctx.strokeStyle = P.brk; ctx.lineWidth = 1;
-  [g.x0 + 1, g.x1 - 9].forEach(function (bx) { [-2, 2].forEach(function (o) { ctx.beginPath(); ctx.moveTo(bx, y18 + o + 3); ctx.lineTo(bx + 4, y18 + o - 3); ctx.lineTo(bx + 8, y18 + o + 3); ctx.stroke(); }); });
   ctx.strokeStyle = P.horizon; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(0, hy); ctx.lineTo(W, hy); ctx.stroke(); ctx.lineWidth = 1;
   for (var az = 0; az < 360; az += 15) chXs(az, g, c).forEach(function (x) {
     if (x < -2 || x > W + 2) return;
@@ -870,8 +869,9 @@ function onOrient(e) {
 }
 function aimUpdate() {
   if (!S.pose || !S.to) return;
-  var t = [["Sun", S.to.sun], ["Moon", S.to.moon]].map(function (o) { return aimText(o[0], { az: o[1].azimuth, alt: altOf(o[1]) }, S.pose); }).join("\\n");
-  if (t !== poseText) { poseText = t; $("guide").textContent = t; }
+  var bs = [["Sun", S.to.sun], ["Moon", S.to.moon]].map(function (o) { return [o[0], { az: o[1].azimuth, alt: altOf(o[1]) }]; });
+  var t = bs.map(function (o) { return aimShort(o[0], o[1], S.pose); }).join("   ");
+  if (t !== poseText) { poseText = t; $("guide").textContent = t; $("guide").setAttribute("aria-label", bs.map(function (o) { return aimText(o[0], o[1], S.pose); }).join(". ")); }
 }
 var orientEv = "ondeviceorientationabsolute" in window ? "deviceorientationabsolute" : "deviceorientation";
 function pointStop() { removeEventListener(orientEv, onOrient); S.pose = null; $("guide").hidden = true; $("point").textContent = "Point phone"; $("point").setAttribute("aria-pressed", "false"); if (S.to && !S.userPanned) S.center = defaultCenter(S.to); requestDraw(); }

@@ -262,11 +262,13 @@ describe("home: sky chart geometry", () => {
     const u = chart.unwrapAz([350, 355, 2, 9, 359, 340])
     expect(u).toEqual([350, 355, 362, 369, 359, 340])
   })
-  it("centre: the meridian by hemisphere, moved only to keep a body 30° off the seam", () => {
-    expect(chart.chartCenter(40, [120, 250])).toBe(180)
-    expect(chart.chartCenter(-33, [120, 250])).toBe(0)
-    const c = chart.chartCenter(40, [5, 250]), seam = (c + 180) % 360
-    for (const a of [5, 250]) expect(Math.abs((((a - seam) % 360) + 540) % 360 - 180)).toBeGreaterThanOrEqual(30)
+  it("centre: midway between the bodies on the shorter arc, so the seam falls where neither is", () => {
+    expect(chart.chartCenter(40, [120, 250])).toBe(185)
+    expect(chart.chartCenter(-33, [350, 30])).toBe(10)
+    for (const [a, b] of [[5, 250], [274, 49], [0, 180], [359, 1]]) {
+      const c = chart.chartCenter(40, [a!, b!]), seam = (c + 180) % 360
+      for (const x of [a!, b!]) expect(Math.abs((((x - seam) % 360) + 540) % 360 - 180)).toBeGreaterThanOrEqual(89)
+    }
   })
   it("events from a synthetic day: rise, transit, set, anti-transit at the right times and azimuths", () => {
     // a body on a sine: alt = 40 sin(2π t/24h) - 10, azimuth sweeping 360° a day
