@@ -47,7 +47,7 @@ describe("geoid bands via BlockStore", () => {
     const fetch = async (b: number) => ({ buf: ab(bundledGeoidBand(b)), status: "MISS" })
     const api = makeHandler(blocks(), undefined, undefined, makeGeoid(fetch))
     makeGeoid(fetch)   // the front door's, installed after the Api's (module order in index.ts): it used to hide the Api's L1
-    const r = await api(new Request(`http://x/position?${NYC}&${T}`))
+    const r = await api(new Request(`http://x/v1/position?${NYC}&${T}`))
     expect(r.status).toBe(200); expect((await r.json() as { observer: { geoidUndulation: number } }).observer.geoidUndulation).toBe(want)
   })
   it("the loopback asks BlockStore for the versioned path", async () => {
@@ -60,9 +60,9 @@ describe("geoid bands via BlockStore", () => {
     const calls: number[] = []
     const geoid = makeGeoid(async b => { calls.push(b); return { buf: ab(bundledGeoidBand(b)), status: "MISS" } })
     const h = makeHandler(blocks(), undefined, undefined, geoid)
-    const r1 = await (await h(new Request(`http://x/position?${NYC}&${T}`))).json() as { observer: { geoidUndulation: number } }
+    const r1 = await (await h(new Request(`http://x/v1/position?${NYC}&${T}`))).json() as { observer: { geoidUndulation: number } }
     expect(calls).toEqual(geoidBandsFor(40.7))
-    await h(new Request(`http://x/day?${NYC}&date=2026-10-28&tz=America/New_York`))
+    await h(new Request(`http://x/v1/day?${NYC}&date=2026-10-28&tz=America/New_York`))
     expect(calls).toEqual(geoidBandsFor(40.7))   // L1
     expect(r1.observer.geoidUndulation).toBe(want)
   })
@@ -71,11 +71,11 @@ describe("geoid bands via BlockStore", () => {
     const h = makeHandler(blocks(), undefined, undefined, makeGeoid(async b => { calls.push(b); throw new Error("no") }))
     expect((await h(new Request("http://x/healthz"))).status).toBe(200)
     expect(calls).toEqual([])
-    expect((await h(new Request("http://x/magnetic?lat=40.7&lon=-74&time=2026-10-28T12:00:00Z"))).status).toBe(503)   // heightRef: fails closed like every observer
+    expect((await h(new Request("http://x/v1/magnetic?lat=40.7&lon=-74&time=2026-10-28T12:00:00Z"))).status).toBe(503)   // heightRef: fails closed like every observer
     // alignment has heights (heightRef / targetHeightRef, and the eye on the geoid by default) since 2026-10-30
     const ok: number[] = []
     const h2 = makeHandler(blocks(), undefined, undefined, makeGeoid(async b => { ok.push(b); return { buf: ab(bundledGeoidBand(b)), status: "MISS" } }))
-    const a = await h2(new Request("http://x/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&start=2026-10-29T02:00:00Z&end=2026-10-29T02:10:00Z"))
+    const a = await h2(new Request("http://x/v1/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&start=2026-10-29T02:00:00Z&end=2026-10-29T02:10:00Z"))
     expect(a.status).toBe(200)
     expect([...new Set(ok)].toSorted()).toEqual([...new Set([...geoidBandsFor(40.68925 - 0.2), ...geoidBandsFor(40.68925 + 0.2)])].toSorted())
   })
@@ -85,18 +85,18 @@ describe("geoid bands via BlockStore", () => {
       n++; return n === 1 ? new Response("R2 down", { status: 502 }) : n === 2 ? new Response(ab(bundledGeoidBand(b + 1))) : new Response(ab(bundledGeoidBand(b)), { headers: { "cf-cache-status": "HIT" } })
     })))
     for (const want of [/BlockStore 502 for geoid band 12: R2 down/, /band 12: (\d+ bytes|sha256)/]) {
-      const r = await h(new Request(`http://x/track?${NYC}&start=2026-10-29T00:00:00Z&end=2026-10-29T01:00:00Z`))
+      const r = await h(new Request(`http://x/v1/track?${NYC}&start=2026-10-29T00:00:00Z&end=2026-10-29T01:00:00Z`))
       expect(r.status).toBe(503)
       const body = await r.json() as { _tag: string; message: string }
       expect(body._tag).toBe("Unavailable"); expect(body.message).toMatch(want)
       expect(r.headers.get("cache-control")).not.toMatch(/immutable/)
     }
-    expect((await h(new Request(`http://x/track?${NYC}&start=2026-10-29T00:00:00Z&end=2026-10-29T01:00:00Z`))).status).toBe(200)
+    expect((await h(new Request(`http://x/v1/track?${NYC}&start=2026-10-29T00:00:00Z&end=2026-10-29T01:00:00Z`))).status).toBe(200)
   })
   it("concurrent cold requests share one fetch per band", async () => {
     let calls = 0
     const h = makeHandler(blocks(), undefined, undefined, makeGeoid(async b => { calls++; await new Promise(r => setTimeout(r, 5)); return { buf: ab(bundledGeoidBand(b)), status: "MISS" } }))
-    const rs = await Promise.all([1, 2, 3, 4].map(m => h(new Request(`http://x/position?lat=40.7&lon=-74.${m}&${T}`))))
+    const rs = await Promise.all([1, 2, 3, 4].map(m => h(new Request(`http://x/v1/position?lat=40.7&lon=-74.${m}&${T}`))))
     expect(rs.map(r => r.status)).toEqual([200, 200, 200, 200]); expect(calls).toBe(1)
   })
   it("verifyBand rejects wrong length and wrong content", async () => {

@@ -38,7 +38,7 @@ const streamFailed = (e: unknown, route: string | undefined, bytes: number) =>
  *  with our close, so a client cannot finish before it. A known-length body is returned untouched: a FixedLengthStream
  *  written from waitUntil lets a client with all N bytes hang up before the runtime sees our close, and the runtime records
  *  outcome canceled, no status, on a delivered 200 (canaries a2d91cc3, 7e2a3a79); sending the bytes natively did not stop
- *  the runtime's own `Network connection lost.` log either (7b486e71, /position ray a5305629298c43e7). */
+ *  the runtime's own `Network connection lost.` log either (7b486e71, /v1/position ray a5305629298c43e7). */
 export const deliver = (res: Response, waitUntil: (p: Promise<unknown>) => void, route: string | undefined, tracing: Tracing | undefined): Delivery => {
   if (!res.body || res.webSocket) return { response: res, aborted: Promise.resolve(false) }
   const headers = new Headers(res.headers), init = { status: res.status, statusText: res.statusText, headers }

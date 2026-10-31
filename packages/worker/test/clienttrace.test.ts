@@ -25,7 +25,7 @@ const recorder = () => {
 }
 afterEach(() => setTracing(undefined))
 const TID = "4bf92f3577b34da6a3ce929d0e0e4736", SID = "00f067aa0ba902b7", TP = `00-${TID}-${SID}-01`
-const DAY = "/day?date=2026-10-28&tz=America/New_York&lat=40.6892&lon=-74.0445"
+const DAY = "/v1/day?date=2026-10-28&tz=America/New_York&lat=40.6892&lon=-74.0445"
 const V = { lat: 40.7128, lon: -74.006, place: "New York", city: "New York", tz: "America/New_York", colo: null, source: "query" } as const
 
 describe("traceparent", () => {

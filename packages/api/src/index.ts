@@ -13,26 +13,26 @@ export const CONVENTIONS = {
   apparentAltitude: "The fixed point a = trueAltitude + R(a) with the one refraction model used by every endpoint: R(a) = 34′·(P/1010)·(283/(273 + T))·cot(a + 7.31/(a + 4.4))/cot(7.31/4.4), i.e. Bennett's (1982) shape normalised to the almanac's 34′ at the horizon (0.98685 × Skyfield's Bennett at every altitude); R = 0 above 89.9°. Defaults T = 10 °C, P = 1010 hPa. Applied down to the observer's horizon (`horizon`, default the sea horizon −dip) but never below −1.6963°, where Bennett's shape peaks; below that, apparentAltitude is null (CHANGED 2026-10-29: it used to repeat the true altitude below −1°, and used Skyfield's unnormalised Bennett, 0.45′ more at 0°). Below 0° the model is an extrapolation: against a US Standard Atmosphere 1976 ray trace it reads 0.1′ high at the sea horizon from 10 m, 1.0′ from 320 m, 2.6′ from 1 000 m, and the real atmosphere near the horizon varies far more than that with the weather.",
   ecliptic: "Geocentric apparent ecliptic longitude/latitude, true equinox and ecliptic of date.",
   height: "`height` is metres above the WGS-84 ellipsoid by default; heightRef=msl makes it metres above the EGM96 geoid (≈ mean sea level). Without a height the observer stands on the geoid. Responses give heightEllipsoid, heightMsl and geoidUndulation N (heightEllipsoid = heightMsl + N; EGM96 from NGA's 15′ grid sampled at 30′, bilinear, rms 0.12 m / max 3.5 m interpolation error).",
-  rise: "The aim point (aim: upper limb by default, center, lower) at apparent altitude H, the horizon: H = −dip of the sea horizon for heightMsl (default), 0 (horizon=geometric), a given angle, or a profile by azimuth. Dip = √(1 − k)·acos(R/(R + heightMsl)), k = 0.13 (as /alignment), R = 6 371 008.8 m (≈ 1.80′·√h). True limb altitude at rise/set = H − R(H), R the same refraction model as apparentAltitude (34′ at 0° with defaults, so sea level with defaults is the old −34′ − radius exactly). /crossing at apparent altitude H, upper limb, gives the same instants (≤ 1 ms). Every response's conventions.riseSet gives the numbers used.",
+  rise: "The aim point (aim: upper limb by default, center, lower) at apparent altitude H, the horizon: H = −dip of the sea horizon for heightMsl (default), 0 (horizon=geometric), a given angle, or a profile by azimuth. Dip = √(1 − k)·acos(R/(R + heightMsl)), k = 0.13 (as /v1/alignment), R = 6 371 008.8 m (≈ 1.80′·√h). True limb altitude at rise/set = H − R(H), R the same refraction model as apparentAltitude (34′ at 0° with defaults, so sea level with defaults is the old −34′ − radius exactly). /v1/crossing at apparent altitude H, upper limb, gives the same instants (≤ 1 ms). Every response's conventions.riseSet gives the numbers used.",
   transit: "Upper culmination: local apparent hour angle = 0.",
   twilight: "Sun centre true altitude crosses −6° (civil), −12° (nautical), −18° (astronomical). Not affected by height, horizon or refraction.",
   goldenHour: "Sun centre true altitude between −4° and +6°.",
   blueHour: "Sun centre true altitude between −6° and −4°.",
   phase: "Geocentric: phase angle Sun–Moon–Earth, illuminated fraction (1 + cos i)/2, elongation = λ☾ − λ☉ in [0, 360).",
   brightLimb: "Position angle of the Moon's bright limb, measured from celestial north through east (Meeus 48.5), geocentric (phase.brightLimbAngle). moon.brightLimbAngleFromVertical is the same limb seen from the observer, degrees clockwise from the local vertical (towards increasing azimuth).",
-  aim: "aim: which point of the disc. /day: upper (default), center, lower. /crossing, /alignment, /alignment/search: center (default), upper / lower = the limb along the local vertical (topocentric angular radius, asin(1737.4 km / topocentric distance), so parallax is included); litCentroid = the centroid of the Moon's illuminated area: (4r/3π)·(1 − cos i) from the centre towards the bright limb, i the topocentric phase angle, r the angular radius (orthographic disc, parallel sunlight). Offsets are applied in the true sky and the aim point's altitude is then refracted.",
+  aim: "aim: which point of the disc. /v1/day: upper (default), center, lower. /v1/crossing, /v1/alignment, /v1/alignment/search: center (default), upper / lower = the limb along the local vertical (topocentric angular radius, asin(1737.4 km / topocentric distance), so parallax is included); litCentroid = the centroid of the Moon's illuminated area: (4r/3π)·(1 − cos i) from the centre towards the bright limb, i the topocentric phase angle, r the angular radius (orthographic disc, parallel sunlight). Offsets are applied in the true sky and the aim point's altitude is then refracted.",
   supportedRange: "1972-01-01T00:00:00Z to 2149-12-31T23:59:59Z (UTC with leap seconds; DE440 coverage).",
   ut1: "UT1 = UTC + dut1 (request parameter, default 0). No polar motion.",
   alignment: "Standing point P solves: body azimuth at P = forward geodesic azimuth P→target, and body apparent altitude at P = target apparent elevation = geometric elevation (exact, WGS-84 ECEF) + k·θ/2 with k = 0.13, θ = geodesic distance / 6 371 008.8 m. Track points are omitted when the body is below −1° or no P lies within maxDistanceKm. Geodesics: WGS-84 (Vincenty/Karney agree to 1 mm here). Heights: height (the eye, heightRef) and targetHeight (targetHeightRef) are above the ellipsoid by default, above the EGM96 geoid with msl; no height = the eye on the geoid. Every response carries a conventions block (terrestrial refraction, azimuth, refraction, heights, rates).",
   magnetic: "WMM2025 (NOAA NCEI), degree 12 with secular variation; declination east positive; magnetic bearing = true − declination. Verified against the model's published test values.",
   weather: "Nearest METAR stations by great-circle distance from aviationweather.gov's all-stations feed, cached ≤ 60 s fresh, served up to 10 min stale while it refreshes; feed.tier and feed.ageSeconds say which.",
-  crossing: "/crossing: every instant in the window when the aim point (default the centre) reaches `altitude`, true (default) or apparent (the same refraction model as /position and /day), or meets a horizonProfile; rise = upward.",
+  crossing: "/v1/crossing: every instant in the window when the aim point (default the centre) reaches `altitude`, true (default) or apparent (the same refraction model as /v1/position and /v1/day), or meets a horizonProfile; rise = upward.",
   rates: "altitudeRate, azimuthRate: degrees per minute, analytic (DE440 Chebyshev velocity through light time, aberration and Earth rotation; no finite difference).",
   unknownParameters: "Every endpoint rejects parameters (and POST body fields) it does not define with 400 InvalidRequest, naming them, suggesting the intended one (renamed or misspelled) and listing the allowed ones.",
-  track: "/track: the Sun's and Moon's azimuth, true altitude and apparent altitude at every point of a UTC grid (start, end on multiples of stepSeconds since 1970-01-01T00:00Z), columnar; each sample equals /position's values at that instant bit for bit. Bounded: stepSeconds 60–3600, at most 8 days and 1 441 samples.",
-  sightline: "/sightline: the sight line's height above sea level against ground distance from an eye to a target (straight chord between WGS-84 ECEF points, so Earth's curvature is included; and the refracted ray with k = 0.13, which runs k·s₁·s₂/(2R) higher), plus each obstacle point's clearance. Terrestrial refraction is modelled as that constant coefficient only.",
-  search: "POST /alignment/search (JSON body): every pass in [start, end) (≤ 400 days) when the alignment standing point lies inside a region (GeoJSON Polygon / MultiPolygon with holes, or bbox [w, s, e, n]); segments with exact entry / exit (solved on the track to 1 mm), the body's azimuth / apparent altitude / angular radius, the Moon's illuminatedFraction and the Sun's sunAltitude per pass; filters minIlluminated, maxSunAltitude; include sun, phase; aim. Candidates come from the target's elevation and bearing band over the whole region (no representative elevation), scanned with proven rate bounds. Computed per 30-day window, each an immutable cached unit, so overlapping scans share work.",
-  passes: "/alignment with lat/lon (a fixed spot): instants when the body's azimuth equals the azimuth to the target (±180° wraps excluded); altitudeOffset tells whether it is above (+) or behind (−) the target top.",
+  track: "/v1/track: the Sun's and Moon's azimuth, true altitude and apparent altitude at every point of a UTC grid (start, end on multiples of stepSeconds since 1970-01-01T00:00Z), columnar; each sample equals /v1/position's values at that instant bit for bit. Bounded: stepSeconds 60–3600, at most 8 days and 1 441 samples.",
+  sightline: "/v1/sightline: the sight line's height above sea level against ground distance from an eye to a target (straight chord between WGS-84 ECEF points, so Earth's curvature is included; and the refracted ray with k = 0.13, which runs k·s₁·s₂/(2R) higher), plus each obstacle point's clearance. Terrestrial refraction is modelled as that constant coefficient only.",
+  search: "POST /v1/alignment/search (JSON body): every pass in [start, end) (≤ 400 days) when the alignment standing point lies inside a region (GeoJSON Polygon / MultiPolygon with holes, or bbox [w, s, e, n]); segments with exact entry / exit (solved on the track to 1 mm), the body's azimuth / apparent altitude / angular radius, the Moon's illuminatedFraction and the Sun's sunAltitude per pass; filters minIlluminated, maxSunAltitude; include sun, phase; aim. Candidates come from the target's elevation and bearing band over the whole region (no representative elevation), scanned with proven rate bounds. Computed per 30-day window, each an immutable cached unit, so overlapping scans share work.",
+  passes: "/v1/alignment with lat/lon (a fixed spot): instants when the body's azimuth equals the azimuth to the target (±180° wraps excluded); altitudeOffset tells whether it is above (+) or behind (−) the target top.",
 } as const
 
 const Degrees = S.Finite
@@ -92,7 +92,7 @@ export const RefractionConventions = S.Struct({
   uncertainty: S.String,
 })
 
-// ─────────────────────────────── /position ───────────────────────────────
+// ─────────────────────────────── /v1/position ───────────────────────────────
 export const PositionQuery = {
   ...skyObserverQuery,
   time: S.optionalKey(UtcString),                                                    // default: now
@@ -142,7 +142,7 @@ export const PositionResponse = S.Struct({
   provenance: Provenance,
 })
 
-// ─────────────────────────────── /day ───────────────────────────────
+// ─────────────────────────────── /v1/day ───────────────────────────────
 export const DayQuery = {
   ...skyObserverQuery,
   date: DateString, tz: S.String,   // IANA zone; the day is local midnight to local midnight
@@ -190,14 +190,14 @@ const aimFields = {
 export const IncludeParam = S.String.check(S.isPattern(/^(sun|phase)(,(sun|phase))?$/))
 export const SunContext = S.Struct({
   azimuth: Degrees, altitude: Degrees.annotate(d0("Sun centre true (vacuum) altitude, degrees, seen from this point (twilight thresholds use this).")),
-  apparentAltitude: S.NullOr(Degrees).annotate(d0("Refracted, down to the sea horizon at the eye's height; null below it, as /position.")),
+  apparentAltitude: S.NullOr(Degrees).annotate(d0("Refracted, down to the sea horizon at the eye's height; null below it, as /v1/position.")),
 })
 const contextFields = {
   sun: S.optionalKey(SunContext.annotate(d0("include=sun: the Sun seen from this point at this instant."))),
-  phase: S.optionalKey(MoonPhase.annotate(d0("include=phase: the Moon's geocentric phase at this instant, as /position."))),
+  phase: S.optionalKey(MoonPhase.annotate(d0("include=phase: the Moon's geocentric phase at this instant, as /v1/position."))),
 }
 
-// ─────────────────────────────── /crossing ───────────────────────────────
+// ─────────────────────────────── /v1/crossing ───────────────────────────────
 export const CrossingQuery = {
   ...skyObserverQuery,
   body: S.Literals(["sun", "moon"]),
@@ -206,7 +206,7 @@ export const CrossingQuery = {
   horizonProfile: S.optionalKey(HorizonProfileParam),                               // instead of altitude: apparent skyline by azimuth
   direction: S.optionalKey(S.Literals(["rise", "set", "either"])),                  // default either
   start: S.optionalKey(UtcString), end: S.optionalKey(UtcString),                   // window (≤ 31 days), or:
-  date: S.optionalKey(DateString), tz: S.optionalKey(S.String),                     // one local day, like /day
+  date: S.optionalKey(DateString), tz: S.optionalKey(S.String),                     // one local day, like /v1/day
   temperature: optNum(Temperature), pressure: optNum(Pressure), dut1: optNum(Dut1),
   include: S.optionalKey(IncludeParam),                                             // sun,phase: context per crossing
   aim: S.optionalKey(AimParam),                                                     // center (default) | upper | lower | litCentroid (Moon)
@@ -233,7 +233,7 @@ export const CrossingResponse = S.Struct({
   provenance: Provenance,
 })
 
-// ─────────────────────────────── /alignment ───────────────────────────────
+// ─────────────────────────────── /v1/alignment ───────────────────────────────
 export const AlignmentQuery = {
   body: S.Literals(["sun", "moon"]),
   targetLat: num(Lat), targetLon: num(Lon),
@@ -256,8 +256,8 @@ export const AlignmentPoint = S.Struct({
   azimuth: Degrees.annotate(d0("The body's azimuth seen from this standing point, degrees true; by construction = the forward geodesic azimuth from here to the target (conventions.azimuth).")),
   apparentAltitude: Degrees.annotate(d0("The body's apparent altitude seen from here = the target's apparent elevation (terrestrial refraction k·θ/2 included), degrees.")),
   angularRadius: Degrees,             // of the body, topocentric, for framing
-  altitudeRate: S.Finite.annotate(d0("d(true altitude)/dt of the body seen from this standing point, degrees per minute (±10 s symmetric difference, as /position).")),
-  azimuthRate: S.Finite.annotate(d0("d(azimuth)/dt of the body seen from this standing point, degrees per minute (±10 s symmetric difference, as /position).")),
+  altitudeRate: S.Finite.annotate(d0("d(true altitude)/dt of the body seen from this standing point, degrees per minute (±10 s symmetric difference, as /v1/position).")),
+  azimuthRate: S.Finite.annotate(d0("d(azimuth)/dt of the body seen from this standing point, degrees per minute (±10 s symmetric difference, as /v1/position).")),
   heightEllipsoid: S.Finite.annotate(d0("The eye's height above WGS-84 at this standing point, metres.")),
   heightMsl: S.Finite.annotate(d0("The eye's height above the EGM96 geoid at this standing point, metres.")),
   geoidUndulation: S.Finite.annotate(d0("EGM96 N at this standing point, metres: heightEllipsoid = heightMsl + geoidUndulation.")),
@@ -295,7 +295,7 @@ export const AlignmentResponse = S.Struct({
   provenance: Provenance,
 })
 
-// ─────────────────────────────── /sightline ───────────────────────────────
+// ─────────────────────────────── /v1/sightline ───────────────────────────────
 /** "lat:lon:heightMsl,…" (degrees, degrees, metres above sea level), at most 100 points. */
 export const ObstaclesParam = S.String.check(S.isPattern(/^\s*-?\d+(\.\d+)?:-?\d+(\.\d+)?:-?\d+(\.\d+)?(\s*,\s*-?\d+(\.\d+)?:-?\d+(\.\d+)?:-?\d+(\.\d+)?){0,99}\s*$/))
 export const SightlineQuery = {
@@ -333,7 +333,7 @@ export const SightlineResponse = S.Struct({
   provenance: Provenance,
 })
 
-// ─────────────────────────────── /track ───────────────────────────────
+// ─────────────────────────────── /v1/track ───────────────────────────────
 export const TrackQuery = {
   ...skyObserverQuery,
   start: UtcString, end: UtcString,   // both on the UTC grid of stepSeconds (multiples of it since 1970-01-01T00:00Z), end ≥ start, ≤ 8 days
@@ -343,7 +343,7 @@ export const TrackQuery = {
 export const BodyTrack = S.Struct({
   azimuth: S.Array(Degrees).annotate(d0("Degrees from north through east, [0, 360), one per sample.")),
   altitude: S.Array(Degrees).annotate(d0("True (vacuum) altitude, degrees.")),
-  apparentAltitude: S.Array(S.NullOr(Degrees)).annotate(d0("Refracted altitude, degrees; null below the observer's horizon or the refraction model's floor, exactly as /position.")),
+  apparentAltitude: S.Array(S.NullOr(Degrees)).annotate(d0("Refracted altitude, degrees; null below the observer's horizon or the refraction model's floor, exactly as /v1/position.")),
 })
 export const TrackConventions = S.Struct({ refraction: RefractionConventions, horizon: HorizonConventions, geoid: GeoidConventions })
 export const TrackResponse = S.Struct({
@@ -355,7 +355,7 @@ export const TrackResponse = S.Struct({
   provenance: Provenance,
 })
 
-// ─────────────────────────────── /magnetic, /weather ───────────────────────────────
+// ─────────────────────────────── /v1/magnetic, /v1/weather ───────────────────────────────
 const d = (description: string) => ({ description })
 export const MagneticQuery = {
   lat: num(Lat), lon: num(Lon), height: optNum(Height),   // metres (heightRef); default: on the geoid (sea level)
@@ -417,14 +417,14 @@ export const Feed = S.Struct({
 })
 export const WeatherResponse = S.Struct({
   time: UtcString,
-  observer: S.Struct({ lat: Lat, lon: Lon, magneticDeclination: Degrees.annotate(d("WMM2025 at the observer, height 0, now; east positive. Full precision (was rounded to 0.01° before 2026-10-29): the same value /magnetic gives for lat/lon now.")) }),
+  observer: S.Struct({ lat: Lat, lon: Lon, magneticDeclination: Degrees.annotate(d("WMM2025 at the observer, height 0, now; east positive. Full precision (was rounded to 0.01° before 2026-10-29): the same value /v1/magnetic gives for lat/lon now.")) }),
   stations: S.Array(Station),   // nearest first
   feed: Feed,
   conventions: S.Struct({ definition: S.String, distance: S.String, bearing: S.String, magneticDeclination: S.String }),
   provenance: Provenance,
 })
 
-// ─────────────────────────────── /alignment/search ───────────────────────────────
+// ─────────────────────────────── /v1/alignment/search ───────────────────────────────
 // One call for "every pass, in a date range, when the alignment standing point is inside a region". The front door
 // (POST) validates and canonicalises the request, then fans out to one cached, immutable GET per 30-day window on a fixed
 // UTC grid (/internal/alignment-search-window), so repeated and overlapping scans hit Workers Caching; filters run after the cache.
@@ -450,7 +450,7 @@ export const SearchPayload = S.Struct({
   heightRef: S.optionalKey(HeightRef.annotate(d0("What height is measured from: ellipsoid (default) or msl, in which case the eye is height + N(P) at every standing point P."))),
   start: UtcString, end: UtcString.annotate(d0("Passes whose first entry lies in [start, end); at most 400 days.")),
   temperature: S.optionalKey(Temperature), pressure: S.optionalKey(Pressure), dut1: S.optionalKey(Dut1),
-  aim: S.optionalKey(AimParam.annotate(d0("Which point of the disc sits on the target (as /alignment): center (default), upper, lower, litCentroid (Moon)."))),
+  aim: S.optionalKey(AimParam.annotate(d0("Which point of the disc sits on the target (as /v1/alignment): center (default), upper, lower, litCentroid (Moon)."))),
   include: S.optionalKey(IncludeParam.annotate(d0("Extra context per pass, as on every endpoint: sun (azimuth, true and apparent altitude), phase (the Moon's phase block), or sun,phase."))),
   minIlluminated: S.optionalKey(Fraction.annotate(d0("Keep passes whose Moon illuminated fraction (at the pass time) is at least this, 0–1."))),
   maxSunAltitude: S.optionalKey(S.Finite.check(S.isBetween({ minimum: -90, maximum: 90 })).annotate(d0("Keep passes whose Sun centre true altitude (at the pass time, from the standing point) is at most this, degrees; e.g. −4 for a dark sky."))),
@@ -477,7 +477,7 @@ export const SearchWindowPass = S.Struct({
   moon: S.Struct({
     az: Degrees.annotate(d0("The Moon's azimuth from the standing point, degrees true.")),
     alt: S.NullOr(Degrees).annotate(d0("The Moon's apparent (refracted) altitude from the standing point, degrees.")),
-    illuminated: S.Finite.annotate(d0("Illuminated fraction, 0–1 (geocentric, as /position).")),
+    illuminated: S.Finite.annotate(d0("Illuminated fraction, 0–1 (geocentric, as /v1/position).")),
     angularRadius: Degrees,
   }),
   sunAlt: Degrees.annotate(d0("The Sun centre's true altitude from the standing point, degrees (twilight convention: −6/−12/−18).")),
@@ -491,7 +491,7 @@ export const SearchPass = S.Struct({
   azimuth: Degrees.annotate(d0("The body's (aim point's) azimuth from the standing point, degrees true = the bearing to the target.")),
   apparentAltitude: Degrees.annotate(d0("The body's (aim point's) apparent altitude from the standing point = the target's apparent elevation, degrees.")),
   angularRadius: Degrees,
-  illuminatedFraction: S.Finite.annotate(d0("The Moon's illuminated fraction, 0–1 (geocentric, as /position), whichever the body (minIlluminated filters on it).")),
+  illuminatedFraction: S.Finite.annotate(d0("The Moon's illuminated fraction, 0–1 (geocentric, as /v1/position), whichever the body (minIlluminated filters on it).")),
   sunAltitude: Degrees.annotate(d0("The Sun centre's true altitude from the standing point, degrees (twilight convention −6/−12/−18; maxSunAltitude filters on it).")),
   sun: S.optionalKey(S.Struct({ azimuth: Degrees, altitude: Degrees, apparentAltitude: S.NullOr(Degrees) })),
   phase: S.optionalKey(MoonPhase),
@@ -559,29 +559,29 @@ export class Unavailable extends S.TaggedError<Unavailable>()("Unavailable", { m
 
 // ─────────────────────────────── the API value ───────────────────────────────
 export const SkyGroup = HttpApiGroup.make("sky").add(
-  HttpApiEndpoint.get("position", "/position", { query: PositionQuery, success: PositionResponse, error: [InvalidRequest, Unavailable] }),
-  HttpApiEndpoint.get("day", "/day", { query: DayQuery, success: DayResponse, error: [InvalidRequest, Unavailable] }),
-  HttpApiEndpoint.get("crossing", "/crossing", { query: CrossingQuery, success: CrossingResponse, error: [InvalidRequest, Unavailable] }),
-  HttpApiEndpoint.get("alignment", "/alignment", { query: AlignmentQuery, success: AlignmentResponse, error: [InvalidRequest, Unavailable] }),
-  HttpApiEndpoint.get("sightline", "/sightline", { query: SightlineQuery, success: SightlineResponse, error: [InvalidRequest, Unavailable] }),
-  HttpApiEndpoint.get("track", "/track", { query: TrackQuery, success: TrackResponse, error: [InvalidRequest, Unavailable] }),
+  HttpApiEndpoint.get("position", "/v1/position", { query: PositionQuery, success: PositionResponse, error: [InvalidRequest, Unavailable] }),
+  HttpApiEndpoint.get("day", "/v1/day", { query: DayQuery, success: DayResponse, error: [InvalidRequest, Unavailable] }),
+  HttpApiEndpoint.get("crossing", "/v1/crossing", { query: CrossingQuery, success: CrossingResponse, error: [InvalidRequest, Unavailable] }),
+  HttpApiEndpoint.get("alignment", "/v1/alignment", { query: AlignmentQuery, success: AlignmentResponse, error: [InvalidRequest, Unavailable] }),
+  HttpApiEndpoint.get("sightline", "/v1/sightline", { query: SightlineQuery, success: SightlineResponse, error: [InvalidRequest, Unavailable] }),
+  HttpApiEndpoint.get("track", "/v1/track", { query: TrackQuery, success: TrackResponse, error: [InvalidRequest, Unavailable] }),
 )
 /** Unknown body fields are rejected like unknown query parameters. */
 export const SearchGroup = HttpApiGroup.make("search").add(
-  HttpApiEndpoint.post("search", "/alignment/search", { payload: SearchPayload, success: SearchResponse, error: [InvalidRequest, Unavailable] })
+  HttpApiEndpoint.post("search", "/v1/alignment/search", { payload: SearchPayload, success: SearchResponse, error: [InvalidRequest, Unavailable] })
     .annotate(HttpApi.PayloadParseOptions, { onExcessProperty: "error" }),
   HttpApiEndpoint.get("searchWindow", "/internal/alignment-search-window", { query: SearchWindowQuery, success: SearchWindowResponse, error: [InvalidRequest, Unavailable] })
     .annotate(OpenApi.Exclude, true),   // internal: the Api's cache unit, reached only over ctx.exports (the front door 404s it)
 )
 export const EarthGroup = HttpApiGroup.make("earth").add(
-  HttpApiEndpoint.get("magnetic", "/magnetic", { query: MagneticQuery, success: MagneticResponse, error: [InvalidRequest, Unavailable] }),
-  HttpApiEndpoint.get("weather", "/weather", { query: WeatherQuery, success: WeatherResponse, error: [Unavailable] }),
+  HttpApiEndpoint.get("magnetic", "/v1/magnetic", { query: MagneticQuery, success: MagneticResponse, error: [InvalidRequest, Unavailable] }),
+  HttpApiEndpoint.get("weather", "/v1/weather", { query: WeatherQuery, success: WeatherResponse, error: [Unavailable] }),
 )
 export const MetaGroup = HttpApiGroup.make("meta").add(
   HttpApiEndpoint.get("health", "/healthz", { success: S.Struct({ ok: S.Literal(true), implementation: S.String, version: S.String }) }),
 )
 export const API_DESCRIPTION = [
-  "Sun and Moon from JPL DE440, checked against Skyfield. One endpoint per question: /position (an instant), /track (paths over a window), /day (rise, set, twilight), /crossing (when a body reaches an altitude), /alignment (where to stand so the body sits on a landmark), POST /alignment/search (every pass over an area you can stand in), /sightline (does the line of sight clear), /magnetic (declination), /weather (nearest METAR).",
+  "Sun and Moon from JPL DE440, checked against Skyfield. One endpoint per question: /v1/position (an instant), /v1/track (paths over a window), /v1/day (rise, set, twilight), /v1/crossing (when a body reaches an altitude), /v1/alignment (where to stand so the body sits on a landmark), POST /v1/alignment/search (every pass over an area you can stand in), /v1/sightline (does the line of sight clear), /v1/magnetic (declination), /v1/weather (nearest METAR).",
   "",
   "One vocabulary: lat, lon, height, heightRef (you); targetLat, targetLon, targetHeight, targetHeightRef (the landmark); body; time | start, end | date, tz; stepSeconds; temperature, pressure, horizon, horizonProfile, dut1; aim; include. Unknown parameters are rejected. Errors: 400 InvalidRequest names the parameter and what is allowed; 503 Unavailable when a data source fails. Every response carries conventions (every threshold and model used) and provenance.",
 ].join("\n")
@@ -594,8 +594,8 @@ export const EphemApi = HttpApi.make("ephem").add(SkyGroup, SearchGroup, EarthGr
 export const INTERNAL_QUERY_PARAMS: Readonly<Record<string, ReadonlyArray<string>>> = { "/internal/alignment-search-window": Object.keys(SearchWindowQuery) }
 /** The allowed query parameters per path, from the endpoint schemas (for error messages). */
 export const QUERY_PARAMS: Readonly<Record<string, ReadonlyArray<string>>> = {
-  "/position": Object.keys(PositionQuery), "/day": Object.keys(DayQuery), "/crossing": Object.keys(CrossingQuery),
-  "/alignment": Object.keys(AlignmentQuery), "/sightline": Object.keys(SightlineQuery), "/track": Object.keys(TrackQuery), "/magnetic": Object.keys(MagneticQuery), "/weather": Object.keys(WeatherQuery), "/healthz": [],
+  "/v1/position": Object.keys(PositionQuery), "/v1/day": Object.keys(DayQuery), "/v1/crossing": Object.keys(CrossingQuery),
+  "/v1/alignment": Object.keys(AlignmentQuery), "/v1/sightline": Object.keys(SightlineQuery), "/v1/track": Object.keys(TrackQuery), "/v1/magnetic": Object.keys(MagneticQuery), "/v1/weather": Object.keys(WeatherQuery), "/healthz": [],
 }
 
 export type PositionResponse = typeof PositionResponse.Type

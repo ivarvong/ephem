@@ -1,6 +1,6 @@
-// /track: the Sun's and Moon's azimuth, true and apparent altitude at every point of a UTC grid, as a pure function of
-// (blocks, request). Each sample is exactly /position's sun/moon azimuth, altitude and apparentAltitude at that instant
-// (same frame, light-time, aberration and refraction calls), without the rates, ecliptic coordinates and phase that /position
+// /v1/track: the Sun's and Moon's azimuth, true and apparent altitude at every point of a UTC grid, as a pure function of
+// (blocks, request). Each sample is exactly /v1/position's sun/moon azimuth, altitude and apparentAltitude at that instant
+// (same frame, light-time, aberration and refraction calls), without the rates, ecliptic coordinates and phase that /v1/position
 // adds, so a sample costs ~1/3 of a position. Columnar output: sample i is at startMs + i·stepMs.
 import type { BlockSource, BodyName } from "./ephemeris.ts"
 import { type Geodetic, apparent, frameAt, topocentric } from "./observe.ts"

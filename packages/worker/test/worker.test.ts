@@ -44,12 +44,12 @@ describe("block loading", () => {
     const { bucket, log } = fakeR2(), cached = fakeCachedStore(bucket)
     const handler = makeHandler(makeBlocks(loopbackBlocks(i => cached.fetch(new Request(`https://blocks.internal${blockPath(i)}`))), 1))
     const get = async (p: string) => (await (await handler(new Request("http://x" + p))).json()) as any
-    const q = "/position?lat=40.7127&lon=-74.0059&height=-22.6&time=2026-10-28T11:51:00Z"
+    const q = "/v1/position?lat=40.7127&lon=-74.0059&height=-22.6&time=2026-10-28T11:51:00Z"
     const a = await get(q)
     expect(a.provenance.diagnostics.cache).toMatchObject({ l1: 0, blocks_miss: 1, fetchedBytes: REC })
     expect(log).toEqual([{ offset: blockOffset(5442), length: REC }])
     const b = await get(q); expect(b.provenance.diagnostics.cache).toMatchObject({ l1: 1, fetchedBytes: 0 }); expect(b.provenance.diagnostics.cache.blocks_miss).toBeUndefined()
-    await get("/position?lat=0&lon=0&time=1997-08-16T01:52:34Z")             // evicts 5442 from a 1-entry L1
+    await get("/v1/position?lat=0&lon=0&time=1997-08-16T01:52:34Z")             // evicts 5442 from a 1-entry L1
     const c = await get(q); expect(c.provenance.diagnostics.cache).toMatchObject({ l1: 0, blocks_hit: 1, fetchedBytes: REC })
     expect(log.length).toBe(2); expect(cached.runs()).toBe(2)                      // 5442 and the 1997 block, once each
     expect(blocksCache({ l1: 1, blocks_hit: 2, blocks_miss: 1, fetchedBytes: 3 })).toBe("HIT:2,MISS:1"); expect(blocksCache({ l1: 2, fetchedBytes: 0 })).toBe("L1")
@@ -77,7 +77,7 @@ describe("block loading", () => {
     const { bucket } = fakeR2()
     const wrong = makeBlocks(direct(async (first, count) => (await r2Origin(bucket)(first - 1, count))))   // off-by-one origin (5441 served for 5442)
     const h = makeHandler(wrong)
-    const r = await h(new Request("http://x/position?lat=0&lon=0&time=2026-10-28T11:51:00Z"))
+    const r = await h(new Request("http://x/v1/position?lat=0&lon=0&time=2026-10-28T11:51:00Z"))
     expect(r.status).toBe(500)
   })
 })
@@ -86,77 +86,77 @@ describe("worker handler", () => {
   const handler = makeHandler(makeBlocks(direct(r2Origin(fakeR2().bucket))))
   const get = async (p: string) => { const r = await handler(new Request("http://x" + p)); return { status: r.status, headers: r.headers, body: await r.json() as any } }
   it("errors are one shape: 400 InvalidRequest naming the parameter and what is allowed", async () => {
-    const s = await get("/position?lat=91&lon=0&time=2026-10-28T11:51:00Z"); expect(s.status).toBe(400); expect(s.body).toMatchObject({ _tag: "InvalidRequest", parameter: "lat" }); expect(s.body.message).toMatch(/lat=91 .*−90 to 90/)
-    const r = await get("/position?lat=0&lon=0&time=1960-01-01T00:00:00Z"); expect(r.status).toBe(400); expect(r.body).toMatchObject({ _tag: "InvalidRequest", parameter: "time" }); expect(r.body.message).toMatch(/1972-01-01T00:00:00Z to 2149/)
-    const d = await get("/day?lat=0&lon=0&date=2026-10-28&tz=Mars/Olympus"); expect(d.status).toBe(400); expect(d.body).toMatchObject({ _tag: "InvalidRequest", parameter: "tz" })
-    const c = await get("/crossing?lat=0&lon=0&body=venus&altitude=0&date=2026-10-28&tz=UTC"); expect(c.body).toMatchObject({ parameter: "body", allowed: ["sun", "moon"] })
-    const m = await get("/position?lon=0"); expect(m.body.message).toMatch(/^missing required parameter lat: /)
-    expect((await get("/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&start=2026-10-29T02:00:00Z&end=2026-10-28T23:45:00Z")).status).toBe(400)
+    const s = await get("/v1/position?lat=91&lon=0&time=2026-10-28T11:51:00Z"); expect(s.status).toBe(400); expect(s.body).toMatchObject({ _tag: "InvalidRequest", parameter: "lat" }); expect(s.body.message).toMatch(/lat=91 .*−90 to 90/)
+    const r = await get("/v1/position?lat=0&lon=0&time=1960-01-01T00:00:00Z"); expect(r.status).toBe(400); expect(r.body).toMatchObject({ _tag: "InvalidRequest", parameter: "time" }); expect(r.body.message).toMatch(/1972-01-01T00:00:00Z to 2149/)
+    const d = await get("/v1/day?lat=0&lon=0&date=2026-10-28&tz=Mars/Olympus"); expect(d.status).toBe(400); expect(d.body).toMatchObject({ _tag: "InvalidRequest", parameter: "tz" })
+    const c = await get("/v1/crossing?lat=0&lon=0&body=venus&altitude=0&date=2026-10-28&tz=UTC"); expect(c.body).toMatchObject({ parameter: "body", allowed: ["sun", "moon"] })
+    const m = await get("/v1/position?lon=0"); expect(m.body.message).toMatch(/^missing required parameter lat: /)
+    expect((await get("/v1/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&start=2026-10-29T02:00:00Z&end=2026-10-28T23:45:00Z")).status).toBe(400)
   })
   it("a date that is not on the calendar, or that the zone skipped, is a 400, not another day's answer (sweep 2026-10-31)", async () => {
     // Before: 2026-02-30 answered for 2026-03-02 under the label 2026-02-30; Pacific/Apia's skipped 2011-12-30 was a 200 with an empty day.
     for (const [date, tz, re] of [["2026-02-30", "America/New_York", /not a calendar date/], ["2026-13-01", "UTC", /not a calendar date/], ["2026-04-31", "UTC", /not a calendar date/],
       ["2011-12-30", "Pacific/Apia", /does not exist in Pacific\/Apia/]] as const) {
-      const d = await get(`/day?lat=-13.8&lon=-171.8&date=${date}&tz=${tz}`)
+      const d = await get(`/v1/day?lat=-13.8&lon=-171.8&date=${date}&tz=${tz}`)
       expect(d.status, `${date} ${tz}`).toBe(400); expect(d.body).toMatchObject({ _tag: "InvalidRequest", parameter: "date" }); expect(d.body.message).toMatch(re)
-      const c = await get(`/crossing?lat=-13.8&lon=-171.8&body=sun&altitude=0&date=${date}&tz=${tz}`)
+      const c = await get(`/v1/crossing?lat=-13.8&lon=-171.8&body=sun&altitude=0&date=${date}&tz=${tz}`)
       expect(c.status, `crossing ${date} ${tz}`).toBe(400); expect(c.body).toMatchObject({ _tag: "InvalidRequest", parameter: "date" })
     }
   })
   it("position without time is the sky now", async () => {
-    const before = Date.now(), r = await get("/position?lat=40.7&lon=-74"), after = Date.now()
+    const before = Date.now(), r = await get("/v1/position?lat=40.7&lon=-74"), after = Date.now()
     expect(r.status).toBe(200)
     const t = Date.parse(r.body.time.utc); expect(t).toBeGreaterThanOrEqual(before - 1); expect(t).toBeLessThanOrEqual(after + 1)
   })
   it("unknown query parameters are a 400 naming them and the allowed set, on every endpoint (2026-10-29: they were silently ignored)", async () => {
-    const d = await get("/day?lat=40.7&lon=-74&date=2026-10-28&tz=America/New_York&temprature=-20")
+    const d = await get("/v1/day?lat=40.7&lon=-74&date=2026-10-28&tz=America/New_York&temprature=-20")
     expect(d.status).toBe(400); expect(d.body).toMatchObject({ _tag: "InvalidRequest", parameter: "temprature" }); expect(d.body.message).toMatch(/did you mean temperature\?/)
-    expect((await get("/weather?lat=1&lon=2&n=3")).body.message).toMatch(/n: did you mean count\?/)   // renamed 2026-10-31
+    expect((await get("/v1/weather?lat=1&lon=2&n=3")).body.message).toMatch(/n: did you mean count\?/)   // renamed 2026-10-31
     expect(d.body.allowed).toContain("temperature"); expect(d.body.message).toMatch(/temprature.*allowed: lat, lon/)
-    for (const p of ["/position?lat=1&lon=2", "/crossing?lat=1&lon=2&body=sun&altitude=0&date=2026-10-28&tz=UTC", "/alignment?body=sun&targetLat=1&targetLon=2&targetHeight=0&start=2026-10-28T00:00:00Z&end=2026-10-28T01:00:00Z", "/magnetic?lat=1&lon=2"])
+    for (const p of ["/v1/position?lat=1&lon=2", "/v1/crossing?lat=1&lon=2&body=sun&altitude=0&date=2026-10-28&tz=UTC", "/v1/alignment?body=sun&targetLat=1&targetLon=2&targetHeight=0&start=2026-10-28T00:00:00Z&end=2026-10-28T01:00:00Z", "/v1/magnetic?lat=1&lon=2"])
       expect((await get(p + "&x=1")).status, p).toBe(400)
-    // the old silent case: temperature/pressure on /day are now real parameters and move sunrise
-    const a = await get("/day?lat=40.7&lon=-74&date=2026-10-28&tz=America/New_York"), b = await get("/day?lat=40.7&lon=-74&date=2026-10-28&tz=America/New_York&temperature=-20&pressure=1040")
+    // the old silent case: temperature/pressure on /v1/day are now real parameters and move sunrise
+    const a = await get("/v1/day?lat=40.7&lon=-74&date=2026-10-28&tz=America/New_York"), b = await get("/v1/day?lat=40.7&lon=-74&date=2026-10-28&tz=America/New_York&temperature=-20&pressure=1040")
     const rise = (r: any) => Date.parse(r.body.events.find((e: any) => e.kind === "rise" && e.body === "sun").time)
     expect(rise(a) - rise(b)).toBeGreaterThan(5_000)   // colder, denser air: more refraction, earlier sunrise
   })
   it("day and alignment round-trip through the contract; headers present", async () => {
-    const d = await get("/day?lat=40.7127&lon=-74.0059&height=-22.6&date=2026-10-28&tz=America/New_York"); expect(d.status).toBe(200)
+    const d = await get("/v1/day?lat=40.7127&lon=-74.0059&height=-22.6&date=2026-10-28&tz=America/New_York"); expect(d.status).toBe(200)
     // height −22.6 m above the ellipsoid is ≈ +10 m above sea level here (EGM96 N ≈ −32.6 m): the sea horizon dips ≈ 5.7′, so the Sun
     // rises ≈ 39 s before the sea-level answer, which is the pre-2026-10-29 value (height was ignored for rise/set) and is still what
     // heightRef=msl&height=0 gives.
     expect(d.body.events.find((e: any) => e.kind === "rise" && e.body === "sun").time).toBe("2026-10-28T11:21:04.962Z")
-    const sea = await get("/day?lat=40.7127&lon=-74.0059&height=0&heightRef=msl&date=2026-10-28&tz=America/New_York")
+    const sea = await get("/v1/day?lat=40.7127&lon=-74.0059&height=0&heightRef=msl&date=2026-10-28&tz=America/New_York")
     expect(sea.body.events.find((e: any) => e.kind === "rise" && e.body === "sun").time).toBe("2026-10-28T11:21:43.461Z")
     expect(d.headers.get("server-timing")).toMatch(/total;dur=/); expect(d.headers.get("access-control-allow-origin")).toBe("*")
-    const a = await get("/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&height=-30.9&start=2026-10-28T23:45:00Z&end=2026-10-29T02:00:00Z&stepSeconds=1800&maxDistanceKm=20&lat=40.6892&lon=-74.0760")
+    const a = await get("/v1/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&height=-30.9&start=2026-10-28T23:45:00Z&end=2026-10-29T02:00:00Z&stepSeconds=1800&maxDistanceKm=20&lat=40.6892&lon=-74.0760")
     expect(a.status).toBe(200); expect(a.body.track.length).toBe(5); expect(a.body.track[0]).not.toHaveProperty("iterations")
   })
-  it("track: one answer for the whole grid, each sample bit-identical to /position at that instant", async () => {
-    const t = await get("/track?lat=40.7127&lon=-74.0059&height=-22.6&start=2026-10-28T00:00:00Z&end=2026-10-30T00:00:00Z")
+  it("track: one answer for the whole grid, each sample bit-identical to /v1/position at that instant", async () => {
+    const t = await get("/v1/track?lat=40.7127&lon=-74.0059&height=-22.6&start=2026-10-28T00:00:00Z&end=2026-10-30T00:00:00Z")
     expect(t.status).toBe(200); expect(t.body).toMatchObject({ start: "2026-10-28T00:00:00.000Z", end: "2026-10-30T00:00:00.000Z", stepSeconds: 1200, count: 145 })
     for (const b of ["sun", "moon"]) for (const f of ["azimuth", "altitude", "apparentAltitude"]) expect(t.body[b][f].length).toBe(145)
     expect(t.body.sun.apparentAltitude).toContain(null)   // night: below the sea horizon
     for (const i of [0, 31, 72, 144]) {
-      const p = await get(`/position?lat=40.7127&lon=-74.0059&height=-22.6&time=${new Date(Date.parse(t.body.start) + i * 1200e3).toISOString()}`)
+      const p = await get(`/v1/position?lat=40.7127&lon=-74.0059&height=-22.6&time=${new Date(Date.parse(t.body.start) + i * 1200e3).toISOString()}`)
       for (const b of ["sun", "moon"]) for (const f of ["azimuth", "altitude", "apparentAltitude"]) expect(t.body[b][f][i], `${b}.${f}[${i}]`).toBe(p.body[b][f])
     }
-    expect(t.body.observer).toEqual((await get("/position?lat=40.7127&lon=-74.0059&height=-22.6&time=2026-10-28T00:00:00Z")).body.observer)
+    expect(t.body.observer).toEqual((await get("/v1/position?lat=40.7127&lon=-74.0059&height=-22.6&time=2026-10-28T00:00:00Z")).body.observer)
     expect(t.body.provenance.diagnostics.blocks.length).toBeGreaterThan(0)
   })
-  it("track = /position with every refraction and height parameter too: msl, T/P, horizon (geometric, degrees), dut1 (sweep 2026-10-31)", async () => {
+  it("track = /v1/position with every refraction and height parameter too: msl, T/P, horizon (geometric, degrees), dut1 (sweep 2026-10-31)", async () => {
     for (const extra of ["&height=320&heightRef=msl&temperature=-20&pressure=1040", "&horizon=geometric&dut1=0.31", "&height=1500&heightRef=msl&horizon=-1.2&temperature=30&pressure=850"]) {
-      const t = await get(`/track?lat=69.6492&lon=18.9553&start=2026-10-28T00:00:00Z&end=2026-10-29T00:00:00Z&stepSeconds=600${extra}`)
+      const t = await get(`/v1/track?lat=69.6492&lon=18.9553&start=2026-10-28T00:00:00Z&end=2026-10-29T00:00:00Z&stepSeconds=600${extra}`)
       expect(t.status, extra).toBe(200)
       for (const i of [0, 50, 100, 144]) {
-        const p = await get(`/position?lat=69.6492&lon=18.9553&time=${new Date(Date.parse(t.body.start) + i * 600e3).toISOString()}${extra}`)
+        const p = await get(`/v1/position?lat=69.6492&lon=18.9553&time=${new Date(Date.parse(t.body.start) + i * 600e3).toISOString()}${extra}`)
         for (const b of ["sun", "moon"]) for (const f of ["azimuth", "altitude", "apparentAltitude"]) expect(t.body[b][f][i], `${extra} ${b}.${f}[${i}]`).toBe(p.body[b][f])
       }
-      expect(t.body.conventions.horizon).toEqual((await get(`/position?lat=69.6492&lon=18.9553&time=2026-10-28T00:00:00Z${extra}`)).body.conventions.horizon)
+      expect(t.body.conventions.horizon).toEqual((await get(`/v1/position?lat=69.6492&lon=18.9553&time=2026-10-28T00:00:00Z${extra}`)).body.conventions.horizon)
     }
   })
   it("track is bounded and grid-aligned (stable cache keys, no CPU bombs)", async () => {
-    const base = "/track?lat=40.7&lon=-74"
+    const base = "/v1/track?lat=40.7&lon=-74"
     const off = await get(`${base}&start=2026-10-28T00:10:00Z&end=2026-10-28T06:00:00Z`)   // not on the 20 min grid
     expect(off.status).toBe(400); expect(off.body.message).toMatch(/start=2026-10-28T00:00:00Z, end=2026-10-28T06:00:00Z/)
     expect((await get(`${base}&start=2026-10-28T00:00:00Z&end=2026-10-27T00:00:00Z`)).status).toBe(400)                     // end before start
@@ -168,8 +168,8 @@ describe("worker handler", () => {
     expect((await get(`${base}&start=2026-10-28T00:00:00Z&end=2026-10-28T01:00:00Z&time=x`)).status).toBe(400)                // unknown parameter
   })
   it("serves OpenAPI and docs", async () => {
-    expect((await get("/openapi.json")).body.paths["/alignment"]).toBeDefined()
-    expect((await get("/openapi.json")).body.paths["/track"]).toBeDefined()
+    expect((await get("/openapi.json")).body.paths["/v1/alignment"]).toBeDefined()
+    expect((await get("/openapi.json")).body.paths["/v1/track"]).toBeDefined()
     const docs = await handler(new Request("http://x/docs")); expect(docs.status).toBe(200); expect(docs.headers.get("content-type")).toMatch(/html/); expect(await docs.text()).toContain("/openapi.json")
   })
 })

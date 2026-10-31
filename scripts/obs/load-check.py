@@ -28,8 +28,8 @@ run = rep["runId"]
 ms = lambda s: int(datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp() * 1000)  # noqa: E731
 W = (ms(rep["window"].get("warmupAt", rep["window"]["startAt"])) - 15_000, ms(rep["window"]["endAt"]) + 45_000)   # prewarm before, timeouts after
 H = "https://ephem.ivar.workers.dev"
-ROUTES = {"position": [("GET", "/position")], "warm": [("GET", "/day"), ("GET", "/track"), ("GET", "/alignment")],
-          "track": [("GET", "/track")], "weather": [("GET", "/weather")], "search": [("POST", "/alignment/search")]}
+ROUTES = {"position": [("GET", "/v1/position")], "warm": [("GET", "/v1/day"), ("GET", "/v1/track"), ("GET", "/v1/alignment")],
+          "track": [("GET", "/v1/track")], "weather": [("GET", "/v1/weather")], "search": [("POST", "/v1/alignment/search")]}
 
 
 def pct(v, q):   # nearest rank, like the client histogram
@@ -67,8 +67,8 @@ for m, p in sorted(need):
     root, eff = f"{m} {H}{p}", f"{m} {p} {p}"
     roots = events_all([eq("$metadata.type", "span"), eq("$metadata.transactionName", root)], W)
     effs = {}
-    # The front door's Effect span is "GET /position /position" for routes it serves and "GET /track" for the ones its
-    # Gateway forwards to the Api (the Api's own "GET /track /track" is in another trace, so the union is safe).
+    # The front door's Effect span is "GET /v1/position /v1/position" for routes it serves and "GET /v1/track" for the ones its
+    # Gateway forwards to the Api (the Api's own "GET /v1/track /v1/track" is in another trace, so the union is safe).
     for name in (eff, f"{m} {p}"):
         for e in events_all([eq("$metadata.type", "span"), eq("$metadata.transactionName", name)], W):
             effs.setdefault(e["$metadata"]["traceId"], e["$metadata"])

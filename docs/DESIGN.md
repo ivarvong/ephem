@@ -140,10 +140,10 @@ Gravitational light deflection is **not** applied (Skyfield does, via `apparent(
 R(a) = 34′·(P/1010)·(283/(273 + T))·cot(a + 7.31/(a + 4.4))/cot(7.31/4.4) for apparent altitude a ∈ [a*, 89.9°], 0 above.
 That is Bennett's (1982) shape normalised to the almanac's 34′ at the horizon for 10 °C / 1010 hPa: a constant 0.98685 ×
 Skyfield's Bennett (`0.28·P/(T + 273)` form) at every altitude, 0.45′ less at 0°, 0.07′ less at 10°. Before 2026-10-29
-/position used Skyfield's Bennett and /day a fixed 34′, so `crossing?altitude=0&altitudeType=apparent&limb=upper` and
-/day's sunrise differed by 2.3–6.7 s (prod b49a8a02: NYC 2.5 s, Sydney 2.3 s, Tromsø 6.7 s); now they agree to ≤ 1 ms
+/v1/position used Skyfield's Bennett and /v1/day a fixed 34′, so `crossing?altitude=0&altitudeType=apparent&limb=upper` and
+/v1/day's sunrise differed by 2.3–6.7 s (prod b49a8a02: NYC 2.5 s, Sydney 2.3 s, Tromsø 6.7 s); now they agree to ≤ 1 ms
 (property test). `apparentAltitude` is the fixed point a = h + R(a) (1e-9°); rise/set is the chosen limb's true altitude =
-H − R(H); /alignment's solver uses the same model (`refractTrue`: no refraction only below the floor, which alignment
+H − R(H); /v1/alignment's solver uses the same model (`refractTrue`: no refraction only below the floor, which alignment
 never reports).
 
 **Domain.** Applied **down to the observer's horizon** (`horizon`: the sea horizon −dip by default, 0° for `geometric`, or a
@@ -151,7 +151,7 @@ given angle) and never below a* = √7.31 − 4.4 = −1.6963°, where Bennett's
 Below max(horizon, a*) the value is **null**. Before 2026-10-29 refraction was cut at −1° apparent, so below that the
 "apparent" value silently repeated the true altitude.
 
-**Dip.** dip = √(1 − k)·acos(R/(R + h_msl)), k = 0.13 (the terrestrial refraction coefficient /alignment uses),
+**Dip.** dip = √(1 − k)·acos(R/(R + h_msl)), k = 0.13 (the terrestrial refraction coefficient /v1/alignment uses),
 R = 6 371 008.8 m: ≈ 1.797′·√h. 0 at or below sea level.
 
 **Evidence: how good is Bennett below 0°?** A 2-D ray trace through the US Standard Atmosphere 1976 (sea level 10 °C,
@@ -170,7 +170,7 @@ So for eyes up to ~1 km the model is within ~1–3′ of a standard atmosphere, 
 standard atmosphere's (whose k ≈ 0.17). The real atmosphere near the horizon differs from any standard one by more than
 that: the lowest few hundred metres' temperature gradient sets the refraction, and inversions or a warm surface change it by
 tens of arcminutes. Treat sub-arcminute horizon differences as model, not sky. Sea horizons below a* (eyes above ≈ 3.2 km
-MSL) are refused on /day with a 422 that says so; /position returns null there.
+MSL) are refused on /v1/day with a 422 that says so; /v1/position returns null there.
 
 ### 7.2 Geoid (EGM96)
 
@@ -203,12 +203,12 @@ against Python's `zoneinfo` over 3 718 zone-days (§13.5).
 | civil / nautical / astronomical dawn & dusk | Sun centre true altitude crosses −6° / −12° / −18° |
 | golden hour | Sun centre true altitude in [−4°, +6°]; blue hour in [−6°, −4°] — start/end events at the boundaries |
 
-Every /day response states these in `conventions` (limb, horizon kind/altitude/dip, refraction model/T/P/at-horizon,
-true limb altitude, the twilight/golden/blue thresholds, the geoid). **/crossing** uses the same sampler and root finder
+Every /v1/day response states these in `conventions` (limb, horizon kind/altitude/dip, refraction model/T/P/at-horizon,
+true limb altitude, the twilight/golden/blue thresholds, the geoid). **/v1/crossing** uses the same sampler and root finder
 for any altitude (true or apparent), limb and direction, over a start/end window (≤ 31 days) or a local date + tz, and gives
 each crossing's azimuth and altitude rate.
 
-**Rates.** `altitudeRate`, `azimuthRate` (°/min) in /position, /alignment (per point) and /crossing:
+**Rates.** `altitudeRate`, `azimuthRate` (°/min) in /v1/position, /v1/alignment (per point) and /v1/crossing:
 analytic, one function (`topocentricRates`, observe.ts). d/dt of w = C·a in ITRS: Ċ·a = −Ω × w (Ω = dGAST/dt), and
 ȧ = the DE440 Chebyshev velocity of the body at t − lt minus the observer's barycentric velocity, with the light-time rate,
 the first-order change of aberration (including the diurnal centripetal acceleration) and aberration's 1/(1 + v̂·V/c) scale.
@@ -255,17 +255,17 @@ ellipsoid by default and above the EGM96 geoid with `msl`, as on every endpoint;
 geoid (heightMsl 0; before 2026-10-30 it was 0 m above the ellipsoid). With `heightRef=msl` the eye's ellipsoidal height is
 `observerHeight + N(P)` at every candidate point inside the solver, so N varies along the track (cm per km here). Each track
 point reports `heightEllipsoid`, `heightMsl`, `geoidUndulation`, and the body's `altitudeRate` / `azimuthRate` seen from that
-point (analytic, as /position); `target` echoes the target's heights; a `conventions` block states the solve, what
+point (analytic, as /v1/position); `target` echoes the target's heights; a `conventions` block states the solve, what
 `azimuth` means, terrestrial refraction (modelled: constant k = 0.13 along the sight line), refraction and heights. The
 Worker prefetches the geoid bands for target lat ± maxDistanceKm. Evidence: the customer's Statue of Liberty repro
 (2026-11-17T03:44:30–03:46:00Z) in ellipsoidal heights (their hand-copied N = −32.81 m) and in msl heights (70 m / 5 m)
 agree to ≤ 8.5 m along a 12 m/s track (N at the statue is −32.90 m, so their target was 0.09 m high); vs the Skyfield
 oracle with msl heights: position ≤ 25 mm, heightEllipsoid ≤ 1.8 mm (`crosscheck.py --only alignment`, 0 failures).
 
-**Context (`include=sun,phase`, 2026-10-30).** On /alignment (each track point and pass) and /crossing (each
+**Context (`include=sun,phase`, 2026-10-30).** On /v1/alignment (each track point and pass) and /v1/crossing (each
 crossing): `sun` = the Sun's azimuth, true altitude and apparent altitude (sea horizon at the eye's height, else null) seen
-from that point at that instant, and `phase` = the Moon's geocentric phase, both exactly /position's values there
-(worker test). Replaces the customer's per-pass /position calls. Answers without `include` are unchanged (no
+from that point at that instant, and `phase` = the Moon's geocentric phase, both exactly /v1/position's values there
+(worker test). Replaces the customer's per-pass /v1/position calls. Answers without `include` are unchanged (no
 CACHE_VERSION bump).
 
 **Aim points (`aim`, `aim.ts`, 2026-10-30).** Which point of the disc is put on the target (alignment) or on the altitude
@@ -289,7 +289,7 @@ with the *geocentric* illuminated fraction 46.9 % instead of the topocentric 46.
 On the track, the spot where the centroid is on the statue at 03:45:19 gets the centre 36.8 s later, 4.5 m to the side
 (customer: 40 s, 4.9 m). Crossing with litCentroid: the set moves by offset·cos(angle)/rate (test, ≤ 2 s).
 
-*Bright limb from the vertical.* /position `moon.brightLimbAngleFromVertical`: the same direction, degrees clockwise from
+*Bright limb from the vertical.* /v1/position `moon.brightLimbAngleFromVertical`: the same direction, degrees clockwise from
 the local vertical as seen from the eye (towards increasing azimuth), topocentric. Checked against 360° − (χ − q), Meeus'
 position angle from topocentric RA/Dec minus the parallactic angle, to < 0.01° (spherical trig vs vectors).
 
@@ -298,7 +298,7 @@ find the instants where the body's azimuth − target azimuth crosses zero (2-mi
 discarded), and report `altitudeOffset` = body apparent altitude − target elevation. Negative means the body centre is
 below the target's top, i.e. behind it; compare with `angularRadius` for partial occultation.
 
-**Sight line (`/sightline`, `sightline.ts`, 2026-10-30).** For a fixed eye → target: the line's height above MSL
+**Sight line (`/v1/sightline`, `sightline.ts`, 2026-10-30).** For a fixed eye → target: the line's height above MSL
 against ground distance, and clearance over obstacle points `lat:lon:heightMsl` (≤ 100). A separate endpoint rather than an
 alignment parameter: it is time-independent pure geometry (no DE440 blocks, no window), so it caches as one immutable entry
 per (eye, target, obstacles) instead of once per alignment window, and an alignment *track* has a different eye at every
@@ -311,7 +311,7 @@ approximate at tens of km), clearance = line − obstacle, `blocks` = refracted 
 = s₁s₂/2R to ±5 cm (N varies); Pier 6 → statue figure crosses Governors Island at ~28 m MSL (customer: 22–28 m).
 ### 10.x Alignment search over a region (`region.ts`, `search.ts`, `search-request.ts`; 2026-10-30)
 
-`POST /alignment/search` answers "every pass in [start, end) when the alignment standing point P(t) lies inside a
+`POST /v1/alignment/search` answers "every pass in [start, end) when the alignment standing point P(t) lies inside a
 standing region", in one call. It replaces the customer's crossing → alignment → polygon clip → position pipeline (~150
 calls, ~39 s per 12-month scan). P(t) is `standingPoint` (above, same solver, heights, `aim`), so nothing new is modelled.
 
@@ -322,7 +322,7 @@ sorted; `r1.` + base64url of zigzag-delta varints (the 424-node park: 3.2 KB). D
 the same string, so a cache key names exactly one region. Clipping works in an affine image of (lon, lat), which keeps the
 RFC 7946 lines straight, so insideness and crossings are exact; its metre scale is used only for tolerances. Bounds: ≤ 1 000
 vertices, ≤ 100 rings, ≤ 50 km across, ≤ 100 km from the target, target outside the region and above the eye (the solver
-brackets P assuming the target is above the eye: /alignment has no standing point for a lower target).
+brackets P assuming the target is above the eye: /v1/alignment has no standing point for a lower target).
 
 **No representative elevation; complete by construction.** P inside ⇒ (a) the body's apparent altitude at P = the target's
 apparent elevation from P ∈ [e(farthest), e(nearest)] (exact WGS-84 elevations at the region's nearest edge point and
@@ -375,15 +375,15 @@ OSM outline (piers and inlets split passes identically: 125 segments both ways).
 
 ## 11. The contract (`@ephem/api`)
 
-`EphemApi = HttpApi.make("ephem").add(sky, meta)` with `GET /position`, `GET /day`, `GET /alignment`,
-`GET /crossing`, `POST /alignment/search` + `GET /internal/alignment-search-window` (§10.x), `GET /track` (Sun/Moon azimuth, true and apparent altitude on a UTC grid, columnar; each sample equals
-`/position` at that instant; ≤ 8 days and ≤ 1 441 samples, step 60–3600 s, start/end on the step's grid), `GET /healthz`, plus `/openapi.json` generated from the same value, `/docs` (plain HTML, no JS: endpoints, parameters from `QUERY_PARAMS`, conventions from `CONVENTIONS`, links to the spec, `/llms.txt`, `/mcp` and `/docs/interactive`, the Scalar page; 2026-10-30) and `/llms.txt` (the same, as text for agents). Query parameters decode through
+`EphemApi = HttpApi.make("ephem").add(sky, meta)` with `GET /v1/position`, `GET /v1/day`, `GET /v1/alignment`,
+`GET /v1/crossing`, `POST /v1/alignment/search` + `GET /internal/alignment-search-window` (§10.x), `GET /v1/track` (Sun/Moon azimuth, true and apparent altitude on a UTC grid, columnar; each sample equals
+`/v1/position` at that instant; ≤ 8 days and ≤ 1 441 samples, step 60–3600 s, start/end on the step's grid), `GET /healthz`, plus `/openapi.json` generated from the same value, `/docs` (plain HTML, no JS: endpoints, parameters from `QUERY_PARAMS`, conventions from `CONVENTIONS`, links to the spec, `/llms.txt`, `/mcp` and `/docs/interactive`, the Scalar page; 2026-10-30) and `/llms.txt` (the same, as text for agents). Query parameters decode through
 `FiniteFromString` with range checks; `UtcString` and `DateString` are regex-checked. `CONVENTIONS` in the same file is
 the human-readable definition of every quantity and is reproduced in this document's §§4–10.
 
 Unknown query parameters are rejected (`HttpApi.QueryParseOptions: onExcessProperty "error"`); the router turns that into
 `400 { _tag: "InvalidRequest", kind: "UnknownParameter", unknown, allowed }` (allowed set from `QUERY_PARAMS`, derived from
-the endpoint schemas). Before 2026-10-29 `/day?temperature=…` was accepted and ignored.
+the endpoint schemas). Before 2026-10-29 `/v1/day?temperature=…` was accepted and ignored.
 
 Errors are tagged Schema classes with HTTP status annotations: `OutOfRange` (422: time outside 1972–2149),
 `InvalidInput` (422: unknown zone, end ≤ start, > 2000 steps, half an observer). Request-decoding failures, which the
@@ -437,8 +437,8 @@ as R2; this is what the cross-check harness targets.
 
 ```
 eyeball ─▶ ephem default (cache OFF; always runs: traces, Basin row, request.cf)
-             ├─ /, /docs, /llms.txt, /openapi.json, /mcp, /healthz, live position / magnetic, /weather
-             ├─ POST /alignment/search: validate, fan out the window GETs, merge (no astronomy)
+             ├─ /, /docs, /llms.txt, /openapi.json, /mcp, /healthz, live position / magnetic, /v1/weather
+             ├─ POST /v1/alignment/search: validate, fan out the window GETs, merge (no astronomy)
              └─ deterministic GET API and every search window ─▶ ctx.exports.Api (cache ON: cf.cacheKey = /v<CACHE_VERSION><path?sorted query>)
                     └─ blocks / geoid ─▶ ctx.exports.BlockStore (cache ON) ─▶ R2
            live routes' blocks / geoid ─▶ ctx.exports.BlockStore; weather ─▶ ctx.exports.MetarFeed (cache ON)
@@ -457,7 +457,7 @@ contention and the second Worker cost something on every deploy. Full A/B: ~/cod
 ("Compute split"). Re-run at real load if search traffic ever approaches contention (commit 5edf1b7 holds both arms).
 
 Found on the way (kept): core's EGM96 band source is a process global, and an isolate holds two `makeGeoid` (front door +
-Api); src/geoid.ts now installs a source that reads every L1 (the E arm's first canary 500'd /position?time= without it).
+Api); src/geoid.ts now installs a source that reads every L1 (the E arm's first canary 500'd /v1/position?time= without it).
 
 ### 12.2 Trace context, Server-Timing and RUM (2026-10-30)
 
@@ -575,7 +575,7 @@ independent implementation), then core/worker; then regenerate fixtures and run 
   perpendicular to the sight line → for a fixed observer an angular box az ∈ A ± atan(w/D), apparent elevation
   [e_base, e_top]; contact / clear = first / last instant the disc (aim point, radius r) is within r of the box. "Full overlap"
   needs the customer's definition (disc inside the box is impossible for the Statue of Liberty, 0.14° wide vs a 0.5° disc;
-  the box's width inside the disc at the target's height is the silhouette case). It belongs with /alignment/search,
+  the box's width inside the disc at the target's height is the silhouette case). It belongs with /v1/alignment/search,
   where intervals are per standing segment, so it waits for that endpoint.
 
 - `GET /time` with server UTC, current DUT1 and the leap table, for client clock sync (NTP-style min-RTT exchange over
@@ -583,7 +583,7 @@ independent implementation), then core/worker; then regenerate fixtures and run 
   refreshes IERS data by alarm (§12.1).
 - Confirm on a real account: ingest wall time and success for the 102 MB streamed put (exercised here only against a
   fake R2 and the local file), and L2/L3 latencies from `diagnostics.cache` across a few colos.
-- Terrain-aware horizon in `/day` and `/alignment` (GLO-30 profile along the azimuth, as in
+- Terrain-aware horizon in `/v1/day` and `/v1/alignment` (GLO-30 profile along the azimuth, as in
   `reference/terrain_sunset/terrain_sunset.py`); a per-request refraction coefficient.
 - True lunar node / libration exposure (DE440 tabulates librations: body 12).
 - Claim or recreate the temporary deployment; add a scheduled cross-check against production.

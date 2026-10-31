@@ -10,8 +10,8 @@ import { IMMUTABLE, VERSION_OVERRIDES, forwardHeaders } from "../src/responses.t
 
 const FIX = resolve(__dirname, "../../core/test/fixtures/blocks")
 const blocks = () => makeBlocks(direct(async first => { const b = readFileSync(`${FIX}/${first}.bin`); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer }))
-const DAY = "/day?date=2026-10-28&lat=40.6892&lon=-74.0445&tz=America%2FNew_York"
-const POS_T = "/position?lat=40.7&lon=-74&time=2026-10-28T11%3A51%3A00Z"
+const DAY = "/v1/day?date=2026-10-28&lat=40.6892&lon=-74.0445&tz=America%2FNew_York"
+const POS_T = "/v1/position?lat=40.7&lon=-74&time=2026-10-28T11%3A51%3A00Z"
 const PIN = 'ephem="0f0f0f0f-0000-4000-8000-000000000000"'
 const strip = (j: any) => { delete j.provenance; return j }
 

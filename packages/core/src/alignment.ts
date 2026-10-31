@@ -1,4 +1,4 @@
-// /alignment: where to stand so a body appears behind a landmark, and (from a fixed spot) when it passes behind it.
+// /v1/alignment: where to stand so a body appears behind a landmark, and (from a fixed spot) when it passes behind it.
 //
 // Unknown standing point P at eye height h_o; landmark top T at height h_t. P satisfies, at time t:
 //   (1) azimuth of the body seen from P  = forward geodesic azimuth P → T
@@ -163,7 +163,7 @@ export const standingPoint = (src: BlockSource, inp: AlignmentInput, utcMs: numb
 }
 
 /** d(true altitude)/dt and d(azimuth)/dt of the body seen from a fixed point, degrees per minute: the analytic rate that
- *  /position uses (observe.ts topocentricRates; same definition, same units). */
+ *  /v1/position uses (observe.ts topocentricRates; same definition, same units). */
 export const ratesAt = (src: BlockSource, body: BodyName, P: Geodetic, utcMs: number, dut1 = 0): { altitudeRate: number; azimuthRate: number } => {
   const f = frameAt(src, instant(utcMs, dut1), P)
   return topocentricRates(src, f, body, apparent(src, f, body))

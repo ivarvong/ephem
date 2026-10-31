@@ -37,7 +37,7 @@ describe("deliver", () => {
     expect(spans).toEqual([])
   })
   it("a known-length body is returned untouched (the runtime sends it)", async () => {
-    const res = new Response('{"a":1}', { headers: { "content-length": "7" } }), d = deliver(res, wu, "/day", tracing)
+    const res = new Response('{"a":1}', { headers: { "content-length": "7" } }), d = deliver(res, wu, "/v1/day", tracing)
     expect(d.response).toBe(res); expect(await d.aborted).toBe(false)
   })
   it("no body: returned as is", async () => {

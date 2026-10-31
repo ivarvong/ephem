@@ -44,7 +44,7 @@ export function buildModel(c: Client, srvIn: Server, meta: Record<string, unknow
   // server = client + θ. The Worker's root span starts after the browser sent (t2 > t1 + θ) and its first byte leaves before
   // the browser has the headers (t3 < t4 + θ): θ ∈ (t3 − t4, t2 − t1). Server times are whole ms: widen by 1 ms each side.
   // t3: the response leaving. The runtime's time_to_first_byte_ms can exceed the client's whole send → headers (a streamed
-  // body: headers leave first; seen on /track, 68 ms vs 52.7 ms), so t3 is the earlier of it and the Effect request span's end.
+  // body: headers leave first; seen on /v1/track, 68 ms vs 52.7 ms), so t3 is the earlier of it and the Effect request span's end.
   const bounds: Array<{ ray: string; lo: number; hi: number; path: string }> = []
   const bound = (ray: string, sendWall: number, headWall: number, path: string) => {
     const root = sspans.find(s => s.ray && ray0(s.ray) === ray0(ray) && s.ep === "default" && !s.parent)

@@ -30,9 +30,9 @@ describe("loopback guardrail", () => {
     const seen: Array<{ to: string; url: string; key?: string | undefined }> = []
     const bind = (to: string): Binding => ({ fetch: async (req, init) => { const u = new URL(req.url); seen.push({ to, url: u.pathname + u.search, key: init?.cf?.cacheKey }); return new Response("") } })
     const lb = makeLoopback(() => ({ Api: bind("Api"), BlockStore: bind("BlockStore"), MetarFeed: bind("MetarFeed") }))
-    await lb.api("/day?date=2026-10-28&lat=1&lon=2&tz=UTC", { method: "GET", headers: {} }); await lb.block(5442); await lb.feed()
+    await lb.api("/v1/day?date=2026-10-28&lat=1&lon=2&tz=UTC", { method: "GET", headers: {} }); await lb.block(5442); await lb.feed()
     expect(CACHE_TAG).toBe(`v${CACHE_VERSION}`)
-    expect(seen[0]).toEqual({ to: "Api", url: "/day?date=2026-10-28&lat=1&lon=2&tz=UTC", key: `/${CACHE_TAG}/day?date=2026-10-28&lat=1&lon=2&tz=UTC` })
+    expect(seen[0]).toEqual({ to: "Api", url: "/v1/day?date=2026-10-28&lat=1&lon=2&tz=UTC", key: `/${CACHE_TAG}/v1/day?date=2026-10-28&lat=1&lon=2&tz=UTC` })
     expect(apiCacheKey("/x")).toBe(`/${CACHE_TAG}/x`)
     expect(seen[1]!.url).toMatch(new RegExp(`^/block/${CACHE_TAG}/[0-9a-f]{16}/5442$`)); expect(seen[1]!.key).toBeUndefined()
     expect(seen[2]!.url).toBe(`/feed/${CACHE_TAG}/metars.cache.csv.gz`); expect(FEED_PATH).toBe(seen[2]!.url)
@@ -42,9 +42,9 @@ describe("loopback guardrail", () => {
     const seen: Array<{ to: string; url: string; key?: string | undefined }> = []
     const bind = (to: string): Binding => ({ fetch: async (req, init) => { const u = new URL(req.url); seen.push({ to, url: u.pathname + u.search, key: init?.cf?.cacheKey }); return new Response("") } })
     const lb = makeLoopback(() => resolveBindings({ Api: bind("Api"), BlockStore: bind("BlockStore"), MetarFeed: bind("MetarFeed") }))
-    await lb.api("/track?a=1", { method: "GET", headers: {} }); await lb.block(1); await lb.geoid(3); await lb.feed()
+    await lb.api("/v1/track?a=1", { method: "GET", headers: {} }); await lb.block(1); await lb.geoid(3); await lb.feed()
     expect(seen.map(s => s.to)).toEqual(["Api", "BlockStore", "BlockStore", "MetarFeed"])
-    expect(seen[0]!.key).toBe(`/${CACHE_TAG}/track?a=1`)
+    expect(seen[0]!.key).toBe(`/${CACHE_TAG}/v1/track?a=1`)
     expect(seen[2]!.url).toMatch(new RegExp(`^/geoid/${CACHE_TAG}/[0-9a-f]{16}/3$`))
   })
   it("BlockStore answers only the tagged path", async () => {

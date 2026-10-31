@@ -1,7 +1,7 @@
 """Render one prod trace as a span tree with work-count attributes.
 
     python3 scripts/obs/trace.py <traceId> [--minutes 60]
-    python3 scripts/obs/trace.py --latest /alignment     # newest trace for a path
+    python3 scripts/obs/trace.py --latest /v1/alignment     # newest trace for a path
     python3 scripts/obs/trace.py --jsonrpc-id <run>-<step>  # the trace of one MCP message (mcp-probe.ts ids)
 
 Workers emits every Effect span as a direct child of the request span; the tree is rebuilt from the

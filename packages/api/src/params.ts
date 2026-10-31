@@ -29,7 +29,7 @@ export const PARAM_DOCS: Readonly<Record<string, string>> = {
   aim: "Which point of the disc: center, upper or lower (the limbs along the local vertical), or litCentroid (the centroid of the Moon's lit area; body=moon).",
   include: "Extra context per result: sun (the Sun's azimuth and true / apparent altitude there and then), phase (the Moon's phase), or sun,phase.",
   altitude: "Altitude to cross, degrees (−90 to 90); true unless altitudeType=apparent. Required unless horizonProfile.",
-  altitudeType: "true (default: vacuum altitude, as twilight thresholds are defined) or apparent (refracted, as /position's apparentAltitude).",
+  altitudeType: "true (default: vacuum altitude, as twilight thresholds are defined) or apparent (refracted, as /v1/position's apparentAltitude).",
   direction: "rise (upward crossings), set (downward) or either (default).",
   maxDistanceKm: "Farthest standing point to report, km (0.01 to 200). Default 20.",
   samples: "Points along the sight line, 2 to 1001. Default 101.",
@@ -41,13 +41,13 @@ export const PARAM_DOCS: Readonly<Record<string, string>> = {
 }
 
 export const PATH_DOCS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
-  "/track": {
+  "/v1/track": {
     start: "First sample, UTC ISO-8601 with Z, on the stepSeconds grid (a multiple of stepSeconds since 1970-01-01T00:00Z; e.g. a whole hour for 1200).",
     end: "Last sample, on the same grid, not before start; at most 8 days after it.",
     stepSeconds: "Sampling step, integer seconds 60 to 3600; at most 1 441 samples. Default 1200 (20 min).",
   },
-  "/day": { aim: "Which point of the disc rise and set refer to: upper (default, the almanac convention), center or lower." },
-  "/crossing": {
+  "/v1/day": { aim: "Which point of the disc rise and set refer to: upper (default, the almanac convention), center or lower." },
+  "/v1/crossing": {
     aim: "Which point of the disc reaches the altitude: center (default), upper, lower, or litCentroid (the centroid of the Moon's lit area; body=moon).",
     start: "Window start, UTC ISO-8601 with Z (with end; at most 31 days). Or give date and tz instead.",
     end: "Window end, UTC ISO-8601 with Z, after start.",
@@ -55,27 +55,27 @@ export const PATH_DOCS: Readonly<Record<string, Readonly<Record<string, string>>
     tz: "IANA time zone for date, e.g. America/New_York.",
     horizonProfile: "Instead of altitude: " + T_PROFILE,
   },
-  "/alignment": {
+  "/v1/alignment": {
     lat: "Optional fixed spot (with lon): also report when the body passes the target as seen from there (passes, altitudeOffset).",
     lon: "Optional fixed spot (with lat).",
     height: "Your eye's height wherever you stand, metres, measured from heightRef (with msl: above sea level at every standing point). Omitted: the eye at sea level.",
     stepSeconds: "Sampling step, seconds (1 to 3600; at most 2000 steps). Default 60.",
     aim: "Which point of the disc sits on the target: center (default), upper, lower, or litCentroid (the Moon's lit-area centroid, for a partial Moon).",
   },
-  "/alignment/search": {
+  "/v1/alignment/search": {
     height: "Your eye's height wherever you stand, metres, measured from heightRef. Omitted: the eye at sea level.",
     start: "Search start, UTC ISO-8601 with Z.",
     end: "Search end, UTC ISO-8601 with Z; at most 400 days after start. Passes whose first entry lies in [start, end).",
     aim: "Which point of the disc sits on the target: center (default), upper, lower, or litCentroid (the Moon's lit-area centroid).",
     include: "Extra context per pass: sun (the Sun's azimuth and true / apparent altitude), phase (the Moon's phase), or sun,phase.",
   },
-  "/sightline": {
+  "/v1/sightline": {
     lat: "Eye latitude, degrees north, −90 to 90.", lon: "Eye longitude, degrees east, −180 to 180.",
     height: "Eye height, metres, measured from heightRef. Omitted: the eye at sea level.",
     targetHeight: "Target height, metres, measured from targetHeightRef.",
   },
-  "/magnetic": { time: "UTC instant, ISO-8601 with Z. Default: now (WMM2025 is valid 2025.0–2030.0; outside it the secular variation is extrapolated)." },
-  "/weather": { lat: "Latitude of the point to find stations near, degrees north.", lon: "Longitude, degrees east." },
+  "/v1/magnetic": { time: "UTC instant, ISO-8601 with Z. Default: now (WMM2025 is valid 2025.0–2030.0; outside it the secular variation is extrapolated)." },
+  "/v1/weather": { lat: "Latitude of the point to find stations near, degrees north.", lon: "Longitude, degrees east." },
 }
 
 /** The doc for `name` on `path` (the endpoint's own sense if it has one), or undefined for an unknown name. */

@@ -21,7 +21,7 @@ const recorder = () => {
     end: () => { spans.push({ name, attrs }) } } } }
   return { spans, tracing }
 }
-const DAY = "/day?date=2026-10-28&tz=America/New_York&lat=40.6892&lon=-74.0445"
+const DAY = "/v1/day?date=2026-10-28&tz=America/New_York&lat=40.6892&lon=-74.0445"
 afterEach(() => setTracing(undefined))
 
 describe("Workers tracing bridge", () => {

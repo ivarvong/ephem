@@ -1,4 +1,4 @@
-// /alignment/search through the real router: the POST (validation, fan-out, merge, filters), the cacheable window GET,
+// /v1/alignment/search through the real router: the POST (validation, fan-out, merge, filters), the cacheable window GET,
 // the front door → Api loopback with a fake Workers Caching (overlapping scans share windows), and failure mapping.
 import { describe, expect, it } from "vitest"
 import { readFileSync } from "node:fs"
@@ -18,11 +18,11 @@ const PARK = JSON.parse(readFileSync(`${FIX}/regions/brooklyn-bridge-park.geojso
 const BODY = { body: "moon", targetLat: 40.68925, targetLon: -74.0445, targetHeight: 70, targetHeightRef: "msl", region: PARK, height: 5, heightRef: "msl", start: "2026-11-16T00:00:00Z", end: "2026-11-18T00:00:00Z" }
 const local = makeHandler(blocks())
 const post = async (h: typeof local, body: unknown, headers: Record<string, string> = {}) => {
-  const r = await h(new Request("http://x/alignment/search", { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) }))
+  const r = await h(new Request("http://x/v1/alignment/search", { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) }))
   return { status: r.status, headers: r.headers, j: await r.json() as any }
 }
 
-describe("POST /alignment/search", () => {
+describe("POST /v1/alignment/search", () => {
   it("the customer's Nov 16 pass: one call, exact entry 2026-11-17T03:45:19Z at 40.70329, −73.99630", async () => {
     const { status, j, headers } = await post(local, BODY)
     expect(status).toBe(200); expect(headers.get("cache-control")).toBe("no-store")
@@ -43,9 +43,9 @@ describe("POST /alignment/search", () => {
   it("filters and include run after the windows", async () => {
     const dark = await post(local, { ...BODY, maxSunAltitude: -4, minIlluminated: 0.1, include: "sun,phase" })
     expect(dark.j.passes).toHaveLength(1); expect(dark.j.passes[0].phase.name).toMatch(/quarter|crescent|gibbous/); expect(dark.j.passes[0].sun.altitude).toBe(dark.j.passes[0].sunAltitude)
-    // include = /position at the pass instant from where the pass is seen (sweep 2026-10-31): the Sun's place and the Moon's phase
+    // include = /v1/position at the pass instant from where the pass is seen (sweep 2026-10-31): the Sun's place and the Moon's phase
     const p = dark.j.passes[0], seg = p.segments[0], where = `lat=${seg.enter.lat}&lon=${seg.enter.lon}&height=5&heightRef=msl&time=${p.time}`
-    const pos = await (await local(new Request(`http://x/position?${where}`))).json() as any
+    const pos = await (await local(new Request(`http://x/v1/position?${where}`))).json() as any
     expect(Math.abs(p.sun.altitude - pos.sun.altitude)).toBeLessThan(1e-3); expect(Math.abs(p.sun.azimuth - pos.sun.azimuth)).toBeLessThan(1e-2)   // standing point of the instant ≈ the segment's entry (≤ km)
     expect(Math.abs(p.phase.illuminatedFraction - pos.moon.phase.illuminatedFraction)).toBeLessThan(1e-4); expect(p.phase.name).toBe(pos.moon.phase.name)
     const bright = await post(local, { ...BODY, minIlluminated: 0.5 })

@@ -1,4 +1,4 @@
-// /alignment/search: every pass during which the alignment standing point (alignment.ts) lies inside a standing region.
+// /v1/alignment/search: every pass during which the alignment standing point (alignment.ts) lies inside a standing region.
 //
 // 1. Band. P inside the region ⇒ the body's apparent altitude at P = the target's apparent elevation from P, which lies in
 //    [eMin, eMax] over the region (exact WGS-84 elevations at the region's farthest and nearest points from the target: with
@@ -106,7 +106,7 @@ export const searchGeometry = (inp: Pick<SearchInput, "target" | "observerHeight
   if (dMax > SEARCH.maxDistanceKm * 1000) return { error: `the region reaches ${(dMax / 1000).toFixed(1)} km from the target; at most ${SEARCH.maxDistanceKm} km` }
   if (azHi - azLo >= 180) return { error: "the region surrounds the target (it spans 180° or more of bearing)" }
   // The alignment solver brackets P assuming the target is above the eye (a lower target sits near −90° from 1 m away), so
-  // /alignment has no standing point below it; then e(d) also falls monotonically with distance: the band is [e(far), e(near)].
+  // /v1/alignment has no standing point below it; then e(d) also falls monotonically with distance: the band is [e(far), e(near)].
   if (tg.height <= Math.max(near.height, far.height, ref.height)) return { error: "the target must be above the eye height (alignment has no standing point for a target below the eye)" }
   const eMin = targetElevation(far, tg).elevation, eMax = targetElevation(near, tg).elevation
   if (eMax > SEARCH.maxElevationDeg) return { error: `the target stands ${eMax.toFixed(1)}° above parts of the region; at most ${SEARCH.maxElevationDeg}°` }

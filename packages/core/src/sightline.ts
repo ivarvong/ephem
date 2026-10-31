@@ -1,10 +1,10 @@
-// /sightline (round-2 #6): the height above mean sea level of the sight line from an eye to a target, against ground
+// /v1/sightline (round-2 #6): the height above mean sea level of the sight line from an eye to a target, against ground
 // distance, and the clearance over given obstacle points. Pure geometry (no ephemeris, no time).
 //
 // Geometric line: the straight chord eye → target between exact WGS-84 ECEF points, so Earth's curvature is in it by
 // construction. Each sample is a point X on the chord; its height is X's own geodetic height (above the ellipsoid, along
 // the normal through X) minus EGM96 N at the foot of that normal, and its distance is the geodesic distance from the eye
-// to the foot. Refracted line: light near the ground bends with curvature k/R (the same k = 0.13 /alignment uses for
+// to the foot. Refracted line: light near the ground bends with curvature k/R (the same k = 0.13 /v1/alignment uses for
 // the target's apparent elevation), so the ray through both endpoints bows upwards over the chord by k·s₁·s₂/(2R)
 // (s₁, s₂ = ground distances to the eye and to the target). Both are given; the refracted one is what the eye sees along.
 import { type Geodetic, WGS84, itrsOf } from "./observe.ts"
@@ -94,7 +94,7 @@ export const parseObstacles = (s: string | undefined): Obstacle[] | string => {
 
 export const SIGHTLINE_CONVENTIONS = {
   definition: "profile[]: points on the sight line from the eye (observer) to the target, equally spaced along the straight line. heightMsl: the geometric line's height above the EGM96 geoid (≈ mean sea level) at that point, i.e. its WGS-84 geodetic height minus N at the foot of the normal; Earth's curvature is in it because both ends are exact WGS-84 ECEF points. distanceKm: geodesic ground distance from the observer to the foot.",
-  terrestrialRefraction: `Modelled as a constant coefficient k = ${K_TERRESTRIAL} (as /alignment): the ray through both ends curves with curvature k/R, R = ${R_MEAN_M} m, so it runs k·s₁·s₂/(2R) above the straight line (refractedHeightMsl; s₁, s₂ = ground distances to the ends: 0.15 m at the middle of a 4 km line). Real k near water varies roughly 0–0.3, and much more over a warm or cold surface; no atmospheric profile, inversion or ducting. heightMsl is the line with no refraction.`,
+  terrestrialRefraction: `Modelled as a constant coefficient k = ${K_TERRESTRIAL} (as /v1/alignment): the ray through both ends curves with curvature k/R, R = ${R_MEAN_M} m, so it runs k·s₁·s₂/(2R) above the straight line (refractedHeightMsl; s₁, s₂ = ground distances to the ends: 0.15 m at the middle of a 4 km line). Real k near water varies roughly 0–0.3, and much more over a warm or cold surface; no atmospheric profile, inversion or ducting. heightMsl is the line with no refraction.`,
   obstacles: "obstacles[]: each point is projected on the line (distanceKm along it, crossTrackM to the right of it looking at the target, local flat projection). lineHeightMsl / refractedLineHeightMsl: the line's height at that distance; clearanceM = line − obstacle heightMsl (negative: the obstacle rises above the line); blocks = refracted clearance < 0. Null when the point is not between the ends. crossTrackM says whether the point is really on the line: the clearance is the line's height there, not at the obstacle.",
   heights: "height (the eye) / targetHeight: metres above the WGS-84 ellipsoid by default, above the EGM96 geoid with heightRef / targetHeightRef = msl; obstacle heights are always above sea level (msl).",
 } as const

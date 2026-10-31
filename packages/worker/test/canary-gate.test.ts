@@ -28,12 +28,12 @@ describe("canary gate: client aborts pass, server errors fail", () => {
     expect(v.aborts.filter(a => a[0] === "disconnect")).toHaveLength(4)
     expect(v.aborts.filter(a => a[0] === "outcome canceled").length).toBeGreaterThanOrEqual(1)
   })
-  it("abort-probe on prod: streamed / closed after the head, /track closed before the answer", () => {
+  it("abort-probe on prod: streamed / closed after the head, /v1/track closed before the answer", () => {
     const v = classify(load("abort-home-7c99bb80.json"))
     expect(v.errors).toEqual([])
-    expect(v.aborts.map(a => a[0]).toSorted()).toEqual(["disconnect", "outcome canceled", "outcome canceled"])   // invocation + root span of /track
+    expect(v.aborts.map(a => a[0]).toSorted()).toEqual(["disconnect", "outcome canceled", "outcome canceled"])   // invocation + root span of /v1/track
   })
-  it("abort-probe on prod: /mcp tools/call and /position closed right after sending (the answer existed, the client did not)", () => {
+  it("abort-probe on prod: /mcp tools/call and /v1/position closed right after sending (the answer existed, the client did not)", () => {
     const v = classify(load("abort-mcp-position-7c99bb80.json"))
     expect(v.errors).toEqual([])
     expect(v.aborts.filter(a => a[0] === "disconnect")).toHaveLength(4)

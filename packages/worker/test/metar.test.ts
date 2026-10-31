@@ -202,11 +202,11 @@ describe("METAR feed consumer", () => {
   })
 })
 
-describe("/weather end to end (fake upstream)", () => {
+describe("/v1/weather end to end (fake upstream)", () => {
   it("nearest stations with units, bearings true and magnetic, two ages, short cache-control", async () => {
     const h = harness()
     const handler = makeHandler(makeBlocks(async () => { throw new Error("no blocks") }), undefined, weatherLive(h.feed))
-    const r = await handler(new Request("http://x/weather?lat=40.7&lon=-74.0&count=3"))
+    const r = await handler(new Request("http://x/v1/weather?lat=40.7&lon=-74.0&count=3"))
     expect(r.status).toBe(200); expect(r.headers.get("cache-control")).toBe("private, max-age=30")
     const j = await r.json() as any
     expect(j.stations.map((s: any) => s.stationId)).toEqual(["KNYC", "KLGA", "KEWR"])
@@ -216,34 +216,34 @@ describe("/weather end to end (fake upstream)", () => {
     expect(((s.bearing.true - decl - s.bearing.magnetic) % 360 + 360) % 360).toBeLessThan(0.011)
     expect(s.observationStale).toBe(typeof s.observationAgeSeconds === "number" && s.observationAgeSeconds > 4500)
     expect(j.feed).toMatchObject({ tier: expect.any(String), stale: false, lastModified: "2026-10-29T11:25:16.000Z", stations: 22 })
-    const bad = await handler(new Request("http://x/weather?lat=40.7&lon=-74.0&count=0")); expect(bad.status).toBe(400)
+    const bad = await handler(new Request("http://x/v1/weather?lat=40.7&lon=-74.0&count=0")); expect(bad.status).toBe(400)
   })
   it("503 when there is no copy and upstream is down", async () => {
     const feed = makeFeed({ fetch: req => serveFeed(req, { fetch: async () => { throw new Error("down") }, log: () => {} }) })
     const handler = makeHandler(makeBlocks(async () => { throw new Error("no blocks") }), undefined, weatherLive(feed))
-    const r = await handler(new Request("http://x/weather?lat=0&lon=0")); expect(r.status).toBe(503)
+    const r = await handler(new Request("http://x/v1/weather?lat=0&lon=0")); expect(r.status).toBe(503)
     expect(((await r.json()) as any)._tag).toBe("Unavailable")
   })
-  it("/magnetic", async () => {
+  it("/v1/magnetic", async () => {
     const handler = makeHandler(makeBlocks(async () => { throw new Error("no blocks") }))
-    const r = await handler(new Request("http://x/magnetic?lat=40.7&lon=-74&time=2026-10-29T12:00:00Z")); expect(r.status).toBe(200)
+    const r = await handler(new Request("http://x/v1/magnetic?lat=40.7&lon=-74&time=2026-10-29T12:00:00Z")); expect(r.status).toBe(200)
     const j = await r.json() as any
     expect(j.magnetic.model).toBe("WMM2025"); expect(j.magnetic.inValidityWindow).toBe(true); expect(j.magnetic.declination).toBeCloseTo(-12.6, 0)
     expect(r.headers.get("cache-control")).toBe("public, max-age=31536000, immutable")   // with a time: deterministic
-    expect((await handler(new Request("http://x/magnetic?lat=40.7&lon=-74"))).headers.get("cache-control")).toBe("public, max-age=3600")
+    expect((await handler(new Request("http://x/v1/magnetic?lat=40.7&lon=-74"))).headers.get("cache-control")).toBe("public, max-age=3600")
   })
-  it("/magnetic says when the compass is unusable: the North Pole is in WMM2025's blackout zone (H 1 796 nT < 2 000), Resolute Bay in caution (sweep 2026-10-31)", async () => {
+  it("/v1/magnetic says when the compass is unusable: the North Pole is in WMM2025's blackout zone (H 1 796 nT < 2 000), Resolute Bay in caution (sweep 2026-10-31)", async () => {
     // Before: a plain declination (17.84° at 90°N) with nothing saying WMM calls it unreliable there.
     const handler = makeHandler(makeBlocks(async () => { throw new Error("no blocks") }))
-    const at = async (lat: number, lon: number) => (await (await handler(new Request(`http://x/magnetic?lat=${lat}&lon=${lon}&time=2026-10-29T12:00:00Z`))).json() as any)
+    const at = async (lat: number, lon: number) => (await (await handler(new Request(`http://x/v1/magnetic?lat=${lat}&lon=${lon}&time=2026-10-29T12:00:00Z`))).json() as any)
     const pole = await at(90, 0), resolute = await at(74.7, -94.83), nyc = await at(40.7, -74)
     expect(pole.magnetic.horizontalIntensityNt).toBeLessThan(2000); expect(pole.magnetic.compass).toBe("blackout")
     expect(resolute.magnetic.horizontalIntensityNt).toBeGreaterThanOrEqual(2000); expect(resolute.magnetic.compass).toBe("caution")
     expect(nyc.magnetic.compass).toBe("ok"); expect(nyc.conventions.compass).toMatch(/blackout below 2000 nT/)
   })
-  it("/magnetic heightRef=msl is the same field as that height above the ellipsoid (height + N); no height = on the geoid", async () => {
+  it("/v1/magnetic heightRef=msl is the same field as that height above the ellipsoid (height + N); no height = on the geoid", async () => {
     const handler = makeHandler(makeBlocks(async () => { throw new Error("no blocks") }))
-    const at = async (qs: string) => (await (await handler(new Request(`http://x/magnetic?lat=27.99&lon=86.93&time=2026-10-29T12:00:00Z${qs}`))).json() as any)
+    const at = async (qs: string) => (await (await handler(new Request(`http://x/v1/magnetic?lat=27.99&lon=86.93&time=2026-10-29T12:00:00Z${qs}`))).json() as any)
     const msl = await at("&height=8848&heightRef=msl"), ell = await at(`&height=${msl.observer.heightEllipsoid}`), none = await at(""), geoid = await at(`&height=${none.observer.geoidUndulation}`)
     expect(msl.observer.heightEllipsoid).toBeCloseTo(8848 + msl.observer.geoidUndulation, 9)
     expect(ell.magnetic.totalIntensityNt).toBe(msl.magnetic.totalIntensityNt); expect(ell.magnetic.declination).toBe(msl.magnetic.declination)

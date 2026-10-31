@@ -1,4 +1,4 @@
-// /weather and /magnetic. The weather lookup is a plain Effect service (Weather.nearest), so any front end (the HTTP
+// /v1/weather and /v1/magnetic. The weather lookup is a plain Effect service (Weather.nearest), so any front end (the HTTP
 // handler, an MCP tool) gets the same cache tiers, span attributes and log line.
 import * as Clock from "effect/Clock"
 import * as Context from "effect/Context"
@@ -26,7 +26,7 @@ const WEATHER_CONVENTIONS = {
   definition: CONVENTIONS.weather,
   distance: "Great-circle distance on a sphere of radius 6 371.0088 km.",
   bearing: "Initial great-circle bearing observer → station, degrees true; magnetic = true − WMM2025 declination at the observer (observer.magneticDeclination, height 0, now).",
-  magneticDeclination: "WMM2025 at the observer, now, east positive; the same value /magnetic gives there.",
+  magneticDeclination: "WMM2025 at the observer, now, east positive; the same value /v1/magnetic gives there.",
 }
 const MAGNETIC_CONVENTIONS = {
   model: CONVENTIONS.magnetic,
@@ -84,7 +84,7 @@ export const weatherLive = (feed: Feed) => Layer.succeed(Weather, {
     const lm = httpDate(f.snap.lastModified)
     return {
       time: iso(now),
-      observer: { lat: q.lat, lon: q.lon, magneticDeclination: decl },   // full precision: the homepage takes its magnetic bearings from it (no /magnetic call)
+      observer: { lat: q.lat, lon: q.lon, magneticDeclination: decl },   // full precision: the homepage takes its magnetic bearings from it (no /v1/magnetic call)
       stations: near.map(x => station(x.station, x.distanceKm, x.bearing, decl, now)),
       feed: {
         source: FEED_URL, fetchedAt: iso(f.snap.fetchedAt), ageSeconds: Math.round(f.dataAgeMs / 1000),

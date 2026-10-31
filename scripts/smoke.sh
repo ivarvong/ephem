@@ -70,26 +70,26 @@ chk docs-interactive 200 "/docs/interactive"
 chk llms 200 "/llms.txt" "$B/mcp"                                 # names the MCP endpoint
 chk openapi 200 "/openapi.json"
 chk healthz 200 "/healthz"
-chk position-now 200 "/position?lat=40.7&lon=-74"
-chk position-time 200 "/position?lat=40.7&lon=-74&time=$T"
-chk day 200 "/day?lat=40.7&lon=-74&date=2026-10-29&tz=America/New_York"
-chk magnetic 200 "/magnetic?lat=40.7&lon=-74"
-chk crossing 200 "/crossing?lat=40.7&lon=-74&body=sun&altitude=-0.8333&direction=set&date=2026-10-29&tz=America/New_York"
-chk alignment 200 "/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&start=2026-10-29T02:00:00Z&end=2026-10-29T03:00:00Z"
-chk sightline 200 "/sightline?lat=40.6935&lon=-74.0017&height=5&heightRef=msl&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&samples=11"
-chk track 200 "/track?lat=40.7&lon=-74&start=2026-10-29T00:00:00Z&end=2026-10-30T00:00:00Z"
-chk weather 200 "/weather?lat=40.7&lon=-74"
-chk unknown-param 400 "/day?lat=40.7&lon=-74&date=2026-10-29&tz=America/New_York&bogus=1"
-chk not-found 404 "/v1/position?lat=40.7&lon=-74" '"_tag":"NotFound"'   # old paths: JSON naming the endpoints
+chk position-now 200 "/v1/position?lat=40.7&lon=-74"
+chk position-time 200 "/v1/position?lat=40.7&lon=-74&time=$T"
+chk day 200 "/v1/day?lat=40.7&lon=-74&date=2026-10-29&tz=America/New_York"
+chk magnetic 200 "/v1/magnetic?lat=40.7&lon=-74"
+chk crossing 200 "/v1/crossing?lat=40.7&lon=-74&body=sun&altitude=-0.8333&direction=set&date=2026-10-29&tz=America/New_York"
+chk alignment 200 "/v1/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=63.4&start=2026-10-29T02:00:00Z&end=2026-10-29T03:00:00Z"
+chk sightline 200 "/v1/sightline?lat=40.6935&lon=-74.0017&height=5&heightRef=msl&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl&samples=11"
+chk track 200 "/v1/track?lat=40.7&lon=-74&start=2026-10-29T00:00:00Z&end=2026-10-30T00:00:00Z"
+chk weather 200 "/v1/weather?lat=40.7&lon=-74"
+chk unknown-param 400 "/v1/day?lat=40.7&lon=-74&date=2026-10-29&tz=America/New_York&bogus=1"
+chk not-found 404 "/position?lat=40.7&lon=-74" '"did you mean /v1/position?' # unprefixed: JSON 404 naming the endpoints (no alias)
 chk window-internal 404 "/internal/alignment-search-window?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&region=r1.x&start=2026-10-17T00:00:00Z"
 # the customer's Nov 16 2026 pass over a bbox of Brooklyn Bridge Park (fans out to cached window GETs)
-chk search 200 "/alignment/search" '"enter":{"time":"2026-11-17T03:4' \
+chk search 200 "/v1/alignment/search" '"enter":{"time":"2026-11-17T03:4' \
   '{"body":"moon","targetLat":40.68925,"targetLon":-74.0445,"targetHeight":70,"targetHeightRef":"msl","region":[-73.9995,40.7,-73.993,40.706],"height":5,"heightRef":"msl","start":"2026-11-16T00:00:00Z","end":"2026-11-18T00:00:00Z"}'
 # A deterministic key nobody has asked for (random lat at 1e-7°): MISS computed by the Api, then HIT from its cache.
-U="/position?lat=40.$(printf '%07d' $((RANDOM * 32768 + RANDOM)))&lon=-74&time=$T"
+U="/v1/position?lat=40.$(printf '%07d' $((RANDOM * 32768 + RANDOM)))&lon=-74&time=$T"
 want compute && ORDER+=(compute); want compute-hit && ORDER+=(compute-hit)
 { chk_one compute 200 "$U" '"provenance"' "" MISS "${CEXPECT:-any}"; chk_one compute-hit 200 "$U" '"provenance"' "" HIT any; } &   # in order
-chk blocks-miss 200 "/position?lat=40.7&lon=-74&time=$(python3 -c 'import random,datetime as d; print((d.datetime(1972,1,2)+d.timedelta(seconds=random.randrange(5_617_000_000))).strftime("%Y-%m-%dT%H:%M:%SZ"))')" '"provenance"' "" MISS "${CEXPECT:-any}"
+chk blocks-miss 200 "/v1/position?lat=40.7&lon=-74&time=$(python3 -c 'import random,datetime as d; print((d.datetime(1972,1,2)+d.timedelta(seconds=random.randrange(5_617_000_000))).strftime("%Y-%m-%dT%H:%M:%SZ"))')" '"provenance"' "" MISS "${CEXPECT:-any}"
 # Link preview (src/og-render.ts): the font glyph fetches, the touch icon, and a live card: a place name never asked for (a fresh
 # Og MISS: data from the Api, a real glyph render) must come back as a glyph PNG (x-ephem-og: glyph, not the fallback card),
 # image/png, 2400×1260, 20-300 KB; then the same URL again is a Workers Cache HIT.

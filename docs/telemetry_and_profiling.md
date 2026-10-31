@@ -6,8 +6,9 @@ a command, flag, span, attribute or gotcha changes, update it in the same change
 numbers go to the lab notebook, not here (the history up to 2026-10-31 is in
 `~/code/lab_notebook/ephem-telemetry-history-2026-10-31.md`).
 
-Last verified: 2026-10-31, ephem d489af37 (git 4aae603: routes without `/v1`), every command below run from a clean
-worktree of main. Exceptions are marked *not re-run*.
+Last verified: 2026-10-31, ephem d489af37, every command below run from a clean worktree of main. Exceptions are marked
+*not re-run*. Paths: the API is under `/v1` (CACHE_VERSION 16); numbers measured on d489af37 were taken on the same
+endpoints without the prefix (git 4aae603 to the `/v1` restore).
 
 ## The loop
 
@@ -18,10 +19,10 @@ a trace shows a user-visible problem.
 
 | I want to… | Run |
 | --- | --- |
-| see one request | `python3 scripts/obs/trace.py --latest /day` or `trace.py <traceId>` |
+| see one request | `python3 scripts/obs/trace.py --latest /v1/day` or `trace.py <traceId>` |
 | see one page view, client + server | `node --experimental-strip-types scripts/obs/journey.ts https://ephem.ivar.workers.dev/ --device iphone --cold` |
 | see a real user's page view | `node --experimental-strip-types scripts/obs/trace-view.ts --latest --real` |
-| CPU / wall by version and route | `python3 scripts/obs/cpu-by-version.py --minutes 30 [--version <id>] [--path /day]` |
+| CPU / wall by version and route | `python3 scripts/obs/cpu-by-version.py --minutes 30 [--version <id>] [--path /v1/day]` |
 | where the CPU goes | `scripts/obs/profile.sh <full version uuid>` |
 | query request logs (SQL) | `python3 scripts/obs/basin.py sql by-route --hours 1` |
 | check prod end to end | `scripts/smoke.sh https://ephem.ivar.workers.dev` |
@@ -41,9 +42,9 @@ fails loudly rather than returning a partial result).
 | Tool | What it gives you |
 | --- | --- |
 | `python3 trace.py <traceId>` / `--latest <path>` / `--jsonrpc-id <id>` | One request: invocation CPU/wall/outcome, the Effect span tree rebuilt from `effect.parent_id`, and the runtime's spans (fetch, jsRpc, R2). The front door and an Api invocation it called are two traces sharing one cf-ray. `--jsonrpc-id` finds one MCP message (the probe's ids are `<run>-<step>`). |
-| `python3 cpu-by-version.py [--minutes 30] [--path /alignment] [--version <id>] [--entrypoint Api] [--from ISO --to ISO] [--json out]` | CPU and wall p50/p90/p99 and CPU sum per (version, entrypoint, path, status). Entrypoints: `default` (front door), `Api`, `BlockStore`, `MetarFeed`, `Og`. `--path` is a server-side filter; `--from/--to` read the window in full. Wall includes waitUntil (the Basin send). The A/B tool. |
+| `python3 cpu-by-version.py [--minutes 30] [--path /v1/alignment] [--version <id>] [--entrypoint Api] [--from ISO --to ISO] [--json out]` | CPU and wall p50/p90/p99 and CPU sum per (version, entrypoint, path, status). Entrypoints: `default` (front door), `Api`, `BlockStore`, `MetarFeed`, `Og`. `--path` is a server-side filter; `--from/--to` read the window in full. Wall includes waitUntil (the Basin send). The A/B tool. |
 | `scripts/obs/profile.sh <version uuid> [cpu\|heap] [ms]` | Drives `load.sh`, captures a prod profile of that exact version, symbolizes it (`symbolize.py`), prints the top. Files in `profiles/` (gitignored). See "Profile". |
-| `python3 queue_wait.py --from ISO --to ISO [--path /position] [--over 20] [--version id] [--json out]` | Server-side wait before the handler ran (Effect request span start − runtime request span start), per request, tagged **new isolate** or **busy isolate**. Use it instead of client p99 for "did X slow Y down". `--path /internal/alignment-search-window` for search windows. |
+| `python3 queue_wait.py --from ISO --to ISO [--path /v1/position] [--over 20] [--version id] [--json out]` | Server-side wait before the handler ran (Effect request span start − runtime request span start), per request, tagged **new isolate** or **busy isolate**. Use it instead of client p99 for "did X slow Y down". `--path /internal/alignment-search-window` for search windows. |
 | `python3 cold-split.py --from ISO --to ISO [--route track] [--json out]` | Api CPU by isolate warmth (`ephem.isolate_computes`: 1 = the isolate's first computation) and the pre-router gap (isolate start-up). |
 | `python3 cache-probe.py [base] --mode repeat\|unique\|burst [--keys 10] [--repeats 5] [--burst 50] [--routes day,…]` | Client-side check of Workers Caching: `x-ephem-cache`, client and server-timing latency per (route, status). `burst` fires N concurrent identical cold requests: the only test of request collapsing (expect 1 MISS + N−1 HIT). |
 | `python3 metar-cache.py [--minutes 30] [--version id] [--slice 2]` | METAR feed: tier mix (hit / updating / miss / revalidated / stale), wall and CPU, data age, parses; upstream calls by status and per minute. |
@@ -51,10 +52,10 @@ fails loudly rather than returning a partial result).
 | `node --experimental-strip-types mcp-probe.ts [base]` | Full MCP session against `/mcp` (legacy handshake + modern 2026-07-28 flow + error cases); every tool call checked equal to its REST endpoint. Pass/fail table with cf-rays. Part of the smoke. |
 | `scripts/smoke.sh <base> [--pin <id>] [--expect <id>] [--expect-compute <id>] [--only a,b] [--run id --manifest file]` | Every route + content checks + the MCP probe, concurrently. See "Ship and roll back". |
 | `python3 canary-gate.py ephem <new> <prev> --since ISO --run ID --manifest FILE [--live 90] [--early 0.75] [--until ISO] [--json out]` | deploy.sh's telemetry gate. Not run by hand normally. Per-event rules: `gate_rules.py` (test: packages/worker/test/canary-gate.test.ts). |
-| `node --experimental-strip-types abort-probe.ts [base] [--run id] [--pin id] [--only mcp-fast,home-stream,…] [--delay ms]` | Client disconnects on purpose (raw TLS, drop the socket mid-request): `/mcp`, streamed `/`, `/position`, `/track`. Requests carry `x-ephem-smoke: <run>`. |
+| `node --experimental-strip-types abort-probe.ts [base] [--run id] [--pin id] [--only mcp-fast,home-stream,…] [--delay ms]` | Client disconnects on purpose (raw TLS, drop the socket mid-request): `/mcp`, streamed `/`, `/v1/position`, `/v1/track`. Requests carry `x-ephem-smoke: <run>`. |
 | `python3 abort-read.py <run> [--minutes 15]` | What an abort-probe run left: per request outcome, status, error spans, every log line with its level. |
 | `python3 gate-fixture.py <out.json> <ray>… [--service ephem] [--note …]` | Record a gate test fixture (the rays' invocation, logs, spans, trimmed: no headers or IP) into packages/worker/test/fixtures/gate/. |
-| `python3 tail-check.py [--minutes 10] [--version <id>] [--wait 90] [--require /track,…]` | ephem-tail health from its own o11y events: invocations by (version, outcome), `basin_send_failed`, route labels. deploy.sh runs it after a tail deploy. |
+| `python3 tail-check.py [--minutes 10] [--version <id>] [--wait 90] [--require /v1/track,…]` | ephem-tail health from its own o11y events: invocations by (version, outcome), `basin_send_failed`, route labels. deploy.sh runs it after a tail deploy. |
 | `node --experimental-strip-types journey.ts <url> [--device iphone\|desktop] [--net fast3g\|4g\|none] [--cpu 4] [--cold\|--warm] [--script home-drag\|none] [--duration 70] [--out dir]` | Unified client+server trace of one page view through our CDP client (`cdp/`). See "Page views". `--rebuild <name>.raw.json` after a model/viewer change. |
 | `node --experimental-strip-types trace-view.ts <client trace id>\|--latest [--real] [--out dir]` | A real page view rebuilt from production RUM + request rows + o11y; same viewer. |
 | `[SIZES=390,375] node --experimental-strip-types home-states.ts <base> <outDir> [filter]` | Screenshots of `/` in every sky state (debug `?at=`), light and dark, with the chart's label layout from `window.__sky` (overlaps, dropped, crossed: must be empty). |
@@ -316,11 +317,11 @@ stops the run. Writes `load-runs/<run>.json`.
 
 | mode | requests |
 | --- | --- |
-| `position` | `GET /position?lat=40.7&lon=-74` (live, front door) |
+| `position` | `GET /v1/position?lat=40.7&lon=-74` (live, front door) |
 | `warm` | 24 fixed day / track / alignment keys, prewarmed by every shard: HITs |
-| `track` | homepage-shaped `/track` (72 h from a UTC midnight) at a fresh lat/lon |
-| `weather` | `/weather` at a random land-weighted lat/lon |
-| `search` | `POST /alignment/search`, 12-month Brooklyn Bridge Park scan at a fresh target height |
+| `track` | homepage-shaped `/v1/track` (72 h from a UTC midnight) at a fresh lat/lon |
+| `weather` | `/v1/weather` at a random land-weighted lat/lon |
+| `search` | `POST /v1/alignment/search`, 12-month Brooklyn Bridge Park scan at a fresh target height |
 | `mixed` | position 40, warm 30, track 15, weather 14, search 1 (`--mix` to change) |
 
 Cold keys come from a PRNG seeded by the run id and shard, so they are new every run. Every request carries
@@ -450,12 +451,12 @@ the entrypoints whose `exports` entry enables it (cloudflare.config.ts), driven 
 
 ```
 eyeball ─▶ default (cache OFF: always runs → every request has its trace, Basin row, request.cf; `/` and `/mcp` live here)
-             ├─ GET /day, /alignment, /track, /sightline, /crossing, /position|/magnetic with time, search windows
+             ├─ GET /v1/day, /v1/alignment, /v1/track, /v1/sightline, /v1/crossing, /v1/position|/v1/magnetic with time, search windows
              │     ─▶ loopback.ts api: ctx.exports.Api.fetch(path + sorted query, { cf: { cacheKey: "/v<CACHE_VERSION>" + path + query } })
              │        ─▶ Api (cache ON) ─▶ blocks: GET /block/v<N>/<sha16>/<i>   (ctx.exports.BlockStore, cache ON) ─▶ R2 ephem-de440
              │                         └▶ geoid:  GET /geoid/v<N>/<sha16>/<band> (ctx.exports.BlockStore, cache ON) ─▶ R2 ephem-geoid
              ├─ live (position / magnetic without time): computed here; blocks / geoid via BlockStore
-             ├─ /weather: computed here; feed via GET /feed/v<N>/metars.cache.csv.gz (ctx.exports.MetarFeed, cache ON) ─▶ aviationweather.gov
+             ├─ /v1/weather: computed here; feed via GET /feed/v<N>/metars.cache.csv.gz (ctx.exports.MetarFeed, cache ON) ─▶ aviationweather.gov
              └─ /og.png: ctx.exports.Og (cache ON) ─▶ Api answers + glyph (service binding)
 ```
 
@@ -468,9 +469,9 @@ is why a miss costs more wall than a front-door compute.
 
 | Route | Api (what Workers Caching stores) | Outward | Why |
 | --- | --- | --- | --- |
-| `/day`, `/alignment`, `/track`, `/sightline`, `/crossing`, `/position` + `time`, `/magnetic` + `time`, search windows | `public, max-age=31536000, immutable` | same | pure function of the query; CACHE_VERSION is in the key |
-| `/weather` | computed in the front door (feed via MetarFeed) | `private, max-age=30` | keys almost never repeat; forwarding paid the tier round trip |
-| `/position`, `/magnetic` without `time` | not forwarded | `no-store` / `public, max-age=3600` | max-age=0 forwarding cost +35 ms server p50 with no sequential hits |
+| `/v1/day`, `/v1/alignment`, `/v1/track`, `/v1/sightline`, `/v1/crossing`, `/v1/position` + `time`, `/v1/magnetic` + `time`, search windows | `public, max-age=31536000, immutable` | same | pure function of the query; CACHE_VERSION is in the key |
+| `/v1/weather` | computed in the front door (feed via MetarFeed) | `private, max-age=30` | keys almost never repeat; forwarding paid the tier round trip |
+| `/v1/position`, `/v1/magnetic` without `time` | not forwarded | `no-store` / `public, max-age=3600` | max-age=0 forwarding cost +35 ms server p50 with no sequential hits |
 | any non-200 from the Api, or no Cache-Control | `no-store` | `no-store` | errors are never cached (`defaultNoStore`) |
 | `/` | never forwarded | `private, no-store` | the sky at request.cf's location; the key ignores request.cf |
 | `/docs`, `/docs/interactive`, `/llms.txt`, `/openapi.json` | — | `public, max-age=300` | cheap, front door |
@@ -519,7 +520,7 @@ throws if a band wasn't prefetched (a wiring bug can never answer a wrong height
 `manifest` after `reference/geoid/make_grid.py`. Bucket `ephem-geoid`; **never** write to `ephem-de440`. Tests use no
 network: test-setup.ts installs the source-tree grid (`geoid-bundled.ts`, never imported by the Worker).
 
-### Alignment search (`POST /alignment/search`, src/search.ts)
+### Alignment search (`POST /v1/alignment/search`, src/search.ts)
 
 One POST in the front door → one `GET /internal/alignment-search-window` per 30-day window on a fixed UTC grid, all in
 parallel through `loopback.ts api` (cached, immutable, cross-version) → merge, filter, include. The front door answers 404
@@ -537,8 +538,8 @@ The response repeats the counters (`search.counters`; a HIT returns the counts o
 
 ```sh
 python3 scripts/obs/cpu-by-version.py --minutes 20 --path /internal/alignment-search-window --entrypoint Api   # per window
-python3 scripts/obs/cpu-by-version.py --minutes 20 --path /alignment/search                                   # the merge
-python3 scripts/obs/trace.py --latest /alignment/search                                                       # fan-out tree
+python3 scripts/obs/cpu-by-version.py --minutes 20 --path /v1/alignment/search                                   # the merge
+python3 scripts/obs/trace.py --latest /v1/alignment/search                                                       # fan-out tree
 ```
 
 A cold scan needs keys nobody has cached: vary the target height or region by a centimetre (the region is quantised to
@@ -577,7 +578,7 @@ some spans).
   what is missing (and weather). Spans: `home.embed` (`home.embedded`: how many of three), `html.stream` (the streamed
   body's end: last chunk handed to the runtime). Marks `ephem:embedded` or `ephem:fetched`, then `ephem:data`.
 - **Debug states:** `/?lat=&lon=&tz=&place=&at=<ISO>[&pose=<az>,<alt>]` freezes the page clock and asks
-  `/position?time=` (the embed is ignored). `home-states.ts` shoots every state.
+  `/v1/position?time=` (the embed is ignored). `home-states.ts` shoots every state.
 - **The chart draws only on change** (data, resize, theme, drag, pointing, fonts; a once-a-second check whether a live
   marker moved half a pixel). No rAF loop. `window.__sky.draws` counts frames.
 - **Chart model (CORE_JS, pure):** `skyModel` (`trackSpan`: one azimuth revolution cut at the seam; `altU`: linear above
@@ -616,7 +617,7 @@ scene → PNG) over the `GLYPH` service binding (a public fetch between two `*.i
 ### Rates (altitudeRate, azimuthRate)
 
 One function, `topocentricRates` (packages/core/src/observe.ts), analytic from the DE440 Chebyshev velocity (DESIGN.md
-"Rates"); /track reports none. Measured 2026-10-30: 3.6e-7 °/min (alt) and 3.9e-7 (az·cos) vs Richardson(30 s, 60 s) over
+"Rates"); /v1/track reports none. Measured 2026-10-30: 3.6e-7 °/min (alt) and 3.9e-7 (az·cos) vs Richardson(30 s, 60 s) over
 200 000 samples, at or below what a difference of these positions can resolve (a JD is one double: instants round to
 40 µs). Within 1° of the zenith or nadir the ±2 s difference itself is off by > 1e-5 (cusp), so properties.test.ts checks
 nothing there. fast-check prints `{ seed, path }` on failure; `FC_SEED=<seed> npx vitest run
@@ -632,11 +633,11 @@ The latest measurement of each, with its version. Older and superseded numbers: 
 | canary telemetry gate (early pass) | 22–30 s | 802adee1, b4694777 |
 | homepage, iPhone Fast 3G 4× CPU, cold | TTFB 807, FCP 979, data drawn 1230 ms; 21/21 requests joined; θ 22.2 ± 12.7 ms | b4694777 / ac16823e (mid-deploy), J20261031T044455Z-1xi2 |
 | remote load, client p50 (enam + weur) | position 8 ms, warm HIT 11 ms, weather 15 ms, cold track 288 ms, cold scan 238 ms | d489af37, L20261031T045109Z-uqz8 |
-| front-door CPU p50 / p99 | `/alignment` 2 / 35, `/day` 2 / 22, `/alignment/search` merge 29 / 39 ms | d489af37, same run |
+| front-door CPU p50 / p99 | `/v1/alignment` 2 / 35, `/v1/day` 2 / 22, `/v1/alignment/search` merge 29 / 39 ms | d489af37, same run |
 | search window Api CPU p50 / p90 / p99 | 52 / 100 / 133 ms (n 70) | d489af37 |
-| Api, fresh isolate vs warm (`/track`) | CPU p50 43 vs 10–11 ms; pre-router gap p50 92 ms | d489af37 |
-| live `/position` wait before the handler | p50 / p99 / max 0 / 15 / 39 ms (n 121) | d489af37 |
-| 10 identical cold `/day` | 1 MISS + 9 HIT | d489af37 |
+| Api, fresh isolate vs warm (`/v1/track`) | CPU p50 43 vs 10–11 ms; pre-router gap p50 92 ms | d489af37 |
+| live `/v1/position` wait before the handler | p50 / p99 / max 0 / 15 / 39 ms (n 121) | d489af37 |
+| 10 identical cold `/v1/day` | 1 MISS + 9 HIT | d489af37 |
 | `/og.png` | MISS 1.3–1.6 s, HIT 0.14 s client; PNG ~166 KB | b4694777 smoke |
 | CPU per cold 12-month park scan | 500–519 ms (Σ 14 windows + merge) | 8413211a (2026-10-30) |
 
@@ -646,13 +647,13 @@ Measured on prod 7c99bb80 with `abort-probe.ts` + `abort-read.py` (2026-10-31):
 
 | client leaves | the runtime records (7c99bb80; unchanged on 7b486e71) |
 | --- | --- |
-| before the response exists (`/track`, `/mcp` tools/call track: forwarded to the Api) | outcome `canceled`, no status, no log |
-| after the response exists, while the body is written (`/mcp` position at +5–15 ms, streamed `/` after the head, `/position`) | outcome **ok**, no status, root span level error `Network connection lost.`, an **error-level log** `{"message":"Network connection lost.","exception":{"name":"Error"}}` |
+| before the response exists (`/v1/track`, `/mcp` tools/call track: forwarded to the Api) | outcome `canceled`, no status, no log |
+| after the response exists, while the body is written (`/mcp` position at +5–15 ms, streamed `/` after the head, `/v1/position`) | outcome **ok**, no status, root span level error `Network connection lost.`, an **error-level log** `{"message":"Network connection lost.","exception":{"name":"Error"}}` |
 | `POST /mcp` with half the body sent | nothing: the edge never invokes the Worker |
 
 `request.signal` does not fire on a disconnect at our compatibility date (lab Worker, 2026-10-31), so Effect's
 `ClientAbort` (499) never triggers. **The runtime's error log is not ours to change**: it appeared with a native byte body and
-with a native stream alike (7b486e71: `/position` ray a5305629298c43e7, `/` ray a5305628a94843e7), so the telemetry gate
+with a native stream alike (7b486e71: `/v1/position` ray a5305629298c43e7, `/` ray a5305628a94843e7), so the telemetry gate
 classifies it (`gate_rules.py`: a client abort when the ray's invocation shows no server error). src/abort.ts `deliver()`
 adds our own record for streamed bodies (no Content-Length or a content-encoding: `/`, forwarded Api streams): an
 IdentityTransformStream pumped chunk by chunk from waitUntil (chunked framing ends with our close, so a client cannot
@@ -696,6 +697,6 @@ a client leaving early often still gets a 200 recorded).
 - `npm install` in the shared tree removes the per-package `node_modules/wrangler` symlinks cf needs. Restore with
   `ln -sfn "$PWD/node_modules/wrangler" packages/<p>/node_modules/wrangler` (worker, tail, load).
 - A pipeline binding for a new stream once failed a version upload with `[10021] Pipeline binding error` (transient).
-- `/day` needs `tz`; `/track` rejects a start/end off the stepSeconds grid (snap on the client so keys are shared). The
+- `/v1/day` needs `tz`; `/v1/track` rejects a start/end off the stepSeconds grid (snap on the client so keys are shared). The
   homepage's live poll sends no `time` (with one it would leave a single-use immutable entry).
 - The default handler's TailItem has no `entrypoint` (ephem-tail labels it `-`).

@@ -7,7 +7,7 @@ Inputs (all explicit paths, read as data, never executed):
   --nasr-zip  the NASR 28-day APT CSV zip (nfdc.faa.gov/webContent/28DaySub/extra/<DD_Mon_YYYY>_APT_CSV.zip); APT_BASE.csv is
               read straight from the zip. Columns used: EFF_DATE ARPT_ID ICAO_ID SITE_TYPE_CODE STATE_CODE ARPT_NAME
               LAT_DECIMAL LONG_DECIMAL ELEV (ft MSL) MAG_VARN (whole degrees) MAG_HEMIS (E/W) MAG_VARN_YEAR.
-  --metar     aviationweather.gov metars.cache.csv(.gz): its station_id set marks the airports our /weather card can show.
+  --metar     aviationweather.gov metars.cache.csv(.gz): its station_id set marks the airports our /v1/weather card can show.
 Needs (in the Python env): numpy, ppigrf (bundles IGRF-14 IGRF14.shc, 1900-2030), pygeomag (bundles WMM_2025.COF, byte-identical
 to NOAA's WMM.COF). `node` must be on PATH: our values come from packages/core/src/wmm.ts via --experimental-strip-types.
 
@@ -99,7 +99,7 @@ def main():
     ap.add_argument("--nasr-zip", required=True)
     ap.add_argument("--metar")
     ap.add_argument("--csv", help="write the per-airport table here")
-    ap.add_argument("--api", help="base URL; checks /magnetic for a sample of airports against core")
+    ap.add_argument("--api", help="base URL; checks /v1/magnetic for a sample of airports against core")
     ap.add_argument("--api-sample", type=int, default=20)
     ap.add_argument("--epoch-offset", type=float, default=0.0, help="years added to MAG_VARN_YEAR (0 = 1 Jan)")
     a = ap.parse_args()
@@ -180,12 +180,12 @@ def main():
         worst, today = 0.0, dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
         for i in idx:
             r = rows[i]
-            u = f"{a.api}/magnetic?lat={r['lat']}&lon={r['lon']}&height={r['elev_ft'] * 0.3048:.1f}"
+            u = f"{a.api}/v1/magnetic?lat={r['lat']}&lon={r['lon']}&height={r['elev_ft'] * 0.3048:.1f}"
             b = json.load(urllib.request.urlopen(urllib.request.Request(u, headers={"user-agent": "ephem-check-magvar"}), timeout=20))
             t = b.get("magnetic", {}).get("decimalYear") or b.get("decimalYear") or decimal_year(today)
             core = ours([[r["lat"], r["lon"], r["elev_ft"] * FT_KM, t]])[0]
             worst = max(worst, abs(b["magnetic"]["declination"] - core))
-        print(f"\nAPI {a.api}/magnetic vs core on {len(idx)} airports: max |api - core| = {worst:.2e} deg")
+        print(f"\nAPI {a.api}/v1/magnetic vs core on {len(idx)} airports: max |api - core| = {worst:.2e} deg")
 
     if a.csv:
         with open(a.csv, "w", newline="") as f:

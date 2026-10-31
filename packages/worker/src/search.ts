@@ -1,4 +1,4 @@
-// /alignment/search. POST (front door): validate, canonicalise the region, fan out one GET per 30-day window on the fixed
+// /v1/alignment/search. POST (front door): validate, canonicalise the region, fan out one GET per 30-day window on the fixed
 // grid, merge, filter. GET /internal/alignment-search-window (Api entrypoint, immutable in Workers Caching): one window computed.
 //
 // Why fan out instead of caching the POST (Workers Caching stores GET/HEAD only): a rolling "next 12 months" scan never

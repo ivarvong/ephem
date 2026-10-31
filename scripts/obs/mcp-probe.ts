@@ -37,7 +37,7 @@ const ARGS = {
   magnetic: { lat: 40.7, lon: -74, time: "2026-11-17T03:45:00Z" },
   weather: { lat: 40.7, lon: -74, count: 3 },
 } as const
-const REST_PATH: Record<string, string> = { position: "/position", day: "/day", crossing: "/crossing", alignment: "/alignment", sightline: "/sightline", track: "/track", weather: "/weather", alignment_search: "/alignment/search", magnetic: "/magnetic" }
+const REST_PATH: Record<string, string> = { position: "/v1/position", day: "/v1/day", crossing: "/v1/crossing", alignment: "/v1/alignment", sightline: "/v1/sightline", track: "/v1/track", weather: "/v1/weather", alignment_search: "/v1/alignment/search", magnetic: "/v1/magnetic" }
 const POST_TOOLS = new Set(["alignment_search"])   // JSON body, not a query
 
 type Row = { step: string; expect: string; got: string; ok: boolean; ms: number; ray: string }
@@ -136,10 +136,10 @@ const b03 = await send([{ jsonrpc: "2.0", id: `${run}-b2`, method: "ping" }, { j
 check("batch(2025-03-26, no header)", "200 [1 reply]", b03, b03.status === 200 && Array.isArray(b03.json) && b03.json.length === 1, JSON.stringify(b03.json))
 const xa = await modern("err.excess_arg", "tools/call", { name: "day", arguments: { lat: 40.7, lon: -74, date: day, tz: "America/New_York", temprature: -20 } })
 check("err.excess_arg", "isError=true (unknown argument)", xa, xa.json?.result?.isError === true, (xa.json?.result?.content?.[0]?.text ?? "").slice(0, 60).replace(/\n/g, " "))
-const unk = await fetch(`${base}/day?lat=40.7&lon=-74&date=${day}&tz=America/New_York&temprature=-20`), unkBody: any = await unk.json().catch(() => ({}))
+const unk = await fetch(`${base}/v1/day?lat=40.7&lon=-74&date=${day}&tz=America/New_York&temprature=-20`), unkBody: any = await unk.json().catch(() => ({}))
 check("rest.unknown_param", "400 InvalidRequest naming it, did-you-mean + allowed", { status: unk.status, ms: 0, ray: unk.headers.get("cf-ray") ?? "" },
   unk.status === 400 && unkBody?._tag === "InvalidRequest" && unkBody?.parameter === "temprature" && /did you mean temperature/.test(unkBody?.message) && unkBody?.allowed?.includes("temperature"), `${unkBody?._tag} ${unkBody?.parameter}`)
-const nullPos: any = await (await fetch(`${base}/position?lat=40.7484&lon=-73.9857&time=2026-10-30T05:00:00Z`)).json()
+const nullPos: any = await (await fetch(`${base}/v1/position?lat=40.7484&lon=-73.9857&time=2026-10-30T05:00:00Z`)).json()
 check("rest.position_below_horizon", "sun.apparentAltitude null + conventions", { status: 200, ms: 0, ray: "" },
   nullPos?.sun?.apparentAltitude === null && typeof nullPos?.sun?.altitudeRate === "number" && nullPos?.conventions?.horizon?.kind === "sea" && typeof nullPos?.observer?.geoidUndulation === "number",
   `alt=${nullPos?.sun?.altitude?.toFixed?.(2)} app=${nullPos?.sun?.apparentAltitude} N=${nullPos?.observer?.geoidUndulation?.toFixed?.(2)}`)

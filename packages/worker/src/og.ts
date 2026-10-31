@@ -119,7 +119,7 @@ export interface BodyNow {
   readonly declination?: number; readonly phase?: { readonly illuminatedFraction: number; readonly brightLimbAngle: number }
 }
 export interface DayEvent { readonly time: string; readonly body: string; readonly kind: string }
-/** /track's answer, as much of it as the chart reads. */
+/** /v1/track's answer, as much of it as the chart reads. */
 export interface TrackAnswer { readonly start: string; readonly stepSeconds: number; readonly count: number
   readonly sun: { readonly azimuth: readonly number[]; readonly altitude: readonly number[] }; readonly moon: { readonly azimuth: readonly number[]; readonly altitude: readonly number[] } }
 export interface OgData {
@@ -127,7 +127,7 @@ export interface OgData {
   readonly at: number                          // ms: the instant drawn (the start of the time bucket)
   readonly sun: BodyNow; readonly moon: BodyNow
   readonly track: TrackAnswer | null
-  readonly events: readonly DayEvent[]         // today's and tomorrow's /day events (local days in tz)
+  readonly events: readonly DayEvent[]         // today's and tomorrow's /v1/day events (local days in tz)
 }
 const altOf = (b: BodyNow) => b.apparentAltitude ?? b.altitude
 
@@ -170,10 +170,10 @@ export const ogApiQueries = (q: OgQuery) => {
   const today = localDate(at, q.tz), tomorrow = new Date(Date.parse(today + "T00:00:00Z") + 864e5).toISOString().slice(0, 10)
   const qs = (o: Record<string, string>) => new URLSearchParams(Object.entries(o).toSorted(([a], [b]) => (a < b ? -1 : 1))).toString()
   return {
-    position: `/position?${qs({ ...ll, time: iso(at) })}`,
-    track: `/track?${qs({ ...ll, start: iso(t0), end: iso(t0 + 72 * 3600e3) })}`,
-    today: `/day?${qs({ ...ll, date: today, tz: q.tz })}`,
-    tomorrow: `/day?${qs({ ...ll, date: tomorrow, tz: q.tz })}`,
+    position: `/v1/position?${qs({ ...ll, time: iso(at) })}`,
+    track: `/v1/track?${qs({ ...ll, start: iso(t0), end: iso(t0 + 72 * 3600e3) })}`,
+    today: `/v1/day?${qs({ ...ll, date: today, tz: q.tz })}`,
+    tomorrow: `/v1/day?${qs({ ...ll, date: tomorrow, tz: q.tz })}`,
   }
 }
 const localDate = (ms: number, tz: string) => new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(ms))

@@ -1,6 +1,6 @@
 // The page head's preview tags (src/og.ts ogHead). For a link-preview fetcher (og.ts PREVIEW_BOT: iMessage, Slack, X,
 // Facebook, …) the head first reads the live numbers for og:description and og:image:alt, in-process as the page's embeds do
-// (src/embed.ts routeText: /position now, /day today and tomorrow), within OG_LIVE_MS; a person's page never waits.
+// (src/embed.ts routeText: /v1/position now, /v1/day today and tomorrow), within OG_LIVE_MS; a person's page never waits.
 import * as Effect from "effect/Effect"
 import type * as HttpRouter from "effect/http/HttpRouter"
 import type * as HttpServerRequest from "effect/http/HttpServerRequest"
@@ -22,7 +22,7 @@ export const ogHeadFor = (router: HttpRouter.HttpRouter, req: HttpServerRequest.
   const tomorrow = new Date(Date.parse(today + "T00:00:00Z") + 864e5).toISOString().slice(0, 10)
   const json = (path: string, q: Record<string, string>) => routeText(router, req, path, q, traceparent).pipe(
     Effect.map(r => (r.status === 200 ? JSON.parse(r.text) : null)))
-  const live = yield* Effect.all([json("/position", ll), json("/day", { ...ll, date: today, tz: v.tz }), json("/day", { ...ll, date: tomorrow, tz: v.tz })], { concurrency: "unbounded" }).pipe(
+  const live = yield* Effect.all([json("/v1/position", ll), json("/v1/day", { ...ll, date: today, tz: v.tz }), json("/v1/day", { ...ll, date: tomorrow, tz: v.tz })], { concurrency: "unbounded" }).pipe(
     Effect.map(([pos, d0, d1]) => (pos && d0 ? { sun: pos.sun, moon: pos.moon, events: [...d0.events, ...(d1?.events ?? [])] } : null)),
     Effect.timeoutOption(OG_LIVE_MS), Effect.map(o => (o._tag === "Some" ? o.value : null)),
     Effect.catchCause(() => Effect.succeed(null)), Effect.withSpan("home.og"))

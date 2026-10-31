@@ -23,7 +23,7 @@ setGeoidSource(bundledGeoidBand)   // the grid from the source tree; prod reads 
 const port = Number(process.argv[2] ?? 8787)
 
 createServer(async (req, res) => {
-  const chunks: Buffer[] = []; for await (const c of req) chunks.push(c as Buffer)   // POST bodies (/mcp, /alignment/search)
+  const chunks: Buffer[] = []; for await (const c of req) chunks.push(c as Buffer)   // POST bodies (/mcp, /v1/alignment/search)
   const method = req.method ?? "GET", body = method === "GET" || method === "HEAD" ? undefined : Buffer.concat(chunks)
   const r = await handler(new Request(`http://127.0.0.1:${port}${req.url ?? "/"}`, { method, headers: req.headers as Record<string, string>, ...(body ? { body } : {}) }))
   res.writeHead(r.status, Object.fromEntries(r.headers))

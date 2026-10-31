@@ -192,7 +192,7 @@ describe("og: routes and the render budget", () => {
       expect(r.headers.get("content-type")).toBe("image/png"); expect(isPng(b)).toBe(true)
       expect(new DataView(b.buffer).getUint32(16)).toBe(180); expect(new DataView(b.buffer).getUint32(20)).toBe(180)
     }
-    for (const p of ["/", "/og.pngx", "/assets/0000000000000000/ephem-din-bold.woff2", "/position"]) expect(await ogFront(new Request(`https://e${p}`), lb), p).toBeUndefined()
+    for (const p of ["/", "/og.pngx", "/assets/0000000000000000/ephem-din-bold.woff2", "/v1/position"]) expect(await ogFront(new Request(`https://e${p}`), lb), p).toBeUndefined()
     expect(await ogFront(new Request("https://e/og.png", { method: "POST" }), lb)).toBeUndefined()
   })
   it("renderGlyph: the PNG within the budget; past it, null now and the render left running in waitUntil", async () => {

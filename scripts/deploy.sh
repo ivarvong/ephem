@@ -143,7 +143,7 @@ rollback_ephem() {
 tail_verify() {   # after ephem traffic (the smoke): the new tail ran ok and labelled the smoke's routes; else roll it back
   [ -n "${TAIL_NEW:-}" ] || return 0
   echo "== tail check ($TAIL_NEW)"
-  if python3 -I "$WT/scripts/obs/tail-check.py" --version "$TAIL_NEW" --minutes 5 --wait 150 --require /track,/sightline,/alignment/search,/llms.txt,/docs/interactive; then
+  if python3 -I "$WT/scripts/obs/tail-check.py" --version "$TAIL_NEW" --minutes 5 --wait 150 --require /v1/track,/v1/sightline,/v1/alignment/search,/llms.txt,/docs/interactive; then
     git -C "$ROOT" tag -f "deployed-tail/$(date -u +%Y%m%dT%H%M%SZ)" "$SHA" >/dev/null; echo "== deployed ephem-tail $SHA ($TAIL_NEW)"; return 0
   fi
   route ephem-tail "rollback: tail check failed for $TAIL_NEW [git $SHA]" "$TAIL_PREV:100"

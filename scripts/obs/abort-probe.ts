@@ -7,8 +7,8 @@
 //   mcp-response  POST /mcp tools/call track (fresh key, ~300 ms), close --delay ms after sending (before the answer)
 //   mcp-fast      POST /mcp tools/call position (now: computed in the front door, ~10-30 ms), close --delay ms after sending
 //   home-stream   GET /, read the first response bytes of the streamed page, then close
-//   api-fast      GET /position (now: computed in the front door, ~10-30 ms), close --delay ms after sending
-//   api-response  GET /track (a slow-ish deterministic answer, fresh key), close at once
+//   api-fast      GET /v1/position (now: computed in the front door, ~10-30 ms), close --delay ms after sending
+//   api-response  GET /v1/track (a slow-ish deterministic answer, fresh key), close at once
 import * as tls from "node:tls"
 
 const args = process.argv.slice(2)
@@ -34,8 +34,8 @@ const cases: Case[] = [
   { name: "mcp-response", head: mcpHead, send: s => s.write(mcpHead + body), closeOn: "sent" },
   { name: "mcp-fast", head: fastHead, send: s => s.write(fastHead + fastBody), closeOn: "sent" },
   { name: "home-stream", head: "", send: s => s.write(hdr("GET", "/", { accept: "text/html" })), closeOn: "first-bytes" },
-  { name: "api-fast", head: "", send: s => s.write(hdr("GET", "/position?lat=40.7&lon=-74", {})), closeOn: "sent" },
-  { name: "api-response", head: "", send: s => s.write(hdr("GET", `/track?lat=40.7&lon=-74&start=${day}T00:00:00Z&end=${day}T23:00:00Z&stepSeconds=60`, {})), closeOn: "sent" },
+  { name: "api-fast", head: "", send: s => s.write(hdr("GET", "/v1/position?lat=40.7&lon=-74", {})), closeOn: "sent" },
+  { name: "api-response", head: "", send: s => s.write(hdr("GET", `/v1/track?lat=40.7&lon=-74&start=${day}T00:00:00Z&end=${day}T23:00:00Z&stepSeconds=60`, {})), closeOn: "sent" },
 ]
 
 const one = (c: Case) => new Promise<string>(resolve => {

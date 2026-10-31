@@ -41,7 +41,7 @@ describe("home: who is the sky for", () => {
     const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]!)
     expect(scripts.length).toBe(2)
     for (const js of scripts) expect(() => new Function(js)).not.toThrow()
-    expect(html).toContain('id="wx"'); expect(html).toContain("/weather"); expect(html).toContain("/magnetic")
+    expect(html).toContain('id="wx"'); expect(html).toContain("/v1/weather"); expect(html).toContain("/v1/magnetic")
   })
   it("keeps precision behind one collapsed Under the hood section", () => {
     const html = page(V)
@@ -94,7 +94,7 @@ describe("home: apparentAltitude null below the horizon (API 2026-10-29)", () =>
     const html = page(V)
     expect(html).toContain('"below horizon"')
     const uses = html.match(/[a-z]\.apparentAltitude\b(?! == null)/g) ?? []
-    expect(uses.length).toBeLessThanOrEqual(4)   // altOf itself, the null-checked readout value, the null-checked aria value, the /track sample copy (null kept)
+    expect(uses.length).toBeLessThanOrEqual(4)   // altOf itself, the null-checked readout value, the null-checked aria value, the /v1/track sample copy (null kept)
     expect(html).toMatch(/apparentAltitude: x\.apparentAltitude\[i\]/)
   })
 })
@@ -241,9 +241,9 @@ describe("home: altitude-ring labels stay off the path lines", () => {
       expect(spot.x).toBeGreaterThanOrEqual(bounds.x0); expect(spot.x + w).toBeLessThanOrEqual(bounds.x1)
     }), { numRuns: 400, seed: 20261029 })
   })
-  it("first load fetches only what was not embedded: one /track (not a /position per grid point), live position, today, weather", () => {
-    const html = page(V), calls = [...html.matchAll(/api\("(\/[a-z]+)"/g)].map(m => m[1])
-    expect(calls.toSorted()).toEqual(["/day", "/day", "/magnetic", "/position", "/track", "/weather"])   // tomorrow's day and magnetic are conditional
+  it("first load fetches only what was not embedded: one /v1/track (not a /v1/position per grid point), live position, today, weather", () => {
+    const html = page(V), calls = [...html.matchAll(/api\("(\/v1\/[a-z]+)"/g)].map(m => m[1])
+    expect(calls.toSorted()).toEqual(["/v1/day", "/v1/day", "/v1/magnetic", "/v1/position", "/v1/track", "/v1/weather"])   // tomorrow's day and magnetic are conditional
     expect(html).not.toMatch(/jobs\.push|time: new Date/)                                  // no per-sample fetch loop, no timed live poll
     expect(html).toMatch(/reloadAll\(\) \{[^\n]*loadTrack\(\), loadPos\(\), loadDay\(\), loadWx\(\)\]/)
   })
@@ -323,7 +323,7 @@ describe("home: first-load answers embedded in the streamed page", () => {
     return m ? JSON.parse(m[1]!) : null
   }
   const strip = (x: { provenance?: unknown }) => ({ ...x, provenance: undefined })   // diagnostics carry timings
-  it("embeds /position, /track and /day verbatim: the API's own answers to the page's own queries", async () => {
+  it("embeds /v1/position, /v1/track and /v1/day verbatim: the API's own answers to the page's own queries", async () => {
     vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-10-31T00:13:00Z"))
     try {
       const handler = makeHandler(fixtures)
@@ -384,8 +384,8 @@ describe("home: the chart in every sky state", () => {
   const get = async (path: string) => (await handler(new Request(`https://ephem.example${path}`))).json()
   for (const [name, lat, lon, at] of STATES) it(name, async () => {
     const now = Date.parse(at), D = Math.floor(now / 864e5), iso = (ms: number) => new Date(ms).toISOString().slice(0, 19) + "Z"
-    const pos = await get(`/position?lat=${lat}&lon=${lon}&time=${at}`)
-    const tr = await get(`/track?lat=${lat}&lon=${lon}&start=${iso((D - 1) * 864e5)}&end=${iso((D + 2) * 864e5)}`)
+    const pos = await get(`/v1/position?lat=${lat}&lon=${lon}&time=${at}`)
+    const tr = await get(`/v1/track?lat=${lat}&lon=${lon}&start=${iso((D - 1) * 864e5)}&end=${iso((D + 2) * 864e5)}`)
     const s0 = Date.parse(tr.start)
         const bodies = (["sun", "moon"] as const).map(k => {
       const b = pos[k], pts: Array<{ t: number; az: number; alt: number }> = []
@@ -395,7 +395,7 @@ describe("home: the chart in every sky state", () => {
     })
     // the timeline: labels in one row above and one below, never overlapping; no leader crosses any label
     const tz = name.startsWith("Tromsø") ? "Europe/Oslo" : name.startsWith("Sydney") ? "Australia/Sydney" : name.startsWith("Singapore") ? "Asia/Singapore" : "America/New_York"
-    const date = new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(now)), day = await get(`/day?lat=${lat}&lon=${lon}&date=${date}&tz=${encodeURIComponent(tz)}`)
+    const date = new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(now)), day = await get(`/v1/day?lat=${lat}&lon=${lon}&date=${date}&tz=${encodeURIComponent(tz)}`)
     const ds = Date.parse(day.start), dspan = Date.parse(day.end) - ds
     const sunS: Array<{ t: number; alt: number }> = []; for (let i = 0; i < tr.count; i++) { const t = s0 + i * tr.stepSeconds * 1000; if (t >= ds - 12e5 && t <= ds + dspan + 12e5) sunS.push({ t, alt: tr.sun.altitude[i] }) }
     const evs = day.events.map((e: { body: string; kind: string; time: string }) => ({ body: e.body, kind: e.kind, t: Date.parse(e.time) }))

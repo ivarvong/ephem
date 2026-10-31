@@ -67,7 +67,7 @@ describe("refraction down to the horizon (2026-10-29)", () => {
     // alignment's solver uses the same model, falling back to no refraction only below the floor
     expect(refract(5, 10, 1010)).toBe(apparentAltitudeOf(5, 10, 1010, -90)); expect(refract(-5, 10, 1010)).toBe(-5)
   })
-  it("asking two endpoints the same question gives the same answer: /crossing at apparent 0°, upper limb = /day's rise and set (≤ 1 ms)", () => {
+  it("asking two endpoints the same question gives the same answer: /v1/crossing at apparent 0°, upper limb = /v1/day's rise and set (≤ 1 ms)", () => {
     for (const [lat, lon, tz, date, extra] of [[40.7484, -73.9857, "America/New_York", "2026-10-29", {}], [69.6492, 18.9553, "Europe/Oslo", "2026-10-29", {}],
       [-33.8568, 151.2153, "Australia/Sydney", "2026-10-29", { temperature: -20, pressure: 1040 }], [40.7484, -73.9857, "America/New_York", "2026-10-28", { height: 320, heightRef: "msl" as const }]] as const) {
       const d = dayRequest(diskBlocks, { date, tz, lat, lon, ...extra }); if (!("ok" in d)) throw new Error(d.error)
@@ -216,13 +216,13 @@ describe("alignment self-consistency", () => {
 
 describe("limbs past the zenith (sweep 2026-10-31)", () => {
   // aim=upper / lower is the disc centre moved by r along the local vertical (AIM_DEFINITIONS, aimVector). Past the zenith that
-  // great circle comes down the other side: the limb's altitude is 180° − (alt + r), never alt + r > 90°. /crossing used alt ± r.
+  // great circle comes down the other side: the limb's altitude is 180° − (alt + r), never alt + r > 90°. /v1/crossing used alt ± r.
   const vecAlt = (aim: "upper" | "lower", ms: number, geo: { lat: number; lon: number; height: number }) => {
     const f = frameAt(diskBlocks, instant(ms), geo), a = apparent(diskBlocks, f, "sun"), tp = topocentric(f, a.v), z = tp.azimuth * DEG, h = tp.altitude * DEG
     const x = aimVector(aim, [Math.cos(h) * Math.sin(z), Math.cos(h) * Math.cos(z), Math.sin(h)], [0, 0, 1], angularRadius("sun", a.distanceKm))
     return Math.asin(x.dir[2]) / DEG
   }
-  it("a Sun that passes within its radius of the zenith: /crossing's upper-limb instants are where aimVector's upper limb is at the altitude, all of them", () => {
+  it("a Sun that passes within its radius of the zenith: /v1/crossing's upper-limb instants are where aimVector's upper limb is at the altitude, all of them", () => {
     const noon = Date.parse("2026-10-31T11:44:00Z"), dec = positionRequest(diskBlocks, { utcMs: noon, lat: 0, lon: 0 }).sun.declination
     const geo = { lat: dec + 0.1, lon: 0, height: 0 }   // culminates ~0.1° from the zenith: the upper limb goes over the top
     const startMs = noon - 1_800_000, endMs = noon + 1_800_000
@@ -246,7 +246,7 @@ describe("horizon profile wraparound and the date line (sweep 2026-10-31)", () =
         expect(profileAt(r, (a + δ) % 360)).toBeCloseTo(profileAt(p, a), 9)
       }), { numRuns: 400 })
   })
-  it("a sunrise behind a skyline that wraps through north: /day equals /crossing on the same profile (≤ 1 ms)", () => {
+  it("a sunrise behind a skyline that wraps through north: /v1/day equals /v1/crossing on the same profile (≤ 1 ms)", () => {
     const prof = "120:1.5,240:0.5", w = dayRequest(diskBlocks, { date: "2026-10-29", tz: "America/New_York", lat: 40.7484, lon: -73.9857, horizonProfile: prof }); if (!("ok" in w)) throw new Error(w.error)
     const c = crossingRequest(diskBlocks, { startMs: Date.parse(w.ok.start), endMs: Date.parse(w.ok.end), lat: 40.7484, lon: -73.9857, body: "sun", horizonProfile: prof, aim: "upper" }); if (!("ok" in c)) throw new Error(c.error)
     const rs = w.ok.events.filter(e => e.body === "sun" && (e.kind === "rise" || e.kind === "set"))

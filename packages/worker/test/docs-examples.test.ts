@@ -37,42 +37,42 @@ const q = (p: string) => new URL("http://x" + p).searchParams
 
 /** What each endpoint's docs say its answer is: one check per path. */
 const CLAIMS: Record<string, (j: any, path: string) => void> = {
-  "/position": (j, p) => {   // "Topocentric Sun and Moon at one instant (default now)"
+  "/v1/position": (j, p) => {   // "Topocentric Sun and Moon at one instant (default now)"
     if (q(p).has("time")) expect(j.time.utc).toBe(new Date(q(p).get("time")!).toISOString())
     else expect(Math.abs(Date.parse(j.time.utc) - Date.now())).toBeLessThan(5_000)
     for (const b of [j.sun, j.moon]) { expect(b.azimuth).toBeGreaterThanOrEqual(0); expect(b.azimuth).toBeLessThan(360); expect(typeof b.altitudeRate).toBe("number") }
     expect(j.moon.phase.illuminatedFraction).toBeGreaterThanOrEqual(0); expect(j.moon).toHaveProperty("brightLimbAngleFromVertical")
   },
-  "/track": async (j, p) => {   // "on a UTC grid (≤ 8 days, ≤ 1 441 samples) … each sample equals /position at that instant"
+  "/v1/track": async (j, p) => {   // "on a UTC grid (≤ 8 days, ≤ 1 441 samples) … each sample equals /v1/position at that instant"
     expect(j.count).toBeLessThanOrEqual(1441); expect(j.sun.azimuth).toHaveLength(j.count)
     for (const i of [0, j.count >> 1, j.count - 1]) {
       const t = new Date(Date.parse(j.start) + i * j.stepSeconds * 1000).toISOString(), s = q(p)
-      const pos = (await get(`/position?lat=${s.get("lat")}&lon=${s.get("lon")}&time=${t}`)).j
+      const pos = (await get(`/v1/position?lat=${s.get("lat")}&lon=${s.get("lon")}&time=${t}`)).j
       expect(j.sun.azimuth[i]).toBe(pos.sun.azimuth); expect(j.moon.altitude[i]).toBe(pos.moon.altitude)
     }
   },
-  "/day": j => {   // "Rise, set, transit, civil / nautical / astronomical twilight, golden and blue hour … sorted by time"
+  "/v1/day": j => {   // "Rise, set, transit, civil / nautical / astronomical twilight, golden and blue hour … sorted by time"
     const kinds = new Set(j.events.map((e: any) => `${e.body}.${e.kind}`))
     for (const k of ["sun.rise", "sun.set", "sun.transit", "sun.civilDawn", "sun.nauticalDusk", "sun.astronomicalDawn", "sun.goldenHourStart", "sun.blueHourEnd", "moon.transit"]) expect(kinds, k).toContain(k)
     const ts = j.events.map((e: any) => Date.parse(e.time)); expect(ts).toEqual(ts.toSorted((a: number, b: number) => a - b))
     expect(j.conventions.riseSet).toHaveProperty("aim")
   },
-  "/crossing": (j, p) => {   // "Every instant … when the centre, a limb … reaches a true or apparent altitude"
+  "/v1/crossing": (j, p) => {   // "Every instant … when the centre, a limb … reaches a true or apparent altitude"
     expect(j.crossings.length).toBeGreaterThan(0)
     const dir = q(p).get("direction"); if (dir) for (const c of j.crossings) expect(c.direction).toBe(dir)
     expect(j.conventions.altitudeType).toBe(q(p).get("altitudeType") ?? "true")
   },
-  "/alignment": (j, p) => {   // "Where do I stand so the body sits on a landmark?" — a standing point per instant, within maxDistanceKm
+  "/v1/alignment": (j, p) => {   // "Where do I stand so the body sits on a landmark?" — a standing point per instant, within maxDistanceKm
     expect(j.track.length).toBeGreaterThan(0)
     for (const pt of j.track) expect(pt.distanceKm).toBeLessThanOrEqual(Number(q(p).get("maxDistanceKm") ?? 20))
   },
-  "/sightline": (j, p) => {   // "height above sea level against ground distance … and the clearance over obstacle points"
+  "/v1/sightline": (j, p) => {   // "height above sea level against ground distance … and the clearance over obstacle points"
     expect(j.profile).toHaveLength(Number(q(p).get("samples") ?? 101))
     for (const o of j.obstacles) { expect(o.clearanceM).toBeCloseTo(o.lineHeightMsl - o.heightMsl, 9); expect(typeof o.blocks).toBe("boolean") }
     expect(j.obstacles[0].lineHeightMsl).toBeGreaterThan(22); expect(j.obstacles[0].lineHeightMsl).toBeLessThan(34)   // "22–28 m over the island" (customer)
   },
-  "/magnetic": j => { expect(j.magnetic.model).toBe("WMM2025"); expect(j.magnetic.declination).toBeGreaterThan(-14); expect(j.magnetic.declination).toBeLessThan(-11); expect(j.magnetic.compass).toBe("ok") },   // NYC ≈ −12.5° W
-  "/weather": (j, p) => {   // "Nearest METAR stations, decoded, with distance and true / magnetic bearing"
+  "/v1/magnetic": j => { expect(j.magnetic.model).toBe("WMM2025"); expect(j.magnetic.declination).toBeGreaterThan(-14); expect(j.magnetic.declination).toBeLessThan(-11); expect(j.magnetic.compass).toBe("ok") },   // NYC ≈ −12.5° W
+  "/v1/weather": (j, p) => {   // "Nearest METAR stations, decoded, with distance and true / magnetic bearing"
     expect(j.stations).toHaveLength(Number(q(p).get("count") ?? 3))
     const d = j.stations.map((s: any) => s.distanceKm); expect(d).toEqual(d.toSorted((a: number, b: number) => a - b))
     for (const s of j.stations) { expect(s.raw).toMatch(/^METAR|^SPECI|^[A-Z0-9]{4} /); expect(s.bearing).toHaveProperty("magnetic") }
@@ -112,12 +112,12 @@ describe("every documented example returns what the docs say", () => {
 describe("claims in the prose of docs/API.md and /llms.txt", () => {
   it("the quoted 400 message, the did-you-mean hints and the 404 are what the API says", async () => {
     const quoted = /For example: `([^`]+)`/.exec(API_MD)![1]!
-    const r = await get("/position?lat=100&lon=-74&time=2026-11-16T12:00:00Z")
+    const r = await get("/v1/position?lat=100&lon=-74&time=2026-11-16T12:00:00Z")
     expect(r.status).toBe(400); expect(r.j).toMatchObject({ _tag: "InvalidRequest", parameter: "lat" }); expect(r.j.message).toBe(quoted)
-    expect((await get("/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&observerHeight=5&start=2026-11-17T03:44:30Z&end=2026-11-17T03:46:00Z")).j.message).toMatch(/observerHeight.*height/)
-    expect((await get("/day?lat=40.7&lon=-74&date=2026-11-16&tz=America/New_York&temprature=5")).j.message).toMatch(/temprature.*temperature/)
+    expect((await get("/v1/alignment?body=moon&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&observerHeight=5&start=2026-11-17T03:44:30Z&end=2026-11-17T03:46:00Z")).j.message).toMatch(/observerHeight.*height/)
+    expect((await get("/v1/day?lat=40.7&lon=-74&date=2026-11-16&tz=America/New_York&temprature=5")).j.message).toMatch(/temprature.*temperature/)
     const nf = await get("/nope"); expect(nf.status).toBe(404); expect(nf.j).toMatchObject({ _tag: "NotFound" })
-    for (const e of ["/position", "/track", "/day", "/crossing", "/alignment", "/sightline", "/magnetic", "/weather"]) expect(JSON.stringify(nf.j)).toContain(e)
+    for (const e of ["/v1/position", "/v1/track", "/v1/day", "/v1/crossing", "/v1/alignment", "/v1/sightline", "/v1/magnetic", "/v1/weather"]) expect(JSON.stringify(nf.j)).toContain(e)
   })
   it("the parameter docs' own e.g. values are accepted", () => {
     const llms = llmsTxt()

@@ -1,4 +1,4 @@
-// Screenshots of / in every sky state, deterministically: the page's debug ?at=<ISO> (frozen clock, timed /position; the
+// Screenshots of / in every sky state, deterministically: the page's debug ?at=<ISO> (frozen clock, timed /v1/position; the
 // server's embed is ignored then) at fixed places, in light and dark, at 390×844, 375×667 and 1440×900. Prints, per shot, the
 // chart's label layout from window.__sky: overlaps (must be none), dropped labels, labels that cross a track, and draw count.
 //   [SIZES=390,375] node --experimental-strip-types scripts/obs/home-states.ts <base> <outDir> [filter]

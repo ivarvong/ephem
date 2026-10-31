@@ -1,4 +1,4 @@
-// /sightline over long lines (sweep 2026-10-31) vs PROJ (ECEF ↔ geodetic, EPSG 4978/4979) and GeographicLib (pyproj.Geod),
+// /v1/sightline over long lines (sweep 2026-10-31) vs PROJ (ECEF ↔ geodetic, EPSG 4978/4979) and GeographicLib (pyproj.Geod),
 // the in-gate form of reference/oracle/sightline_check.py: up to the 200 km limit, across the equator, the antimeridian and
 // over the North Pole, and from 1 400 m to 8 848 m. Every profile point: the chord point's geodetic height, its foot, and
 // the geodesic distance eye → foot.

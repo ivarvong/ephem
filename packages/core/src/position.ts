@@ -1,4 +1,4 @@
-// /position, as a pure function of (blocks, request). Output shape = @ephem/api PositionResponse minus provenance.
+// /v1/position, as a pure function of (blocks, request). Output shape = @ephem/api PositionResponse minus provenance.
 import { type BlockSource, type BodyName, bodySsb, earthSsb } from "./ephemeris.ts"
 import { type Frame, type Geodetic, angularRadius, apparent, astrometric, ecliptic, enuOf, frameAt, geocentricFrame, topocentric, topocentricRates } from "./observe.ts"
 import { litGeometry } from "./aim.ts"

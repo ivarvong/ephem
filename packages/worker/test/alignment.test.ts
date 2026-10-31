@@ -1,4 +1,4 @@
-// /alignment through the real handler: height references (round-2 feedback #2), conventions, rates.
+// /v1/alignment through the real handler: height references (round-2 feedback #2), conventions, rates.
 import { describe, expect, it } from "vitest"
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
@@ -8,7 +8,7 @@ import { direct, makeBlocks } from "../src/blocks.ts"
 
 const FIX = resolve(__dirname, "../../core/test/fixtures/blocks")   // 5441–5444 cover Sep–Dec 2026
 const handler = makeHandler(makeBlocks(direct(async first => { const b = readFileSync(`${FIX}/${first}.bin`); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer })))
-const get = async (q: string) => { const r = await handler(new Request(`http://x/alignment?${q}`)); return { status: r.status, j: await r.json() as any } }
+const get = async (q: string) => { const r = await handler(new Request(`http://x/v1/alignment?${q}`)); return { status: r.status, j: await r.json() as any } }
 
 // The customer's Nov 16 2026 (EST) pass behind the Statue of Liberty, heights ellipsoidal (their hand-copied N = −32.81 m).
 const BASE = "body=moon&targetLat=40.68925&targetLon=-74.0445&start=2026-11-17T03:44:30Z&end=2026-11-17T03:46:00Z&stepSeconds=5&maxDistanceKm=8"
@@ -78,9 +78,9 @@ describe("alignment height references", () => {
 })
 
 const pos = async (lat: number, lon: number, hE: number, time: string) =>
-  (await (await handler(new Request(`http://x/position?lat=${lat}&lon=${lon}&height=${hE}&time=${time}`))).json()) as any
+  (await (await handler(new Request(`http://x/v1/position?lat=${lat}&lon=${lon}&height=${hE}&time=${time}`))).json()) as any
 describe("include=sun,phase (round-2 #5)", () => {
-  it("alignment: every track point and pass carries the Sun and the Moon phase, equal to /position there and then", async () => {
+  it("alignment: every track point and pass carries the Sun and the Moon phase, equal to /v1/position there and then", async () => {
     const { status, j } = await get(`${MSL}&include=sun,phase&lat=40.7003&lon=-73.9968`)
     expect(status).toBe(200)
     for (const p of [j.track[0], j.track.at(-1)]) {
@@ -96,7 +96,7 @@ describe("include=sun,phase (round-2 #5)", () => {
     expect((await get(`${MSL}&include=sun`)).j.track[0].phase).toBeUndefined()
   })
   it("crossing: per crossing; bad values are 400", async () => {
-    const r = await handler(new Request("http://x/crossing?body=moon&lat=40.6985&lon=-73.999&height=5&heightRef=msl&altitude=0.87&altitudeType=apparent&direction=set&start=2026-11-16T00:00:00Z&end=2026-11-18T00:00:00Z&include=phase,sun"))
+    const r = await handler(new Request("http://x/v1/crossing?body=moon&lat=40.6985&lon=-73.999&height=5&heightRef=msl&altitude=0.87&altitudeType=apparent&direction=set&start=2026-11-16T00:00:00Z&end=2026-11-18T00:00:00Z&include=phase,sun"))
     expect(r.status).toBe(200)
     const j = await r.json() as any
     expect(j.crossings.length).toBeGreaterThan(0)
@@ -105,7 +105,7 @@ describe("include=sun,phase (round-2 #5)", () => {
       expect(c.sun.altitude).toBeCloseTo(p.sun.altitude, 9); expect(c.phase).toEqual(p.moon.phase)
     }
     for (const bad of ["include=moon", "include=sun,sun,phase", "include="])
-      expect((await handler(new Request(`http://x/crossing?body=moon&lat=40.7&lon=-74&altitude=0&date=2026-11-16&tz=America/New_York&${bad}`))).status, bad).toBe(400)
+      expect((await handler(new Request(`http://x/v1/crossing?body=moon&lat=40.7&lon=-74&altitude=0&date=2026-11-16&tz=America/New_York&${bad}`))).status, bad).toBe(400)
   })
 })
 
@@ -136,7 +136,7 @@ describe("aim (round-2 #3)", () => {
     expect((await get(`${ELLIPSOID}&aim=rim`)).status).toBe(400)
   })
   it("crossing: aim=upper moves the crossing by the radius / rate; litCentroid moves the moonset by offset·cos(angle) / rate; limb is no longer a parameter", async () => {
-    const C = "http://x/crossing?body=moon&lat=40.6985&lon=-73.999&height=5&heightRef=msl&altitude=0.87&altitudeType=apparent&direction=set&start=2026-11-16T00:00:00Z&end=2026-11-18T00:00:00Z"
+    const C = "http://x/v1/crossing?body=moon&lat=40.6985&lon=-73.999&height=5&heightRef=msl&altitude=0.87&altitudeType=apparent&direction=set&start=2026-11-16T00:00:00Z&end=2026-11-18T00:00:00Z"
     const j = async (q: string) => { const r = await handler(new Request(C + q)); return { status: r.status, j: await r.json() as any } }
     const up = await j("&aim=upper"), ctr = await j("")
     expect(up.j.conventions.aim.point).toBe("upper"); expect(ctr.j.conventions.aim.point).toBe("center")

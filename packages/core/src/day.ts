@@ -1,4 +1,4 @@
-// /day: rise, set, transit, twilight, golden and blue hour for one local calendar day.
+// /v1/day: rise, set, transit, twilight, golden and blue hour for one local calendar day.
 import type { BlockSource, BodyName } from "./ephemeris.ts"
 import { type Epoch, type Geodetic, type Topocentric, angularRadius, apparent, epochAt, frameAt, topocentric, topocentricRates } from "./observe.ts"
 import { type Limb, P_DEFAULT, REFRACTION_FLOOR, T_DEFAULT, limbSign, refraction } from "./horizon.ts"
@@ -185,7 +185,7 @@ export const day = (src: BlockSource, input: DayInput) => {
   }
 }
 
-// ── /crossing: every instant in a window when a body's limb crosses an altitude ──
+// ── /v1/crossing: every instant in a window when a body's limb crosses an altitude ──
 export type CrossingTarget =
   | { readonly kind: "true"; readonly altitude: number }
   | { readonly kind: "apparent"; readonly altitude: number; readonly temperature: number; readonly pressure: number }

@@ -1,11 +1,11 @@
-// /sightline (round-2 #6). Geometry cross-checked offline against PROJ + GeographicLib (reference/oracle/
+// /v1/sightline (round-2 #6). Geometry cross-checked offline against PROJ + GeographicLib (reference/oracle/
 // sightline_check.py, 2026-10-30): heightEllipsoid ≤ 1.5e-7 m, distance ≤ 2.6e-7 m on a 3.6 km and a 152 km line.
 import { describe, expect, it } from "vitest"
 import { makeHandler } from "../src/app.ts"
 import { direct, makeBlocks } from "../src/blocks.ts"
 
 const handler = makeHandler(makeBlocks(direct(async () => { throw new Error("sightline reads no DE440 blocks") })))
-const get = async (q: string) => { const r = await handler(new Request(`http://x/sightline?${q}`)); return { status: r.status, j: await r.json() as any } }
+const get = async (q: string) => { const r = await handler(new Request(`http://x/v1/sightline?${q}`)); return { status: r.status, j: await r.json() as any } }
 // Pier 6, Brooklyn Bridge Park (eye 5 m MSL) → Statue of Liberty figure middle (70 m MSL), across Governors Island.
 const PIER6 = "lat=40.6935&lon=-74.0017&height=5&heightRef=msl&targetLat=40.68925&targetLon=-74.0445&targetHeight=70&targetHeightRef=msl"
 const R = 6_371_008.8, K = 0.13

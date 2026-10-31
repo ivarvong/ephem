@@ -3,10 +3,10 @@
  "info": {
   "title": "Api",
   "version": "0.0.1",
-  "description": "Sun and Moon from JPL DE440, checked against Skyfield. One endpoint per question: /position (an instant), /track (paths over a window), /day (rise, set, twilight), /crossing (when a body reaches an altitude), /alignment (where to stand so the body sits on a landmark), POST /alignment/search (every pass over an area you can stand in), /sightline (does the line of sight clear), /magnetic (declination), /weather (nearest METAR).\n\nOne vocabulary: lat, lon, height, heightRef (you); targetLat, targetLon, targetHeight, targetHeightRef (the landmark); body; time | start, end | date, tz; stepSeconds; temperature, pressure, horizon, horizonProfile, dut1; aim; include. Unknown parameters are rejected. Errors: 400 InvalidRequest names the parameter and what is allowed; 503 Unavailable when a data source fails. Every response carries conventions (every threshold and model used) and provenance."
+  "description": "Sun and Moon from JPL DE440, checked against Skyfield. One endpoint per question: /v1/position (an instant), /v1/track (paths over a window), /v1/day (rise, set, twilight), /v1/crossing (when a body reaches an altitude), /v1/alignment (where to stand so the body sits on a landmark), POST /v1/alignment/search (every pass over an area you can stand in), /v1/sightline (does the line of sight clear), /v1/magnetic (declination), /v1/weather (nearest METAR).\n\nOne vocabulary: lat, lon, height, heightRef (you); targetLat, targetLon, targetHeight, targetHeightRef (the landmark); body; time | start, end | date, tz; stepSeconds; temperature, pressure, horizon, horizonProfile, dut1; aim; include. Unknown parameters are rejected. Errors: 400 InvalidRequest names the parameter and what is allowed; 503 Unavailable when a data source fails. Every response carries conventions (every threshold and model used) and provenance."
  },
  "paths": {
-  "/position": {
+  "/v1/position": {
    "get": {
     "tags": [
      "sky"
@@ -629,7 +629,7 @@
     }
    }
   },
-  "/day": {
+  "/v1/day": {
    "get": {
     "tags": [
      "sky"
@@ -1223,7 +1223,7 @@
     }
    }
   },
-  "/crossing": {
+  "/v1/crossing": {
    "get": {
     "tags": [
      "sky"
@@ -1514,7 +1514,7 @@
                   "type": "null"
                  }
                 ],
-                "description": "Refracted, down to the sea horizon at the eye's height; null below it, as /position."
+                "description": "Refracted, down to the sea horizon at the eye's height; null below it, as /v1/position."
                }
               },
               "required": [
@@ -1562,7 +1562,7 @@
                "name"
               ],
               "additionalProperties": false,
-              "description": "include=phase: the Moon's geocentric phase at this instant, as /position."
+              "description": "include=phase: the Moon's geocentric phase at this instant, as /v1/position."
              },
              "aimOffset": {
               "type": "number",
@@ -1890,7 +1890,7 @@
     }
    }
   },
-  "/alignment": {
+  "/v1/alignment": {
    "get": {
     "tags": [
      "sky"
@@ -2160,11 +2160,11 @@
              },
              "altitudeRate": {
               "type": "number",
-              "description": "d(true altitude)/dt of the body seen from this standing point, degrees per minute (±10 s symmetric difference, as /position)."
+              "description": "d(true altitude)/dt of the body seen from this standing point, degrees per minute (±10 s symmetric difference, as /v1/position)."
              },
              "azimuthRate": {
               "type": "number",
-              "description": "d(azimuth)/dt of the body seen from this standing point, degrees per minute (±10 s symmetric difference, as /position)."
+              "description": "d(azimuth)/dt of the body seen from this standing point, degrees per minute (±10 s symmetric difference, as /v1/position)."
              },
              "heightEllipsoid": {
               "type": "number",
@@ -2197,7 +2197,7 @@
                   "type": "null"
                  }
                 ],
-                "description": "Refracted, down to the sea horizon at the eye's height; null below it, as /position."
+                "description": "Refracted, down to the sea horizon at the eye's height; null below it, as /v1/position."
                }
               },
               "required": [
@@ -2245,7 +2245,7 @@
                "name"
               ],
               "additionalProperties": false,
-              "description": "include=phase: the Moon's geocentric phase at this instant, as /position."
+              "description": "include=phase: the Moon's geocentric phase at this instant, as /v1/position."
              },
              "aimOffset": {
               "type": "number",
@@ -2377,7 +2377,7 @@
                     "type": "null"
                    }
                   ],
-                  "description": "Refracted, down to the sea horizon at the eye's height; null below it, as /position."
+                  "description": "Refracted, down to the sea horizon at the eye's height; null below it, as /v1/position."
                  }
                 },
                 "required": [
@@ -2425,7 +2425,7 @@
                  "name"
                 ],
                 "additionalProperties": false,
-                "description": "include=phase: the Moon's geocentric phase at this instant, as /position."
+                "description": "include=phase: the Moon's geocentric phase at this instant, as /v1/position."
                }
               },
               "required": [
@@ -2678,7 +2678,7 @@
     }
    }
   },
-  "/sightline": {
+  "/v1/sightline": {
    "get": {
     "tags": [
      "sky"
@@ -3197,7 +3197,7 @@
     }
    }
   },
-  "/track": {
+  "/v1/track": {
    "get": {
     "tags": [
      "sky"
@@ -3412,7 +3412,7 @@
                }
               ]
              },
-             "description": "Refracted altitude, degrees; null below the observer's horizon or the refraction model's floor, exactly as /position."
+             "description": "Refracted altitude, degrees; null below the observer's horizon or the refraction model's floor, exactly as /v1/position."
             }
            },
            "required": [
@@ -3451,7 +3451,7 @@
                }
               ]
              },
-             "description": "Refracted altitude, degrees; null below the observer's horizon or the refraction model's floor, exactly as /position."
+             "description": "Refracted altitude, degrees; null below the observer's horizon or the refraction model's floor, exactly as /v1/position."
             }
            },
            "required": [
@@ -3711,7 +3711,7 @@
     }
    }
   },
-  "/alignment/search": {
+  "/v1/alignment/search": {
    "post": {
     "tags": [
      "search"
@@ -3998,7 +3998,7 @@
              },
              "illuminatedFraction": {
               "type": "number",
-              "description": "The Moon's illuminated fraction, 0–1 (geocentric, as /position), whichever the body (minIlluminated filters on it)."
+              "description": "The Moon's illuminated fraction, 0–1 (geocentric, as /v1/position), whichever the body (minIlluminated filters on it)."
              },
              "sunAltitude": {
               "type": "number",
@@ -4826,7 +4826,7 @@
            "lower",
            "litCentroid"
           ],
-          "description": "Which point of the disc sits on the target (as /alignment): center (default), upper, lower, litCentroid (Moon)."
+          "description": "Which point of the disc sits on the target (as /v1/alignment): center (default), upper, lower, litCentroid (Moon)."
          },
          "include": {
           "type": "string",
@@ -4862,7 +4862,7 @@
     }
    }
   },
-  "/magnetic": {
+  "/v1/magnetic": {
    "get": {
     "tags": [
      "earth"
@@ -5181,7 +5181,7 @@
     }
    }
   },
-  "/weather": {
+  "/v1/weather": {
    "get": {
     "tags": [
      "earth"
@@ -5240,7 +5240,7 @@
             },
             "magneticDeclination": {
              "type": "number",
-             "description": "WMM2025 at the observer, height 0, now; east positive. Full precision (was rounded to 0.01° before 2026-10-29): the same value /magnetic gives for lat/lon now."
+             "description": "WMM2025 at the observer, height 0, now; east positive. Full precision (was rounded to 0.01° before 2026-10-29): the same value /v1/magnetic gives for lat/lon now."
             }
            },
            "required": [
