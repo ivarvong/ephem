@@ -387,7 +387,7 @@ describe("home: chart labels never collide, in every sky state", () => {
       const st = { W, H, insetL: 0, insetR: 0, center: ch.chartCenter(lat, [pos.sun.azimuth, pos.moon.azimuth]), now, sunAlt: ch.altOf(pos.sun),
         ctl: { id: "ctl", x: W - 112, y: 0, w: 112, h: 44 }, pose: null, next: null, hm: (t: number) => new Date(t).toISOString().slice(11, 16), meas, LH, bodies }
       const m = ch.chartModel(st), placed = ch.layoutLabels(m.items, m.hard, m.segs, m.bounds, 2)
-      const byId = Object.fromEntries(m.items.map(i => [i.id, i])), shown = placed.filter(p => !p.dropped)
+      const shown = placed.filter(p => !p.dropped)
       const where = `${name} ${W}x${H}`
       for (const id of ["Sun", "Moon"]) expect(shown.map(p => p.id), `${where}: ${id} named`).toContain(id)
       for (let i = 0; i < shown.length; i++) {
