@@ -14,6 +14,10 @@ import { parseTraceparent } from "./traceparent.ts"
 export { parseTraceparent }
 
 export const TRACE_HEADER = "x-ephem-trace"
+/** Origin of in-process router calls (the homepage's embeds, src/embed.ts; MCP's tools, src/mcp.ts). They run in the caller's
+ *  fiber, so the current span is the caller's (home.embed, a tool span): ClientTrace skips them, or that span would also carry
+ *  client.trace_id with the document's span id as client.span_id and the journey would join the document by cf-ray only. */
+export const IN_PROCESS_ORIGIN = "http://ephem.internal"
 
 const hex = (n: number) => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => b.toString(16).padStart(2, "0")).join("")
 const HEX16 = /^[0-9a-f]{16}$/
@@ -53,7 +57,7 @@ export const ClientTrace = HttpRouter.middleware(Effect.gen(function* () {
   return http => Effect.gen(function* () {
     const req = yield* HttpServerRequest.HttpServerRequest
     const tp = parseTraceparent(req.headers["traceparent"])
-    if (!tp) return yield* http
+    if (!tp || req.originalUrl.startsWith(IN_PROCESS_ORIGIN + "/")) return yield* http
     // tracestate `ephem=<16 hex>`: the client span's own parent (the page's document span), so the server knows the chain.
     const parent = /(?:^|,)\s*ephem=([0-9a-f]{16})\s*(?:,|$)/.exec(req.headers["tracestate"] ?? "")?.[1]
     yield* Effect.annotateCurrentSpan({ "client.trace_id": tp.traceId, "client.span_id": tp.spanId, ...(parent && !/^0+$/.test(parent) ? { "client.parent_id": parent } : {}) })

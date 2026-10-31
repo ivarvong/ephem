@@ -75,6 +75,14 @@ describe("traceparent", () => {
     expect(m[1]).toBe(TID); expect(m[2]).not.toBe(SID); expect(res.headers.get("x-ephem-trace")).toBe(TID)
     expect(spans.find(s => s.name === "GET")!.attrs).toMatchObject({ "client.trace_id": TID, "client.span_id": SID, "client.trace_origin": "adopted", "effect.parent_id": SID })
   })
+  it("the document invocation's root span is the only span with client.trace_id (= the incoming traceparent's), not the in-process embeds' parent", async () => {
+    const { spans, tracing } = recorder(); setTracing(tracing)
+    const res = await makeHandler(makeBlocks(origin))(new Request("http://x/?lat=40.7128&lon=-74.006&tz=America%2FNew_York", { headers: { traceparent: TP } }))
+    const html = await res.text(); expect(html).toContain('id="ephem-position"')   // the embeds ran in-process with the document's traceparent
+    const root = spans.find(s => s.name === "GET" && s.attrs["effect.parent_id"] === SID)!.attrs
+    expect(root).toMatchObject({ "client.trace_id": TID, "client.span_id": SID, "client.trace_origin": "adopted" })
+    expect(spans.filter(s => "client.trace_id" in s.attrs).map(s => s.name)).toEqual(["GET"])   // journey.ts joins on the first span carrying it
+  })
   it("malformed traceparents on the document are ignored: a fresh id, nothing of the header in the page or spans", async () => {
     const bad = [`00-${TID.toUpperCase()}-${SID}-01`, `00-${"0".repeat(32)}-${SID}-01`, `00-${TID}-${"0".repeat(16)}-01`, `ff-${TID}-${SID}-01`, `00-${TID}-${SID}-01-extra`,
       `00-${TID}-${SID}-01"><script>alert(1)</script>`, "00-" + "g".repeat(32) + "-" + SID + "-01", " ".repeat(55)]

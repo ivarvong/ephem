@@ -11,6 +11,7 @@ import * as Stream from "effect/Stream"
 import * as HttpRouter from "effect/http/HttpRouter"
 import * as HttpServerRequest from "effect/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/http/HttpServerResponse"
+import { IN_PROCESS_ORIGIN } from "./clienttrace.ts"
 
 /** Request headers an in-process call inherits from the page request: cf-ray (joins rows), the version override (pins it),
  *  the synthetic markers, and the document's trace context. */
@@ -22,7 +23,7 @@ export const routeText = (router: HttpRouter.HttpRouter, req: HttpServerRequest.
   const h = req.headers as Readonly<Record<string, string | undefined>>, headers: Record<string, string> = {}
   for (const k of INHERIT) if (h[k]) headers[k] = h[k]!
   if (traceparent) headers["traceparent"] = traceparent
-  const inner = HttpServerRequest.fromWeb(new Request(`http://ephem.internal${path}?${new URLSearchParams(query)}`, { headers }))
+  const inner = HttpServerRequest.fromWeb(new Request(`${IN_PROCESS_ORIGIN}${path}?${new URLSearchParams(query)}`, { headers }))
   const res = yield* router.asHttpEffect().pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, inner), Effect.scoped)
   const web = HttpServerResponse.toWeb(res)
   return { status: web.status, text: yield* Effect.promise(() => web.text()) }

@@ -22,6 +22,7 @@ import {
 } from "@ephem/api"
 import { VERSION } from "./handlers.ts"
 import { VERSION_OVERRIDES } from "./responses.ts"
+import { IN_PROCESS_ORIGIN } from "./clienttrace.ts"
 
 export const LATEST = "2026-07-28"
 export const LEGACY = ["2025-11-25", "2025-06-18", "2025-03-26"] as const
@@ -328,8 +329,8 @@ export const Mcp = HttpRouter.use(router => Effect.gen(function* () {
   // fwd: the outer request's cf-ray and version override, so a tool's forward to the Api is joined
   // to this request's row and pinned like the REST call would be.
   const restWith = (fwd: Record<string, string>): Rest => (path, query, body) => Effect.gen(function* () {
-    const inner = HttpServerRequest.fromWeb(body === undefined ? new Request(`http://ephem.internal${path}?${new URLSearchParams(query)}`, { headers: fwd })
-      : new Request(`http://ephem.internal${path}`, { method: "POST", headers: { ...fwd, "content-type": "application/json" }, body: JSON.stringify(body) }))
+    const inner = HttpServerRequest.fromWeb(body === undefined ? new Request(`${IN_PROCESS_ORIGIN}${path}?${new URLSearchParams(query)}`, { headers: fwd })
+      : new Request(`${IN_PROCESS_ORIGIN}${path}`, { method: "POST", headers: { ...fwd, "content-type": "application/json" }, body: JSON.stringify(body) }))
     const res = yield* router.asHttpEffect().pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, inner), Effect.scoped)
     const web = HttpServerResponse.toWeb(res)
     const text = yield* Effect.promise(() => web.text())
